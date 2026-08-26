@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+pydantic>=2
+google-adk>=2.7,<3
+google-genai
+google-cloud-firestore
+google-cloud-storage
+google-cloud-tasks
+google-cloud-vision
+google-cloud-secret-manager
+insightface
+onnxruntime
+librosa<1.0
+pillow
+pillow-heif
+ffmpeg-python

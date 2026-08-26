@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Showrunner — System Architecture (Visual Review)</title>
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Mermaid.js -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <!-- svg-pan-zoom for smooth diagram interaction -->
+  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+
+  <style>
+    :root {
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-display: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
+      /* Dark Theme (Default) */
+      --bg-base: #090d16;
+      --bg-surface: #101726;
+      --bg-surface-elevated: #182238;
+      --bg-glass: rgba(16, 23, 38, 0.75);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.16);
+      
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-faint: #64748b;
+      
+      --accent-blue: #38bdf8;
+      --accent-indigo: #818cf8;
+      --accent-purple: #c084fc;
+      --accent-green: #34d399;
+      --accent-amber: #fbbf24;
+      --accent-red: #f87171;
+      
+      --gcp-blue: #4285F4;
+      --gcp-red: #EA4335;
+      --gcp-yellow: #FBBC05;
+      --gcp-green: #34A853;
+
+      --glow: rgba(56, 189, 248, 0.15);
+      --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    }
+
+    html.light {
+      --bg-base: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #f1f5f9;
+      --bg-glass: rgba(255, 255, 255, 0.85);
+      --border-subtle: rgba(0, 0, 0, 0.08);
+      --border-strong: rgba(0, 0, 0, 0.16);
+      
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --text-faint: #94a3b8;
+      
+      --accent-blue: #0284c7;
+      --accent-indigo: #4f46e5;
+      --accent-purple: #9333ea;
+      --accent-green: #059669;
+      --accent-amber: #d97706;
+      --accent-red: #dc2626;
+
+      --glow: rgba(2, 132, 199, 0.08);
+      --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      transition: background-color 0.25s ease, color 0.25s ease;
+      overflow-x: hidden;
+    }
+
+    /* Ambient Background Glow */
+    .ambient-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 0;
+      background: 
+        radial-gradient(circle at 15% 15%, rgba(66, 133, 244, 0.12) 0%, transparent 40%),
+        radial-gradient(circle at 85% 25%, rgba(192, 132, 252, 0.1) 0%, transparent 45%),
+        radial-gradient(circle at 50% 80%, rgba(52, 211, 153, 0.07) 0%, transparent 50%);
+    }
+
+    /* Header Nav */
+    .top-nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(16px);
+      background: var(--bg-glass);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0.75rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: var(--text-main);
+    }
+
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--gcp-blue), var(--accent-purple));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 800;
+      font-size: 1.1rem;
+      box-shadow: 0 0 15px rgba(66, 133, 244, 0.4);
+    }
+
+    .brand-title {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--accent-blue);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      padding: 0.15rem 0.6rem;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .btn-icon {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 0.5rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.15s ease;
+    }
+
+    .btn-icon:hover {
+      background: var(--bg-surface-elevated);
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
+    }
+
+    /* Layout */
+    .layout {
+      position: relative;
+      z-index: 1;
+      max-width: 1440px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      gap: 2.5rem;
+      padding: 2rem;
+    }
+
+    @media (max-width: 1024px) {
+      .layout {
+        grid-template-columns: 1fr;
+        padding: 1.25rem;
+      }
+      .sidebar {
+        display: none;
+      }
+    }
+
+    /* Sidebar TOC */
+    .sidebar {
+      position: sticky;
+      top: 5rem;
+      height: calc(100vh - 6rem);
+      overflow-y: auto;
+      padding-right: 0.75rem;
+    }
+
+    .toc-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--text-faint);
+      margin-bottom: 0.75rem;
+    }
+
+    .toc-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .toc-link {
+      display: block;
+      padding: 0.45rem 0.75rem;
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+      border-left: 2px solid transparent;
+    }
+
+    .toc-link:hover, .toc-link.active {
+      color: var(--text-main);
+      background: var(--bg-surface);
+      border-left-color: var(--accent-blue);
+    }
+
+    .toc-link.sub {
+      padding-left: 1.5rem;
+      font-size: 0.82rem;
+    }
+
+    /* Main Content */
+    .content {
+      min-width: 0;
+    }
+
+    .doc-hero {
+      margin-bottom: 2.5rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    h1 {
+      font-family: var(--font-display);
+      font-size: 2.5rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: var(--text-main);
+      line-height: 1.15;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, #ffffff 30%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    html.light h1 {
+      background: linear-gradient(135deg, #0f172a 30%, #475569 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .lead-meta {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .lead-meta code {
+      font-family: var(--font-mono);
+      background: var(--bg-surface-elevated);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.85em;
+      color: var(--accent-blue);
+      border: 1px solid var(--border-subtle);
+    }
+
+    /* Sections */
+    section {
+      margin-bottom: 3.5rem;
+      scroll-margin-top: 5rem;
+    }
+
+    h2 {
+      font-family: var(--font-display);
+      font-size: 1.65rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      color: var(--text-main);
+    }
+
+    h2::before {
+      content: "";
+      display: inline-block;
+      width: 4px;
+      height: 1.2rem;
+      background: linear-gradient(to bottom, var(--gcp-blue), var(--accent-purple));
+      border-radius: 2px;
+    }
+
+    h3 {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin-top: 2rem;
+      margin-bottom: 1rem;
+      color: var(--text-main);
+    }
+
+    p {
+      color: var(--text-muted);
+      font-size: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    p strong {
+      color: var(--text-main);
+      font-weight: 600;
+    }
+
+    hr {
+      border: none;
+      height: 1px;
+      background: var(--border-subtle);
+      margin: 3rem 0;
+    }
+
+    /* Callout Card (e.g. 1. The one-paragraph shape) */
+    .shape-card {
+      background: linear-gradient(135deg, rgba(66, 133, 244, 0.08) 0%, rgba(192, 132, 252, 0.04) 100%);
+      border: 1px solid rgba(66, 133, 244, 0.25);
+      border-radius: 12px;
+      padding: 1.5rem 1.75rem;
+      font-size: 1.05rem;
+      line-height: 1.75;
+      color: var(--text-main);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+      position: relative;
+    }
+
+    .shape-card::before {
+      content: "💡";
+      position: absolute;
+      top: -12px;
+      left: 20px;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 9999px;
+      padding: 2px 8px;
+      font-size: 0.85rem;
+    }
+
+    /* Diagram Viewer Card */
+    .diagram-container {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+      margin: 1.5rem 0 2rem 0;
+      position: relative;
+    }
+
+    .diagram-header {
+      background: var(--bg-surface-elevated);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0.75rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .diagram-title {
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .diagram-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .btn-ctrl {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-ctrl:hover {
+      background: var(--border-strong);
+      color: var(--text-main);
+    }
+
+    .diagram-viewport {
+      position: relative;
+      width: 100%;
+      min-height: 520px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 2rem 1.5rem;
+      background: radial-gradient(circle at center, rgba(255,255,255,0.02) 0%, transparent 70%);
+      overflow: auto;
+    }
+
+    .diagram-viewport.sequence-viewport {
+      min-height: 440px;
+    }
+
+    .diagram-viewport svg {
+      max-width: 100%;
+      height: auto !important;
+    }
+
+    /* Mermaid Custom Dark Styling Overrides */
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      width: 100%;
+    }
+
+    /* Tables */
+    .table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      margin: 1.5rem 0 2.5rem 0;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+      text-align: left;
+    }
+
+    th {
+      background: var(--bg-surface-elevated);
+      color: var(--text-main);
+      font-family: var(--font-display);
+      font-weight: 600;
+      padding: 0.85rem 1.25rem;
+      border-bottom: 1px solid var(--border-subtle);
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      letter-spacing: 0.05em;
+    }
+
+    td {
+      padding: 0.9rem 1.25rem;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      vertical-align: top;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-main);
+    }
+
+    html.light tr:hover td {
+      background: rgba(0, 0, 0, 0.02);
+    }
+
+    td strong {
+      color: var(--text-main);
+    }
+
+    /* Checklist */
+    .checklist-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin: 1.5rem 0;
+    }
+
+    .checklist-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.75rem 0.5rem;
+      border-bottom: 1px solid var(--border-subtle);
+      cursor: pointer;
+      transition: background 0.15s ease;
+      border-radius: 6px;
+    }
+
+    .checklist-item:last-child {
+      border-bottom: none;
+    }
+
+    .checklist-item:hover {
+      background: var(--bg-surface-elevated);
+    }
+
+    .checklist-checkbox {
+      margin-top: 0.25rem;
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent-blue);
+      cursor: pointer;
+    }
+
+    .checklist-text {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      flex: 1;
+    }
+
+    .checklist-item.checked .checklist-text {
+      text-decoration: line-through;
+      color: var(--text-faint);
+    }
+
+    /* Narrative Highlights */
+    .narrative-box {
+      background: var(--bg-surface);
+      border-left: 3px solid var(--accent-purple);
+      border-radius: 0 10px 10px 0;
+      padding: 1.25rem 1.5rem;
+      margin: 1.25rem 0;
+    }
+
+    .narrative-box.reel {
+      border-left-color: var(--accent-amber);
+    }
+
+    .narrative-box.flightdeck {
+      border-left-color: var(--accent-green);
+      background: linear-gradient(135deg, rgba(52, 211, 153, 0.05) 0%, var(--bg-surface) 100%);
+    }
+
+    /* Floating Legend */
+    .diagram-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      padding: 0.75rem 1.25rem;
+      background: var(--bg-surface-elevated);
+      border-top: 1px solid var(--border-subtle);
+      font-size: 0.8rem;
+    }
+
+    .legend-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--text-muted);
+    }
+
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    /* Fullscreen Mode for Diagrams */
+    .diagram-container.fullscreen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 1000;
+      border-radius: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-base);
+    }
+
+    .diagram-container.fullscreen .diagram-viewport {
+      flex: 1;
+      height: 100% !important;
+      max-height: none;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border-subtle);
+      padding: 2.5rem 2rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-faint);
+    }
+
+    /* Print styles */
+    @media print {
+      .top-nav, .sidebar, .diagram-controls, .btn-icon {
+        display: none !important;
+      }
+      .layout {
+        display: block;
+        padding: 0;
+      }
+      .diagram-container {
+        box-shadow: none;
+        border: 1px solid #ddd;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="ambient-bg"></div>
+
+  <!-- Top Navigation Bar -->
+  <header class="top-nav">
+    <a href="#" class="brand">
+      <div class="brand-logo">ED</div>
+      <div>
+        <span class="brand-title">Showrunner</span>
+        <span class="brand-badge">System Architecture</span>
+      </div>
+    </a>
+    <div class="nav-actions">
+      <button class="btn-icon" id="themeToggleBtn" title="Toggle Light/Dark Theme">
+        <span id="themeIcon">☀️</span> <span id="themeText">Light Mode</span>
+      </button>
+      <button class="btn-icon" onclick="window.print()" title="Print or Save PDF">
+        🖨️ Print / PDF
+      </button>
+    </div>
+  </header>
+
+  <div class="layout">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="toc-title">Documentation Outline</div>
+      <ul class="toc-list">
+        <li><a href="#section-1" class="toc-link">1. The one-paragraph shape</a></li>
+        <li><a href="#section-2" class="toc-link">2. Master diagram</a></li>
+        <li>
+          <a href="#section-3" class="toc-link">3. The three flows that matter</a>
+          <ul class="toc-list">
+            <li><a href="#section-3-1" class="toc-link sub">3.1 Photo's journey</a></li>
+            <li><a href="#section-3-2" class="toc-link sub">3.2 Bounty loop</a></li>
+            <li><a href="#section-3-3" class="toc-link sub">3.3 Reel loop</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#section-4" class="toc-link">4. GCP service inventory</a>
+          <ul class="toc-list">
+            <li><a href="#section-4-1" class="toc-link sub">Used Services</a></li>
+            <li><a href="#section-4-2" class="toc-link sub">Deliberately Not Used</a></li>
+          </ul>
+        </li>
+        <li><a href="#section-5" class="toc-link">5. Pipeline Demo (Flight Deck)</a></li>
+        <li><a href="#section-6" class="toc-link">6. Review checklist</a></li>
+      </ul>
+    </aside>
+
+    <!-- Main Documentation Content -->
+    <main class="content">
+
+      <!-- Hero Section -->
+      <div class="doc-hero">
+        <h1>Showrunner — System Architecture <span style="font-size: 0.6em; opacity: 0.8; font-weight: 400;">(review document)</span></h1>
+        <p class="lead-meta">
+          This is the complete architecture in one place, for review and for deriving the submission diagram. Mermaid blocks render on GitHub. Verified platform facts behind every choice: <code>research/google-stack-research-2026-08-24.md</code>. Behavior contracts: <code>specs/01–10</code>.
+        </p>
+      </div>
+
+      <!-- Section 1 -->
+      <section id="section-1">
+        <h2>1. The one-paragraph shape</h2>
+        <div class="shape-card">
+          <strong>An event-driven data plane feeding a goal-driven control plane, with governance as a cross-cutting rail.</strong> Guest media flows push-based from phones into Cloud Storage, through Eventarc and rate-limited Cloud Tasks queues, into three perception workers (Gemini classification, face embedding, safety), landing as richly-annotated Firestore documents whose real-time listeners drive every screen. Above that, two director agents on Agent Runtime own strategy: one watches coverage and dispatches bounties; one commissions and renders reels. A single deterministic visibility function — not any LLM — decides what the public ever sees.
+        </div>
+      </section>
+
+      <hr />
+
+      <!-- Section 2 -->
+      <section id="section-2">
+        <h2>2. Master diagram</h2>
+        <p>Interactive full-stack architecture diagram illustrating the clients, data plane, Agent Runtime control plane, and cross-cutting governance rail.</p>
+        
+        <div class="diagram-container" id="masterDiagramContainer">
+          <div class="diagram-header">
+            <div class="diagram-title">
+              <span>📐 Master Architecture Flowchart</span>
+            </div>
+            <div class="diagram-controls">
+              <button class="btn-ctrl" onclick="zoomIn('master')" title="Zoom In">➕</button>
+              <button class="btn-ctrl" onclick="zoomOut('master')" title="Zoom Out">➖</button>
+              <button class="btn-ctrl" onclick="resetZoom('master')" title="Reset View">↺</button>
+              <button class="btn-ctrl" onclick="toggleFullscreen('masterDiagramContainer')" title="Toggle Fullscreen">⛶</button>
+            </div>
+          </div>
+
+          <div class="diagram-viewport" id="viewport-master">
+            <pre class="mermaid" id="mermaid-master">
+flowchart TB
+  subgraph CLIENTS["EXPERIENCE — Next.js PWA on Firebase Hosting"]
+    GUEST["Guest app /join<br/>QR entry, anon auth, outbox uploader,<br/>selfie enroll, swipe curation"]
+    HOST["Host console /host<br/>lifecycle controls, review queue,<br/>coverage grid, Flight Deck"]
+    KIOSK["Kiosk /kiosk<br/>directed playlist show"]
+    ALBUM["Private album /me<br/>+ public gallery /gallery"]
+  end
+
+  subgraph DATAPLANE["DATA PLANE — event-driven, push, rate-limited"]
+    API["Cloud Run: api<br/>signed URLs, claims, consent"]
+    RAW[("Cloud Storage<br/>raw bucket")]
+    EA["Eventarc<br/>object.finalized<br/>(+ DLQ on underlying Pub/Sub)"]
+    INTAKE["Cloud Run: intake<br/>EXIF+tz, thumbs, dedupe(md5),<br/>size check, media doc"]
+    QUEUES{{"Cloud Tasks queues<br/>classify / face / safety /<br/>video-prep / priority / renders<br/>— the Gemini throttle"}}
+    CUR["Cloud Run: worker-curate<br/>Gemini 3.5 Flash-Lite<br/>stage+quality+caption"]
+    FACE["Cloud Run: worker-face<br/>InsightFace ONNX 512-d<br/>+ Firestore vector search"]
+    GUARD["Cloud Run: worker-safety<br/>Vision SafeSearch<br/>+ Gemini dignity rubric"]
+    FS[("Firestore<br/>media / faces / people / bounties /<br/>reels / kiosk / ledger / ops<br/>= system of record + realtime fan-out")]
+    DERIVED[("Cloud Storage<br/>derived + curated buckets")]
+  end
+
+  subgraph CONTROL["CONTROL PLANE — Agent Runtime (Gemini Enterprise Agent Platform)"]
+    SCHED["Cloud Scheduler<br/>global 2-min tick + lease"]
+    SD["Story Director — ADK, Gemini 3.7 Flash<br/>coverage gap analysis → bounties,<br/>stage drift, escalation, commissions<br/>Sessions + Memory Bank"]
+    RD["Reel Director — ADK, Gemini 3.7 Flash<br/>narrative brief → EDL → critic loop<br/>Lyria 3 soundtrack, versioned supersession"]
+    RENDER["Cloud Run Job: render<br/>ffmpeg + librosa beat grid<br/>1080x1920 reels, Pillow collages"]
+  end
+
+  subgraph GOV["GOVERNANCE RAIL — cross-cutting"]
+    MA["Model Armor<br/>text surfaces: injection, PII"]
+    AI2["Agent Identity (SPIFFE)<br/>+ Agent Registry — auto via Runtime"]
+    OBS["Agent Observability + Cloud Trace<br/>OTel span DAGs, token/latency dashboards"]
+    RULES["Firestore security rules + custom claims<br/>+ recompute_visibility (deterministic)"]
+    SM["Secret Manager · least-privilege SAs<br/>· Budgets · teardown scripts"]
+  end
+
+  GUEST -- "upload intent" --> API
+  API -- "signed PUT / resumable URI" --> GUEST
+  GUEST -- "bytes direct (never via servers)" --> RAW
+  RAW --> EA --> INTAKE
+  INTAKE --> DERIVED
+  INTAKE --> QUEUES
+  QUEUES --> CUR & FACE & GUARD
+  CUR & FACE & GUARD -- "verdicts + recompute_visibility" --> FS
+  FS -. "realtime listeners (~1-2 s)" .-> KIOSK & ALBUM & GUEST & HOST
+  SCHED --> SD
+  SD -- "bounties / announce / commission" --> FS
+  SD -- "commission persona" --> RD
+  RD -- "EDL + music brief" --> RENDER
+  RENDER -- "mp4 → curated" --> DERIVED
+  RENDER -- "publish (manifest re-check)" --> FS
+  HOST -- "itinerary paste" --> MA --> API
+  SD & RD --- AI2
+  SD & RD & CUR --- OBS
+  FS --- RULES
+            </pre>
+          </div>
+
+          <div class="diagram-legend">
+            <div class="legend-tag"><div class="legend-dot" style="background:#38bdf8"></div> Solid Arrow: Direct HTTP/Event Call</div>
+            <div class="legend-tag"><div class="legend-dot" style="background:#818cf8"></div> Dotted Arrow: Realtime Firestore Snapshot Listener</div>
+            <div class="legend-tag"><div class="legend-dot" style="background:#34d399"></div> Dashed Line: Observability & Governance Binding</div>
+          </div>
+        </div>
+      </section>
+
+      <hr />
+
+      <!-- Section 3 -->
+      <section id="section-3">
+        <h2>3. The three flows that matter (sequence level)</h2>
+
+        <!-- Section 3.1 -->
+        <div id="section-3-1">
+          <h3>3.1 A photo's journey (p50 ≈ 5 s to kiosk-eligible)</h3>
+          
+          <div class="diagram-container" id="sequenceDiagramContainer">
+            <div class="diagram-header">
+              <div class="diagram-title">
+                <span>⏱️ Photo Upload & Processing Sequence</span>
+              </div>
+              <div class="diagram-controls">
+                <button class="btn-ctrl" onclick="zoomIn('seq')" title="Zoom In">➕</button>
+                <button class="btn-ctrl" onclick="zoomOut('seq')" title="Zoom Out">➖</button>
+                <button class="btn-ctrl" onclick="resetZoom('seq')" title="Reset View">↺</button>
+                <button class="btn-ctrl" onclick="toggleFullscreen('sequenceDiagramContainer')" title="Toggle Fullscreen">⛶</button>
+              </div>
+            </div>
+
+            <div class="diagram-viewport sequence-viewport" id="viewport-seq">
+              <pre class="mermaid" id="mermaid-seq">
+sequenceDiagram
+  participant P as Phone (outbox)
+  participant A as api
+  participant G as GCS raw
+  participant I as intake
+  participant Q as Cloud Tasks
+  participant W as workers (curate/face/safety)
+  participant F as Firestore
+  participant K as Kiosk/Album/Flight Deck
+  P->>A: POST /uploads (intent: 30 files + consent)
+  A->>F: 30 media docs (awaiting_upload, owner, consent)
+  A-->>P: 30 signed URLs
+  P->>G: PUT bytes (3 concurrent, resumes from IndexedDB)
+  G->>I: Eventarc object.finalized
+  I->>I: size check, md5 dedupe, EXIF@event.tz, thumbs
+  I->>Q: 3 unnamed tasks
+  Q->>W: rate-limited dispatch (8/s)
+  W->>F: curator/faces/guardian verdicts + stageTimings
+  W->>F: recompute_visibility (transactional)
+  F-->>K: snapshot listeners push (~1-2 s)
+              </pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 3.2 -->
+        <div id="section-3-2" style="margin-top: 2rem;">
+          <h3>3.2 The bounty loop (fully autonomous — the Taskmaster demo)</h3>
+          <div class="narrative-box">
+            <p style="margin-bottom: 0;">
+              Scheduler tick → lease → Story Director reads coverage ledger → "Pheras active, 0 photos of bride's mother" → ISSUE_BOUNTY (guardrail-validated) → Firestore → every guest PWA's listener pops the mission banner → guest shoots → upload flows the normal pipeline via the priority queue with <code>bountyId</code> stamped → curate + face verdicts checked against bounty criteria → transactional award → leaderboard + kiosk celebration. No human anywhere.
+            </p>
+          </div>
+        </div>
+
+        <!-- Section 3.3 -->
+        <div id="section-3-3" style="margin-top: 2rem;">
+          <h3>3.3 The reel loop (with self-improvement)</h3>
+          <div class="narrative-box reel">
+            <p style="margin-bottom: 0;">
+              Commission (stage end / director action / host) → SELECT diversity-sampled candidates (snapshot) → narrative brief from <em>actual</em> evidence → storyboard + EDL + music brief (3.7 Flash) → critic rubric pass → Lyria 3 clip ($0.04) → librosa beat grid → cuts quantized → Cloud Run Job renders ffmpeg filtergraph → manifest re-validated → published → kiosk premiere. Better photo arrives later → evaluator triggers <strong>v2 supersession</strong> (debounced, frozen at final cut).
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <hr />
+
+      <!-- Section 4 -->
+      <section id="section-4">
+        <h2>4. GCP service inventory — used, and deliberately not used</h2>
+
+        <!-- Section 4.1 -->
+        <div id="section-4-1">
+          <h3>Used (every one called in code, not just named)</h3>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Service</th>
+                  <th>Role</th>
+                  <th>Why this one</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Cloud Run (services)</strong></td>
+                  <td>api, intake, 3 perception workers, publisher, dlq-consumer</td>
+                  <td>Serverless burst scaling; per-service least-privilege SAs</td>
+                </tr>
+                <tr>
+                  <td><strong>Cloud Run (jobs)</strong></td>
+                  <td>reel/collage renders</td>
+                  <td>Long CPU work off the request path</td>
+                </tr>
+                <tr>
+                  <td><strong>Cloud Storage</strong></td>
+                  <td>raw / derived / curated buckets</td>
+                  <td>Direct-from-phone via signed URLs; the burst shock absorber</td>
+                </tr>
+                <tr>
+                  <td><strong>Eventarc (+ Pub/Sub under it)</strong></td>
+                  <td>object.finalized → intake, with DLQ</td>
+                  <td>Canonical 2026 event routing; retries + dead-lettering</td>
+                </tr>
+                <tr>
+                  <td><strong>Cloud Tasks</strong></td>
+                  <td>6 queues</td>
+                  <td>The <strong>only</strong> throttle in the system — server-side rate control onto Gemini spend tiers</td>
+                </tr>
+                <tr>
+                  <td><strong>Cloud Scheduler</strong></td>
+                  <td>global director tick, orphan sweep</td>
+                  <td>Control-loop cadence without per-event infra</td>
+                </tr>
+                <tr>
+                  <td><strong>Firestore (+ native vector search)</strong></td>
+                  <td>system of record, realtime fan-out, face KNN</td>
+                  <td>One database is both state machine and push channel; GA vector search is exactly right at 10k faces</td>
+                </tr>
+                <tr>
+                  <td><strong>Firebase Auth (anonymous + custom tokens/claims)</strong></td>
+                  <td>zero-friction guests, magic links, host claim</td>
+                  <td>Identity without signup friction</td>
+                </tr>
+                <tr>
+                  <td><strong>Firebase Hosting</strong></td>
+                  <td>PWA + kiosk</td>
+                  <td>CDN included</td>
+                </tr>
+                <tr>
+                  <td><strong>FCM</strong></td>
+                  <td>web push (progressive enhancement)</td>
+                  <td>Firestore banners remain the demo-safe primary</td>
+                </tr>
+                <tr>
+                  <td><strong>Agent Runtime (GEAP)</strong></td>
+                  <td>Story + Reel Directors</td>
+                  <td>Managed Sessions, <strong>Memory Bank</strong>, auto <strong>Agent Identity</strong> (SPIFFE) + <strong>Agent Registry</strong> entry + <strong>Observability</strong> dashboards</td>
+                </tr>
+                <tr>
+                  <td><strong>Model Armor</strong></td>
+                  <td>host itinerary, captions, bounty text</td>
+                  <td>Used <em>as designed</em> — prompt injection/PII on text surfaces (image screening is Preview; wrong tool for photos)</td>
+                </tr>
+                <tr>
+                  <td><strong>Cloud Vision</strong></td>
+                  <td>SafeSearch + face quality/joy signals</td>
+                  <td>GA visual safety gate; emotion/blur ranking</td>
+                </tr>
+                <tr>
+                  <td><strong>Gemini 3.5 Flash-Lite / 3.7 Flash</strong></td>
+                  <td>perception volume / director reasoning</td>
+                  <td>Price-performance split; both satisfy "3.5 or newer"</td>
+                </tr>
+                <tr>
+                  <td><strong>Lyria 3, Veo 3.1 Fast, Nano Banana 2, Gemma 4</strong></td>
+                  <td>soundtracks, hero intro, portraits, captions</td>
+                  <td>All four bonus models, each with a real job</td>
+                </tr>
+                <tr>
+                  <td><strong>Cloud Trace + Agent Observability (OTel)</strong></td>
+                  <td>span DAGs, token/latency dashboards</td>
+                  <td>The 30% architecture score, visible</td>
+                </tr>
+                <tr>
+                  <td><strong>Secret Manager, IAM, Budgets</strong></td>
+                  <td>key handling, per-service SAs, cost rails</td>
+                  <td>"Credential security" is an explicit judging line</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section 4.2 -->
+        <div id="section-4-2">
+          <h3>Deliberately not used (the honest table — judges reward knowing why)</h3>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Service</th>
+                  <th>Why not</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>GKE</strong></td>
+                  <td>Cloud Run gives identical container semantics with zero cluster ops at this scale</td>
+                </tr>
+                <tr>
+                  <td><strong>Cloud SQL / AlloyDB</strong></td>
+                  <td>No relational workload; Firestore is both DB and realtime channel</td>
+                </tr>
+                <tr>
+                  <td><strong>Vertex AI Vector Search</strong></td>
+                  <td>~$65+/mo idle ScaNN infra for 10k vectors; flat exact KNN is <em>more</em> accurate here. Stated evolution path at ~1M faces</td>
+                </tr>
+                <tr>
+                  <td><strong>Transcoder API</strong></td>
+                  <td>Hard cuts only — no transitions/captions/Ken Burns; cannot make a reel</td>
+                </tr>
+                <tr>
+                  <td><strong>Agent Gateway</strong></td>
+                  <td>The one heavy GEAP piece (networking provisioning); Registry/Identity/Armor/Observability cover the governance story</td>
+                </tr>
+                <tr>
+                  <td><strong>Dataflow / BigQuery</strong></td>
+                  <td>No streaming-analytics workload; Firestore aggregations feed the coverage ledger. (Optional P2: Firestore→BigQuery export for the wrap-up report)</td>
+                </tr>
+                <tr>
+                  <td><strong>Memorystore</strong></td>
+                  <td>No hot cache need; Firestore listeners are the cache</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <hr />
+
+      <!-- Section 5 -->
+      <section id="section-5">
+        <h2>5. How the demo <em>shows</em> the pipeline (not console-tab roulette)</h2>
+        <div class="narrative-box flightdeck">
+          <p style="margin-bottom: 0;">
+            The centerpiece is the <strong>Flight Deck</strong> (<code>/host/flightdeck</code>, spec 10): a live page that renders <strong>this architecture diagram with real traffic flowing through it</strong> — each uploaded photo animates as a thumbnail chip moving Phone → Cloud Storage → Eventarc → intake → the three worker lanes → Firestore → kiosk, with per-stage live latencies, queue depths, Gemini token/cost tickers, and a director activity feed. It is driven entirely by the same Firestore <code>stages</code>/<code>stageTimings</code> fields the pipeline already writes, so it is truthful, reliable on camera, and free of console-login friction. GCP console shots (Cloud Run list, Observability trace DAG, Firestore mutating) then serve as 15-second <em>corroboration</em>, which the rules require — not as the narrative.
+          </p>
+        </div>
+      </section>
+
+      <hr />
+
+      <!-- Section 6 -->
+      <section id="section-6">
+        <h2>6. Review checklist (what to sanity-check when you read this)</h2>
+        <div class="checklist-card" id="reviewChecklist">
+          <label class="checklist-item">
+            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
+            <span class="checklist-text">Every arrow in §2 is push except Scheduler→SD (deliberate control loop) — agreed?</span>
+          </label>
+          <label class="checklist-item">
+            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
+            <span class="checklist-text">The only writer of <code>visibility</code> is <code>recompute_visibility</code>; LLMs never gate exposure — agreed?</span>
+          </label>
+          <label class="checklist-item">
+            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
+            <span class="checklist-text">Cloud Tasks as the single throttle point (not Pub/Sub fan-out) — agreed?</span>
+          </label>
+          <label class="checklist-item">
+            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
+            <span class="checklist-text">Directors on Agent Runtime (identity/registry/memory/observability for free) vs everything-on-Cloud-Run — agreed?</span>
+          </label>
+          <label class="checklist-item">
+            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
+            <span class="checklist-text">Face identity in our ONNX model + Firestore, never Gemini — agreed?</span>
+          </label>
+          <label class="checklist-item">
+            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
+            <span class="checklist-text">Kill switches: event.status master switch + publicFrozen panic + per-item yank — sufficient?</span>
+          </label>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer>
+    <p>Showrunner Architecture Documentation Viewer &bull; Derived verbatim from <code>docs/architecture.md</code></p>
+  </footer>
+
+  <script>
+    // Initialize Mermaid
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#101726',
+        primaryColor: '#1e293b',
+        primaryTextColor: '#f1f5f9',
+        primaryBorderColor: '#38bdf8',
+        lineColor: '#94a3b8',
+        secondaryColor: '#1e1b4b',
+        tertiaryColor: '#0f172a',
+        fontFamily: 'Inter, sans-serif',
+        fontSize: '13px'
+      },
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: true,
+        curve: 'basis'
+      },
+      sequence: {
+        useMaxWidth: true,
+        showSequenceNumbers: false,
+        actorMargin: 50
+      }
+    });
+
+    // Theme Toggle Functionality
+    const themeBtn = document.getElementById('themeToggleBtn');
+    const themeIcon = document.getElementById('themeIcon');
+    const themeText = document.getElementById('themeText');
+    const htmlEl = document.documentElement;
+
+    themeBtn.addEventListener('click', () => {
+      if (htmlEl.classList.contains('dark')) {
+        htmlEl.classList.remove('dark');
+        htmlEl.classList.add('light');
+        themeIcon.textContent = '🌙';
+        themeText.textContent = 'Dark Mode';
+        localStorage.setItem('ed-theme', 'light');
+      } else {
+        htmlEl.classList.remove('light');
+        htmlEl.classList.add('dark');
+        themeIcon.textContent = '☀️';
+        themeText.textContent = 'Light Mode';
+        localStorage.setItem('ed-theme', 'dark');
+      }
+    });
+
+    // Check saved theme
+    if (localStorage.getItem('ed-theme') === 'light') {
+      htmlEl.classList.remove('dark');
+      htmlEl.classList.add('light');
+      themeIcon.textContent = '🌙';
+      themeText.textContent = 'Dark Mode';
+    }
+
+    // Zoom Controls
+    const zoomState = {
+      master: 1,
+      seq: 1
+    };
+
+    function zoomIn(type) {
+      zoomState[type] = Math.min(zoomState[type] + 0.15, 2.5);
+      applyZoom(type);
+    }
+
+    function zoomOut(type) {
+      zoomState[type] = Math.max(zoomState[type] - 0.15, 0.5);
+      applyZoom(type);
+    }
+
+    function resetZoom(type) {
+      zoomState[type] = 1;
+      applyZoom(type);
+    }
+
+    function applyZoom(type) {
+      const el = document.getElementById(`mermaid-${type}`);
+      if (el) {
+        el.style.transform = `scale(${zoomState[type]})`;
+        el.style.transformOrigin = 'top center';
+        el.style.transition = 'transform 0.2s ease-out';
+      }
+    }
+
+    // Fullscreen Toggle
+    function toggleFullscreen(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.toggle('fullscreen');
+      if (el.classList.contains('fullscreen')) {
+        document.body.style.overflow = 'hidden';
+      } else {
+        document.body.style.overflow = '';
+      }
+    }
+
+    // Checklist item toggle
+    function toggleCheck(checkbox) {
+      const item = checkbox.closest('.checklist-item');
+      if (checkbox.checked) {
+        item.classList.add('checked');
+      } else {
+        item.classList.remove('checked');
+      }
+      saveChecklist();
+    }
+
+    function saveChecklist() {
+      const checkboxes = document.querySelectorAll('.checklist-checkbox');
+      const state = Array.from(checkboxes).map(c => c.checked);
+      localStorage.setItem('ed-checklist', JSON.stringify(state));
+    }
+
+    function loadChecklist() {
+      const saved = localStorage.getItem('ed-checklist');
+      if (saved) {
+        try {
+          const state = JSON.parse(saved);
+          const checkboxes = document.querySelectorAll('.checklist-checkbox');
+          checkboxes.forEach((cb, idx) => {
+            if (state[idx]) {
+              cb.checked = true;
+              cb.closest('.checklist-item').classList.add('checked');
+            }
+          });
+        } catch (e) {}
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', loadChecklist);
+
+    // Active TOC link highlight on scroll
+    window.addEventListener('scroll', () => {
+      const sections = document.querySelectorAll('section, [id^="section-"]');
+      const scrollPos = window.scrollY + 120;
+
+      sections.forEach(sec => {
+        const top = sec.offsetTop;
+        const height = sec.offsetHeight;
+        const id = sec.getAttribute('id');
+        if (scrollPos >= top && scrollPos < top + height) {
+          document.querySelectorAll('.toc-link').forEach(link => {
+            if (link.getAttribute('href') === `#${id}`) {
+              link.classList.add('active');
+            } else {
+              link.classList.remove('active');
+            }
+          });
+        }
+      });
+    });
+  </script>
+</body>
+</html>

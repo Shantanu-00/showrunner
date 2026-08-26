@@ -1,0 +1,85 @@
+# ==========================================
+# 1. Secrets, Keys & Credentials (CRITICAL)
+# ==========================================
+*.env
+*.env.*
+.env
+.env.local
+.env.production
+.env.test
+!.env.example
+*service-account*.json
+*-key.json
+*credentials*.json
+firebase-adminsdk*.json
+client_secret*.json
+*.pem
+*.key
+*.gcloud/
+
+# ==========================================
+# 2. Internal Strategy & War Room (Local Only)
+# ==========================================
+.internal/
+internal/
+PLAN.md
+docs/context/
+docs/devpost/
+docs/video/
+docs/post/
+docs/gcp/
+docs/rules/rules-analysis.md
+docs/rules/official-rules-2026.md
+
+# ==========================================
+# 3. AI Assistant & IDE State
+# ==========================================
+.claude/
+CLAUDE.md
+.gemini/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# 4. Python Environment & Artifacts
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ==========================================
+# 5. Node, Next.js & Firebase Build Artifacts
+# ==========================================
+node_modules/
+.next/
+out/
+build/
+dist/
+.npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.firebase/
+firestore-debug.log
+ui-debug.log
+
+# ==========================================
+# 6. Large Media & Local Temp Renders
+# ==========================================
+*.mp4
+*.mov
+*.avi
+temp_renders/
+scratch/
+cache/
+!backend/assets/audio/*.mp3

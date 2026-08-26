@@ -1,0 +1,74 @@
+# Spec 05 — Story Director (event monitoring, coverage, bounties)
+
+Goal: the autonomous heart of the Taskmaster pitch. Nobody asks it anything. Every 2 minutes it reconciles *what the timeline says should be happening* with *what the photo stream proves is happening*, and acts: bounties, escalations, stage transitions, reel commissions.
+
+## 1. Who monitors the event — the control loop
+
+Deployed on **Agent Runtime** (auto Agent Identity, Registry, Observability traces). Trigger: **one global Cloud Scheduler job** (every 2 min, OIDC) → `POST /internal/tick` on the API service → queries `events where status=='live'` → for each, attempts a **tick lease** (transactional `ticks/{eventId}` doc: acquire only if unheld or expired; lease TTL 5 min) → invokes that event's director `:query`. The lease is what prevents overlapping ticks (a slow tick + a 2-min schedule would otherwise run two directors concurrently and double-issue bounties). Scheduler is *not* per-event — events going live/wrapped need no infra changes, only a status flip (spec 08).
+
+The host console also has a **"Run director now"** button (same endpoint, host-authed, bypasses the wait but not the lease) — essential for the live demo, where waiting up to 2 minutes on camera is dead air.
+
+Each tick (a `SequentialAgent`: Ledger → Reason → Act):
+
+```
+1. LEDGER (deterministic, no LLM): aggregate Firestore into ledger/coverage:
+     per stage × requiredMoment: {photoCount, bestAestheticScore, lastCapturedAt}
+     per stage × VIP:            {appearanceCount, bestScore, tier}   # tier from people/{personId}, spec 11 §3
+     stage-drift signals: visual-vs-temporal disagreement rates from recent curator outputs
+     bounty states, upload velocity (5-min window), active guest count
+2. REASON (gemini-3.7-flash, structured output): input = Event Graph + ledger + its own
+     session state (what it did last ticks) + Memory Bank (host preferences).
+     Output: {assessment, actions[]} where action ∈
+       ISSUE_BOUNTY {targetMoment, targetVip?, title, guestFacingCopy, points, expiresInMin, audience}
+       ESCALATE_BOUNTY {bountyId}          # wider audience / more points / kiosk takeover
+       PROPOSE_STAGE_ADVANCE {toStageId, confidence, evidence}
+       COMMISSION_REEL {persona, stageId?} # e.g. stage ended + coverage rich → recap reel
+       ANNOUNCE {kioskMessage}             # "Pheras beginning at the mandap ✨"
+       NO_OP {reason}
+3. ACT (deterministic executors): validate & apply actions with GUARDRAILS:
+     ≤ 2 new bounties/tick, ≤ 6 active total; no duplicate bounty per (moment, vip);
+     points = clamp(basePoints × vipWeight(targetVip), 50, 300) — the guardrail band is the
+     ceiling, tier (spec 11 §3.3) is the reason a bride's-mother bounty outpays a generic one;
+     stage advance auto-applies only if confidence ≥ 0.8
+     AND scheduled window agrees ±45 min — else it becomes a host-console suggestion card.
+```
+
+**Tier also orders which gap gets acted on, not just how it's paid.** When the REASON step has multiple candidate gaps of similar statistical severity, it ranks by `vipWeight(targetVip)` first — a tier-0 gap (the couple) outranks a tier-3 gap (a random guest cluster) of equal photoCount deficit. Tier is deterministic metadata read at reasoning time, never something the LLM is trusted to infer or remember on its own (spec 11 §4).
+
+Session state (Agent Runtime Sessions) carries tick-to-tick memory: issued bounties, deferred ideas, last assessment — so the LLM reasons over a narrative, not a cold start. Context stays bounded regardless of event length: the session keeps a **rolling window of the last 10 tick summaries**, with older ticks compacted into a single paragraph (compaction happens in the deterministic Act step, not by the LLM). **Every tick's reasoning is visible in the Observability trace DAG — this goes in the demo video.**
+
+## 2. Stage tracking — timeline as prior, not truth
+
+Weddings run late. Three inputs, fused:
+- **Schedule** (Event Graph windows) = prior.
+- **Visual evidence** = Curator's per-photo raw stage distributions; a run of high-confidence off-schedule classifications (e.g. 12 of last 20 photos look like Pheras during the Sangeet window) is the drift signal computed in the ledger step.
+- **Host override** = the host console's big "Now: ▶ Pheras" button (and MC shortcut) always wins instantly.
+
+`PROPOSE_STAGE_ADVANCE` applies the guardrail above. Stage change fans out: kiosk re-theme, **immediate arming of the new stage's required-moment bounty templates**, `ANNOUNCE` slot, temporal prior update for the Curator context block.
+
+**Two coverage mechanisms, deliberately split:** *scheduled arming* for predictable moments — a varmala or bouquet toss lasts under a minute, and reactive detection can only notice the absence after it's over, so those bounties go live from the timeline prior the second their stage begins; *reconciliation* (the 2-min tick) for statistical gaps that only aggregate evidence reveals ("40 minutes into the Haldi, zero photos of the grandmother"). Anticipate the predictable, reconcile the statistical.
+
+## 3. Bounty lifecycle
+
+```
+bounties/{bountyId}: {status: active → (claimed*) → fulfilled | expired,
+  targetStage, targetMoment, targetVip?, title, copy, points, expiresAt,
+  audience: all | nearStage | topContributors, submissions: [{mediaId, uid, verdict, score}]}
+```
+
+- **Delivery:** guests' PWAs listen on `bounties` where `status=='active'` → animated mission banner. (Primary channel = Firestore listener — works in every browser including iOS Safari; FCM web push fires additionally where available. Never demo-critical.) Kiosk shows `bounty_call` slots on escalation.
+- **Submission:** guest taps banner → camera → upload flows the *normal* pipeline (spec 01/03) with `bountyId` stamped at intent time; intake routes it to a **priority Cloud Tasks queue** (same worker, faster dispatch) so validation feels instant.
+- **Validation:** after curate completes, a bounty-check step (flash-lite, structured) scores the photo against the bounty's machine-readable criteria (`targetMoment`, `targetVip` via face match — the *identity* check comes from Face Indexer, not the LLM). `fulfilled` → transaction: award points to `guests/{uid}`, mark bounty, leaderboard listener updates everywhere, kiosk celebration slot. Partial credit (right moment, weak quality) → smaller award, bounty stays open.
+- **Expiry/escalation:** unfilled critical bounty past half-life → `ESCALATE_BOUNTY` (more points, kiosk takeover). Expired → recorded in ledger as a permanent coverage gap (the wrap-up report tells the host honestly).
+
+## 4. Anti-spam & fairness
+
+Max 1 banner per guest per 10 min (client-side gate on the listener); bounty audience targeting (`nearStage` = guests who uploaded in the last 15 min); per-uid daily points cap; duplicate submissions to one bounty keep only the best score.
+
+## 5. Acceptance criteria
+
+- [ ] Seeded scenario "Pheras active, zero bride's-mother photos" → within one tick a correctly-worded bounty exists and banners appear on connected clients (no human input anywhere).
+- [ ] A submitted photo matching the moment+VIP fulfills the bounty and awards points transactionally (no double-award under concurrent submissions).
+- [ ] Stage-drift scenario (Sangeet window, Pheras-looking photos) → proposal card appears on host console; confidence ≥ 0.8 + window agreement → auto-advance.
+- [ ] Guardrails hold under adversarial LLM output (action fuzz test: invalid actions are rejected and logged, never applied).
+- [ ] Two consecutive ticks with no changes → `NO_OP` with reasoning (no bounty spam).
