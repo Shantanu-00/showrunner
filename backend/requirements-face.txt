@@ -1,0 +1,5 @@
+# Face indexer only (backend/docker/Dockerfile.face). InsightFace + ONNX Runtime add ~700 MB
+# and ~25 s of cold start, which is fine for a min-instance=1 worker and unacceptable for intake.
+-r requirements.txt
+insightface
+onnxruntime

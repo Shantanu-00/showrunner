@@ -1,0 +1,6 @@
+# Reel renderer + video prep only (backend/docker/Dockerfile.render). librosa is pinned <1.0
+# because the beat-tracking API we depend on changed in 1.x.
+-r requirements.txt
+librosa<1.0
+soundfile
+ffmpeg-python
