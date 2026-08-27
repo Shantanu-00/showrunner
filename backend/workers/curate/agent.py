@@ -1,0 +1,244 @@
+"""The Curator — agent #1 of the fleet (spec 03 §5.1).
+
+One photo in, one structured opinion out: how much visual evidence there is for each scheduled
+stage, how good the photograph is on a fixed rubric, what moment it shows, and a caption that
+states only what is in the frame.
+
+Three prompt decisions carry most of the quality:
+
+- **Rubric anchors, not adjectives.** "Rate this photo 0-1" produces scores that drift with the
+  batch — every photo of a nice wedding looks good next to the last one. Fixed anchors at 0 / 0.25 /
+  0.5 / 0.75 / 1.0 make the number mean the same thing on photo 3 and photo 300, which matters
+  because `publicFloor` (spec 04 §2) is an absolute threshold and the reel EDL sorts across the
+  whole event.
+- **The model is never told when the photo was taken.** It scores visual evidence per stage; the
+  temporal prior is applied afterwards by `fusion.py`. Two independent signals can be compared, and
+  their disagreement is the stage-drift signal the Story Director reads (spec 05 §4). One entangled
+  signal can only be believed.
+- **The cultural glossary is supplied, never inferred.** `culturalElements` may only use terms the
+  host reviewed at onboarding (spec 11 §2). A model guessing a tradition from how people look is
+  the single most embarrassing thing this system could do, so it is structurally prevented: no
+  glossary, no cultural terms.
+
+Few-shots are text-only, deliberately. Image few-shots would triple the per-photo prompt cost and
+blow the spend calibration in spec 09 §2; what the examples actually teach is the *mapping* from a
+described scene to rubric numbers, and prose carries that fine.
+"""
+
+from __future__ import annotations
+
+import functools
+from typing import Any
+
+from google.adk.agents import LlmAgent
+from google.genai import types
+
+from schemas.curator_out import CuratorOut
+from services.gemini import adk_model, as_image_part, as_text_part
+from shared.settings import settings
+
+#: Kept tight on purpose: spec 09 §2 prices this stage at ~1,548 input tokens per photo, and the
+#: queue rates are pinned to that number. Prompt text is the only part of the bill this file
+#: controls, so every line here has to earn its tokens.
+INSTRUCTION = """\
+Curator for a live event photo pipeline. One photo in, one JSON object per the schema out.
+
+Judge only what is visible. You are not told when the photo was taken — never infer the stage from
+time of day or lighting. Score visual evidence; the system fuses it with the schedule separately.
+
+visual: one entry per stageId in the event context — how strongly the frame suggests that stage
+(0.0 none, 1.0 unmistakable). Independent scores, not a distribution; they need not sum to 1.
+
+aestheticScore anchors, which must mean the same thing on every photo:
+ 0.00 unusable: accidental shot, subject unrecognisable, severely dark or out of focus.
+ 0.25 poor: heavy motion blur, blown highlights, everyone looking away, no discernible subject.
+ 0.50 competent snapshot: clear subject, correct exposure and focus, no compositional intent.
+ 0.75 good: deliberate framing, clean light, clear emotional or narrative content — an album pick.
+ 1.00 exceptional: the decisive moment. Peak emotion or action, strong composition and light.
+
+quality entries are DEFECT scores: 0.0 absent, 1.0 severe. eyesClosed covers main subjects only.
+
+isHighlight: true only if aestheticScore >= 0.75 AND the frame shows a moment (emotion, action or a
+ritual beat). A technically lovely photo of nothing is not a highlight.
+
+momentTags: 1-4 lowercase snake_case tags for the visible action; reuse a listed momentId verbatim
+when it matches.
+
+caption: one factual present-tense sentence, max 120 chars, describing only what is visible. Never
+invent names, relationships, roles or unseen emotions. No praise. Empty beats guessed.
+
+culturalElements: only glossary terms actually visible in the frame. No glossary or no match means
+an empty list. Never name a tradition, ritual, garment or religion that is not in the glossary.
+
+peopleCountEstimate: distinct people at least partly visible; round crowds over 20 to nearest 10.
+"""
+
+#: Text-only few-shots (spec 03 §5.1: three annotated examples per event type). Each line is
+#: `scene -> the numbers a correct answer would carry`, which is the only thing worth teaching.
+_FEWSHOTS: dict[str, str] = {
+    "wedding_hindu": """\
+Examples (described scenes, and the scores a correct answer carries):
+1. Turmeric paste being pressed onto a laughing bride's cheek by three relatives, bright daylight,
+   hands in motion, sharp -> aestheticScore 0.85, isHighlight true, momentTags [haldi_application],
+   peopleCountEstimate 4, quality all near 0.
+2. Wide shot of a mandap from the back of the hall, guests' heads filling the lower third, the
+   couple small and partly hidden -> aestheticScore 0.35, isHighlight false,
+   momentTags [ceremony_wide], peopleCountEstimate 40.
+3. Grandmother wiping her eyes during the vows, tight frame, soft window light, in focus ->
+   aestheticScore 0.9, isHighlight true, momentTags [emotional_reaction], peopleCountEstimate 1.
+""",
+    "wedding": """\
+Examples (described scenes, and the scores a correct answer carries):
+1. Ring being slipped onto a finger, hands filling the frame, shallow depth of field, sharp ->
+   aestheticScore 0.85, isHighlight true, momentTags [ring_exchange], peopleCountEstimate 2.
+2. Buffet table shot at an angle, no people, mixed indoor light -> aestheticScore 0.4,
+   isHighlight false, momentTags [reception_details], peopleCountEstimate 0.
+3. Blurred group on the dance floor, motion smeared across the frame, faces unreadable ->
+   aestheticScore 0.2, isHighlight false, momentTags [dancing], quality.blur 0.8,
+   peopleCountEstimate 8.
+""",
+    "party": """\
+Examples (described scenes, and the scores a correct answer carries):
+1. Candles being blown out, faces lit from below, everyone leaning in, sharp -> aestheticScore 0.85,
+   isHighlight true, momentTags [cake_cutting], peopleCountEstimate 6.
+2. Two friends mid-laugh at a table, phone flash, slightly harsh but clear -> aestheticScore 0.6,
+   isHighlight false, momentTags [candid_conversation], peopleCountEstimate 2.
+3. Dark room, one bright light source, silhouettes only, subjects unidentifiable ->
+   aestheticScore 0.15, isHighlight false, momentTags [venue_ambience],
+   quality.exposure 0.7, peopleCountEstimate 3.
+""",
+    "ceremony": """\
+Examples (described scenes, and the scores a correct answer carries):
+1. Graduate turning from the podium holding a certificate, mid-stride, clean background, sharp ->
+   aestheticScore 0.8, isHighlight true, momentTags [certificate_handover],
+   peopleCountEstimate 2.
+2. Rows of seated attendees photographed from the side, no clear subject -> aestheticScore 0.35,
+   isHighlight false, momentTags [audience_wide], peopleCountEstimate 30.
+3. Family embrace outside the hall, arms around each other, one face fully visible ->
+   aestheticScore 0.75, isHighlight true, momentTags [family_embrace], peopleCountEstimate 4.
+""",
+    "corporate": """\
+Examples (described scenes, and the scores a correct answer carries):
+1. Speaker mid-gesture on stage, screen legible behind them, well lit, sharp -> aestheticScore 0.75,
+   isHighlight true, momentTags [keynote], peopleCountEstimate 1.
+2. Laptop and coffee cup on a table, overhead angle, no people -> aestheticScore 0.45,
+   isHighlight false, momentTags [workshop_details], peopleCountEstimate 0.
+3. Team standing in a line for a posed photo, half squinting into the sun -> aestheticScore 0.5,
+   isHighlight false, momentTags [group_photo], quality.eyesClosed 0.5, peopleCountEstimate 9.
+""",
+    "generic": """\
+Examples (described scenes, and the scores a correct answer carries):
+1. Two people mid-embrace, faces visible, natural light, sharp -> aestheticScore 0.8,
+   isHighlight true, momentTags [embrace], peopleCountEstimate 2.
+2. Empty room with decorations, correct exposure, no subject of interest -> aestheticScore 0.4,
+   isHighlight false, momentTags [venue_details], peopleCountEstimate 0.
+3. Photo of a floor, taken accidentally -> aestheticScore 0.0, isHighlight false, momentTags
+   [accidental], caption empty, peopleCountEstimate 0.
+""",
+}
+
+#: Which few-shot family each event template draws on. Templates that behave the same
+#: photographically share a set rather than duplicating one.
+_FEWSHOT_FAMILY: dict[str, str] = {
+    "wedding_hindu": "wedding_hindu",
+    "wedding_generic": "wedding",
+    "wedding_christian": "wedding",
+    "wedding_muslim": "wedding",
+    "bachelor_bachelorette": "party",
+    "birthday": "party",
+    "graduation": "ceremony",
+    "corporate_offsite": "corporate",
+    "custom": "generic",
+}
+
+
+@functools.lru_cache(maxsize=1)
+def curator_agent() -> LlmAgent:
+    """One agent per process. The event-specific context travels in the message, not the agent.
+
+    Keeping the agent static means one cached runner for the container's life; building an agent
+    per event would make the first photo of every event pay setup cost for nothing.
+    """
+    return LlmAgent(
+        name="curator",
+        description="Scores a single event photograph against a fixed rubric.",
+        model=adk_model(settings().model_classifier),
+        instruction=INSTRUCTION,
+        output_schema=CuratorOut,
+        output_key="curator",
+        generate_content_config=types.GenerateContentConfig(
+            # Spec 03 §5.1: temperature-free JSON. The same photo must score the same on a replay,
+            # or the `publicFloor` threshold becomes a coin flip for anything near it.
+            temperature=0.0,
+            # The single biggest line on this stage's bill, and it is not the render size.
+            # Measured on `gemini-3.5-flash-lite` 2026-08-27: an inline image costs ~1,055 input
+            # tokens at the default resolution and ~260 at LOW — *identically* whether the source
+            # render is 384, 512 or 768 px, because the model rescales internally. Spec 03 §4 and
+            # spec 09 §2 both budget ~258 tokens per frame, so LOW is the tier those numbers were
+            # always describing; the default would put this stage 57% over its cost rail and take
+            # the two Gemini queues past the spend-tier cap they are calibrated against.
+            # Verified against the alternatives on the same photo: aestheticScore, isHighlight, the
+            # stage evidence distribution, momentTags, glossary terms and caption were unchanged
+            # from MEDIUM and from the default. Only `peopleCountEstimate` drifted (±1 in a group
+            # of five), and nothing gates on it.
+            media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
+        ),
+    )
+
+
+def fewshots_for(event: dict[str, Any]) -> str:
+    profile = event.get("eventTypeProfile") or {}
+    template = str(profile.get("templateId") or "custom")
+    return _FEWSHOTS[_FEWSHOT_FAMILY.get(template, "generic")]
+
+
+def event_context(event: dict[str, Any]) -> str:
+    """The event context block: stage list with windows, required moments, active stage, glossary.
+
+    Windows are printed for orientation only — the instruction forbids reasoning from them, and the
+    prior that actually uses them is applied after the call. What the stage list is really for is
+    fixing the label space: the model may only score stages this event has.
+    """
+    profile = event.get("eventTypeProfile") or {}
+    stages = event.get("stages") or []
+    active = event.get("stageOverride") or event.get("activeStage")
+
+    lines: list[str] = ["--- EVENT CONTEXT ---", f"Event: {event.get('name') or 'unnamed'}"]
+
+    lines.append("Stages (score `visual` for exactly these stageIds):")
+    if stages:
+        for stage in stages:
+            stage_id = stage.get("stageId")
+            label = stage.get("label") or stage_id
+            moments = [
+                str(moment.get("momentId"))
+                for moment in (stage.get("requiredMoments") or [])
+                if moment.get("momentId")
+            ]
+            suffix = f" | required moments: {', '.join(moments)}" if moments else ""
+            lines.append(f"  - {stage_id}: {label}{suffix}")
+    else:
+        # An event with no schedule yet: the model has no label space, so it scores nothing and
+        # fusion returns a null stageId. Better than inventing stage names the system cannot use.
+        lines.append("  (none scheduled — return an empty `visual` list)")
+
+    if active:
+        lines.append(f"Host's current stage: {active} (context only — do not assume this photo is from it)")
+
+    glossary = profile.get("culturalGlossary") or []
+    if glossary:
+        lines.append(f"Cultural glossary (the ONLY permitted culturalElements): {', '.join(glossary)}")
+    else:
+        lines.append("Cultural glossary: empty — return an empty culturalElements list.")
+
+    return "\n".join(lines)
+
+
+def prompt_parts(
+    event: dict[str, Any], image: bytes, content_type: str = "image/webp"
+) -> list[types.Part]:
+    """Text context first, then the image: the label space has to be established before the photo."""
+    return [
+        as_text_part(f"{event_context(event)}\n\n{fewshots_for(event)}"),
+        as_image_part(image, content_type),
+    ]

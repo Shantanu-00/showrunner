@@ -18,7 +18,11 @@ elif SERVICE == "intake":
     from intake.app import app
 elif SERVICE == "dlq":
     from workers.dlq.app import app
+elif SERVICE == "worker-curate":
+    from workers.curate.app import app
 else:  # fail loudly at startup — a mis-set SERVICE must not silently serve the wrong surface
-    raise RuntimeError(f"unknown SERVICE={SERVICE!r} (expected one of: api, intake, dlq)")
+    raise RuntimeError(
+        f"unknown SERVICE={SERVICE!r} (expected one of: api, intake, dlq, worker-curate)"
+    )
 
 __all__ = ["app"]
