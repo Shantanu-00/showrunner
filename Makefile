@@ -1,4 +1,4 @@
-.PHONY: up down dev-event smoke smoke-faces seed eval rules-test \
+.PHONY: up down dev-event smoke smoke-faces smoke-safety seed eval rules-test \
         deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
         deploy-video-prep deploy-render deploy-publisher
 
@@ -23,6 +23,11 @@ smoke:
 # host review and the review endpoint approves it. Needs worker-face deployed.
 smoke-faces:
 	$(PY) scripts/smoke_faces.py
+
+# Guardian + the first photo to reach status=indexed + host override + surgical replay.
+# `--gate-only` runs just the deterministic decision table: no uploads, no spend.
+smoke-safety:
+	$(PY) scripts/smoke_safety.py
 
 seed:
 	$(PY) backend/seed.py --event demo

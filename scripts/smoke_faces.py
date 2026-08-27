@@ -44,7 +44,13 @@ from shared import fs, internal as face_internal  # noqa: E402
 from shared.settings import settings  # noqa: E402
 from shared.ulid import new_ulid  # noqa: E402
 
-from smoke_upload import put_bytes, register_intent, sign_in_anonymously, wait_for_stage  # noqa: E402
+from smoke_upload import (  # noqa: E402
+    put_bytes,
+    register_intent,
+    sign_in_anonymously,
+    unique_jpeg,
+    wait_for_stage,
+)
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -128,12 +134,17 @@ def embed_photo(path: Path) -> list[float]:
 def seed_vip(event_id: str, embedding: list[float], display_name: str) -> str:
     person_id = new_ulid()
     now = dt.datetime.now(dt.timezone.utc)
+    # Face template in its own document (`enrollments/{personId}`), exactly where the enrollment
+    # endpoint puts it — no client rule grants that collection, so a person doc can stay readable
+    # for display names and tiers without publishing everyone's biometric (S9, shared/fs.py).
+    fs.enrollment_ref(event_id, person_id).set(
+        {"personId": person_id, "embedding": embedding, "createdAt": now}
+    )
     fs.person_ref(event_id, person_id).set(
         {
             "personId": person_id,
             "displayName": display_name,
             "uidLinks": [],
-            "selfieEmbedding": embedding,
             "tier": int(Tier.NAMED_VIP),
             "hostEnrolled": False,
             "featured": False,
@@ -192,8 +203,11 @@ def main() -> int:
         fail(f"event {event_id} does not exist")
     print(f"event {event_id}  status={event.get('status')}")
 
-    data = FACE_PHOTO.read_bytes()
-    selfie_b64 = base64.b64encode(data).decode("ascii")
+    # The uploaded copy is made byte-unique per run (one corner pixel) so a second run against the
+    # same event is not silently deduped into a no-op; the selfie stays the original file, since it
+    # never touches GCS and one pixel is invisible to the embedder either way.
+    data = unique_jpeg(FACE_PHOTO)
+    selfie_b64 = base64.b64encode(FACE_PHOTO.read_bytes()).decode("ascii")
 
     # ---- 1. upload a photo containing a face, wait for the faces stage
     token, _uid = sign_in_anonymously(api_key)

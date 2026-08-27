@@ -8,12 +8,13 @@ The generated photo carries **GPS EXIF and a DateTimeOriginal**, so one run chec
 most likely to be quietly wrong: that capture time (not upload time) drives the temporal prior,
 and that GPS does not survive in the stored original.
 
-Two things this deliberately does *not* assert. `status` stops at `processing`, not `indexed`,
-because `indexed` needs `safety` too (S9) — the generated photo has no face in it, so the faces
-stage settles `done` with zero detections and buys `status` nothing on its own; see
-`smoke_faces.py` for the face-indexing and claim-flow path (S5) on a photo that *does* have one.
-`visibility` is `pool` even for a Ring-2 upload, because `public` additionally requires a Guardian
-`public_ok` that nothing writes yet. Both are the correct answers today, so both are checked as such.
+This script owns the *spine*: intake, renders, EXIF, dedupe, idempotency and the Curator. The
+stages that land in parallel with it have their own scripts — `smoke_faces.py` (identity) and
+`smoke_safety.py` (Guardian, `status='indexed'`, the public path) — so what it asserts about them is
+only that they do not interfere: `status` is `processing` until every stage settles and `indexed`
+after, and either is correct here depending on which stage won the race. `visibility` for a Ring-2
+upload of a *generated gradient* stays `pool` because the aesthetic floor is real (0.45) and a
+gradient scores 0.0 — the photo that demonstrates `public` is a real photograph, in `smoke_safety.py`.
 
     python scripts/smoke_upload.py --event-id dev_01J...
     python scripts/smoke_upload.py --event-id dev_... --idempotency   # re-PUT, expect no change
@@ -117,6 +118,24 @@ def make_photo(captured_local: dt.datetime, *, seed: int, with_gps: bool = True)
 
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=88, exif=piexif.dump(exif))
+    return buf.getvalue()
+
+
+def unique_jpeg(path: Path) -> bytes:
+    """A fixture photo with one corner pixel randomised, so a run is repeatable.
+
+    Uploading the identical file twice to one event is *correctly* deduped (spec 01 §5): intake marks
+    the second `duplicateOf` the first and dispatches no perception at all, so a re-run would sit
+    waiting for stages that will never exist. One changed pixel changes the md5 and nothing a face
+    detector, a rubric or a dignity judgment can see. Used by `smoke_faces.py` / `smoke_safety.py`,
+    which upload real photographs rather than generating one.
+    """
+    with Image.open(path) as opened:
+        image = opened.convert("RGB")
+    seed = int(time.time() * 1000) % 251
+    image.putpixel((0, 0), (seed, (seed * 7) % 251, (seed * 13) % 251))
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=92)
     return buf.getvalue()
 
 
@@ -300,22 +319,36 @@ def check_curate(
     if curator.get("needsReview"):
         fail("curator.needsReview=true — the conservative default was written, so the call failed")
 
+    # `usage` is the item's *total* across every Gemini stage, and two of them call a model (curate
+    # and safety, spec 09 §2 prices both at the same rail). So the rail check has to divide by the
+    # number of model stages that have actually landed — comparing the sum against a single stage's
+    # budget reported a phantom +95% cost regression the moment the Guardian shipped.
     usage = doc.get("usage") or {}
     tokens_in, tokens_out = int(usage.get("tokensIn") or 0), int(usage.get("tokensOut") or 0)
     if tokens_in <= 0:
         fail("usage.tokensIn is 0 — the cost ticker did not record the call")
-    drift = (tokens_in - CURATE_TOKENS_IN_RAIL) / CURATE_TOKENS_IN_RAIL * 100
-    ok(f"usage: {tokens_in} in / {tokens_out} out ({drift:+.0f}% vs the spec 09 §2 rail of {CURATE_TOKENS_IN_RAIL})")
+    stages = doc.get("stages") or {}
+    model_stages = max(1, sum(1 for s in ("curate", "safety") if stages.get(s) == "done"))
+    per_stage = tokens_in / model_stages
+    drift = (per_stage - CURATE_TOKENS_IN_RAIL) / CURATE_TOKENS_IN_RAIL * 100
+    ok(f"usage: {tokens_in} in / {tokens_out} out across {model_stages} model stage(s) "
+       f"(~{per_stage:.0f} each, {drift:+.0f}% vs the spec 09 §2 rail of {CURATE_TOKENS_IN_RAIL})")
     if drift > 15:
-        fail(f"input tokens {drift:+.0f}% over the rail — the queue rates are calibrated against it")
+        fail(f"per-stage input tokens {drift:+.0f}% over the rail — the queue rates depend on it")
 
     if doc.get("visibility") != expect_visibility:
         fail(f"visibility={doc.get('visibility')!r}, expected {expect_visibility!r}")
     ok(f"visibility={expect_visibility} (written by recompute_visibility in the stage transaction)")
 
-    if doc.get("status") == "indexed":
-        fail("status=indexed with safety still pending — the derived status is too eager")
-    ok(f"status={doc.get('status')} (indexed waits for safety — S9)")
+    # `indexed` is derived from the stage map, not from this stage: the three perception stages run
+    # in parallel, so whether the item is already `indexed` when the Curator's assertions run is a
+    # race — what must never happen is `indexed` with a stage still outstanding.
+    stages = doc.get("stages") or {}
+    settled = all(state in ("done", "failed", "failed_permanent") for state in stages.values())
+    if doc.get("status") == "indexed" and not all(state == "done" for state in stages.values()):
+        fail(f"status=indexed with stages {stages} — the derived status is too eager")
+    ok(f"status={doc.get('status')} (stages {'all settled' if settled else 'still landing'}: "
+       f"{' '.join(f'{k}={v}' for k, v in sorted(stages.items()))})")
 
     worker, end_to_end = stage_ms(doc, "curate")
     print(f"      curate: worker {worker}ms · queued→done {end_to_end}ms")
