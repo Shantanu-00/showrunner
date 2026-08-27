@@ -1,11 +1,249 @@
 rules_version = '2';
 
-// Deny-by-default. Full matrix (consent rings, host claims, subject veto,
-// visibility enforcement) lands in B3 (spec 09 §3) alongside rules-tests/.
+// Showrunner — Firestore security rules (spec 09 §3, spec 04 §2, spec 02 §1).
+//
+// These rules are the *enforcement* half of "judgment by agents, enforcement by policy" (spec 04 §1).
+// Agents write opinions: an aesthetic score, a dignity verdict, a face match. One deterministic,
+// transactional function — `recompute_visibility`, the only writer of `media.visibility` anywhere in
+// the system — turns those opinions plus the uploader's consent ring into a single field. Everything
+// below serves strictly what that field already decided. No language model can widen exposure by
+// being wrong, because no rule here consults a model's output directly.
+//
+// Four properties are worth checking against the code before changing anything here:
+//
+//  1. **Identity is custom claims only** (`personId`, `host`, `platformAdmin`) — set server-side by
+//     `api` after enrollment / magic-link redemption / a CLI grant, never self-asserted. No rule
+//     performs a `get()`: rules allow only ten per request and each is billed, so a `get()`-based
+//     album check would cap a gallery grid at ten photos.
+//  2. **Clients never write anything except reactions.** Uploads register through the API (which
+//     shape-validates and rate-limits), consent flips through the API, and every perception write is
+//     a service account outside these rules entirely. Spec 04 §2 permits client-written upload-intent
+//     docs; this implementation is tighter, and tighter is fine.
+//  3. **A public read needs `visibility=='public'` AND `status=='indexed'`.** Both, always — spec 04
+//     §2. Visibility can flip to `public` a second or two before the last stage lands, so the status
+//     term is what stops a half-processed photo from appearing on a wall. Every public-surface query
+//     in `frontend/src/lib/firestore.ts` carries both filters for exactly this reason: a Firestore
+//     query whose constraints do not guarantee the read rule fails *entirely*, so query filters and
+//     rules are one design, not two.
+//  4. **Biometrics are unreachable from any client.** `faces/` (512-d face embeddings) and
+//     `enrollments/` (selfie templates) have no allow rule at all. Person documents deliberately do
+//     *not* hold the embedding, because a rule cannot grant one field of a document and withhold
+//     another, and the kiosk credit chip, the leaderboard's names and the Highlights tier ranking all
+//     need to read person documents. See `backend/shared/fs.py::enrollments_col`.
+//
+// Anything without an explicit `allow` is denied: that is the default, and it covers `hashes/`
+// (dedupe register), `claimLinks/` (magic-link hashes), `publisherLease/`, `platform/` and every
+// collection a future session adds before it thinks about rules.
+//
+// Verified by `rules-tests/run_matrix.py` (`make rules-test`) against the Firestore emulator.
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if false;
+
+    // ---------------------------------------------------------------- identity (claims only)
+
+    function signedIn() {
+      return request.auth != null;
     }
+
+    function uid() {
+      return signedIn() ? request.auth.uid : '';
+    }
+
+    // Guests sign in anonymously the moment they open a join link (spec 02 §1), so "signed in" is
+    // what event membership means here — there is no membership document to consult, and the
+    // eventId itself comes from the QR code. Nothing readable on that basis is sensitive: display
+    // names, points, bounty briefs and public photos are all things the kiosk shows on a wall.
+    function isMember() {
+      return signedIn();
+    }
+
+    function isHost(eventId) {
+      return signedIn() && request.auth.token.host == eventId;
+    }
+
+    // Minted once via CLI for the deployment owner (spec 11 §1.1). Never granted to a guest, and
+    // never a substitute for the host claim on someone else's event — it exists so the operator can
+    // support and seed events they are not the host of.
+    function isAdmin() {
+      return signedIn() && request.auth.token.platformAdmin == true;
+    }
+
+    function claimedPerson() {
+      return signedIn() && 'personId' in request.auth.token ? request.auth.token.personId : '';
+    }
+
+    function isPerson(personId) {
+      return claimedPerson() != '' && claimedPerson() == personId;
+    }
+
+    // ---------------------------------------------------------------- events
+
+    match /events/{eventId} {
+      // Host-only: the event document carries `demoConfig`, `class`, `publicFloor`, `costSoFarUsd`
+      // and the platform caps. Guest apps get the projection they actually need — name, theme, stage
+      // chips, glossary — from `GET /v1/events/{eventId}/public`, which is a deliberate boundary and
+      // not an oversight.
+      allow read: if isHost(eventId) || isAdmin();
+      allow write: if false;
+
+      // ---------------------------------------------------------------- media (the whole point)
+
+      match /media/{mediaId} {
+        function media() {
+          return resource.data;
+        }
+
+        // Ring 2 + Guardian + quality floor + no subject veto, all already collapsed into
+        // `visibility` by `recompute_visibility`. `status=='indexed'` means every stage landed.
+        // `isMember()` is spec 04 §2's "any *authed* event member may read" — the one place spec 09
+        // §3's shorter skeleton and spec 04 §2 differ, and the more specific one wins. Anonymous
+        // sign-in happens before anything renders (spec 02 §1), including on the kiosk, so this costs
+        // no surface anything; it does mean a bare `curl` of a photo document gets nothing.
+        function isPubliclyVisible() {
+          return isMember()
+            && media().get('visibility', '') == 'public'
+            && media().get('status', '') == 'indexed';
+        }
+
+        // A person in the frame reads their own photos (spec 04 §2's pool tier). `albumOf` is the
+        // membership array the Face Indexer maintains, because Firestore cannot OR-query. The
+        // visibility test excludes `self`: a Ring-0 upload stays with its uploader even though the
+        // subject is still listed in `albumOf` — and it excludes `blocked` items for the same reason,
+        // since those are forced to `self` at the gate.
+        function isSubject() {
+          return claimedPerson() != ''
+            && claimedPerson() in media().get('albumOf', [])
+            && media().get('visibility', '') in ['pool', 'public'];
+        }
+
+        allow read: if isHost(eventId)
+          || isAdmin()
+          || (signedIn() && media().get('uploaderUid', '') == uid())
+          || isPubliclyVisible()
+          || isSubject();
+
+        // Every mutation — consent flips, subject vetoes, host decisions, perception results —
+        // goes through the API or a worker service account. Both write outside these rules.
+        allow write: if false;
+      }
+
+      // ---------------------------------------------------------------- people
+
+      match /people/{personId} {
+        // Display name and `tier` only, by construction: the selfie template lives in
+        // `enrollments/{personId}` (no rule, below) and anything else private about a person belongs
+        // in the `private/` subcollection. What a member can read here is what the kiosk already puts
+        // on a five-metre screen — the leaderboard's names and the deterministic tier→vipWeight
+        // multiplier behind Highlights ordering (spec 04 §4, spec 11 §3.3).
+        allow read: if isMember();
+        allow write: if false;
+
+        // Reserved, deny-all: the home for anything genuinely private on a person — spec 07's taste
+        // profile, notes, anything a future session is tempted to hang off the person document.
+        match /private/{document=**} {
+          allow read, write: if false;
+        }
+
+        // "A new device joined your album — not you? tap here" (spec 02 §3.2). Addressed to exactly
+        // one person, so exactly one person reads it.
+        match /notices/{noticeId} {
+          allow read: if isPerson(personId) || isHost(eventId);
+          allow write: if false;
+        }
+
+        // The one client write in the entire system (spec 09 §3, verbatim). Deletes are allowed for
+        // the owner too — un-loving a photo is the same right as loving it — but a delete carries no
+        // `request.resource`, so it needs its own rule rather than riding the shape check.
+        match /reactions/{reactionId} {
+          allow read: if isPerson(personId) || isHost(eventId);
+          allow create, update: if isPerson(personId)
+            && request.resource.data.keys().hasOnly(['verdict', 'at'])
+            && request.resource.data.verdict in ['love', 'hide'];
+          allow delete: if isPerson(personId);
+        }
+      }
+
+      // ---------------------------------------------------------------- biometrics: no client, ever
+
+      // 512-d face embeddings, one document per detected face. Unreadable by every client including
+      // the host: an embedding is not something a console needs, and "the host can see it" is how a
+      // biometric ends up in a screenshot. `worker-face` and `api` read it with service credentials.
+      match /faces/{faceId} {
+        allow read, write: if false;
+      }
+
+      // Selfie templates (spec 02 §4's biometric consent artefact). Same reasoning, stronger case.
+      match /enrollments/{personId} {
+        allow read, write: if false;
+      }
+
+      // ---------------------------------------------------------------- the live surfaces
+
+      match /guests/{guestUid} {
+        // Points and upload counts — the leaderboard slot on the kiosk (spec 04 §4) reads this
+        // collection directly, ordered by points. No email, no phone, no token: a uid is not a
+        // credential, and the identity that matters is the one in the verified ID token.
+        allow read: if isMember();
+        allow write: if false;
+      }
+
+      match /bounties/{bountyId} {
+        // Spec 09 §3: readable by event members. A bounty is a public mission — it goes on the wall
+        // as a wanted poster and into every phone's banner, so there is nothing to withhold.
+        allow read: if isMember();
+        allow write: if false;
+      }
+
+      match /reels/{reelId} {
+        // Published reels are media-like (spec 04 §5): public only once every constituent asset is
+        // still Ring-2-eligible, which `recompute_visibility` has already collapsed into the same
+        // `visibility` field. Unpublished drafts and superseded versions stay with the host.
+        allow read: if isHost(eventId)
+          || isAdmin()
+          || resource.data.get('visibility', '') == 'public';
+        allow write: if false;
+      }
+
+      match /kiosk/{document} {
+        // Spec 09 §3, verbatim: `allow read: if true`. The kiosk is a TV in a venue and the playlist
+        // holds only mediaIds that are already public plus the publisher's own ranking factors; making
+        // the show depend on an auth session would be a way for the wall to go dark, not a control.
+        allow read: if true;
+        allow write: if false;
+      }
+
+      // ---------------------------------------------------------------- host-only operations
+
+      // Quarantines, DLQ deliveries, Model Armor deflections, moderation decisions, and the Flight
+      // Deck's `pulse_shards` telemetry (spec 10 §1) — that page is host-authed, so one rule covers it.
+      match /ops/{document=**} {
+        allow read: if isHost(eventId) || isAdmin();
+        allow write: if false;
+      }
+
+      // Who claimed which faces, how, when (spec 02 §3.2) — the audit trail that makes a wrong claim
+      // visible and reversible. Host-visible by design, guest-invisible for the same reason.
+      match /claimAudits/{claimId} {
+        allow read: if isHost(eventId) || isAdmin();
+        allow write: if false;
+      }
+
+      // Coverage ledger (spec 05) — the Story Director's aggregate state.
+      match /ledger/{document} {
+        allow read: if isHost(eventId) || isAdmin();
+        allow write: if false;
+      }
+
+      // Deliberately unlisted, therefore denied: `hashes/` (the dedupe register — readable, it would
+      // let anyone test whether a given photo was uploaded to an event).
+    }
+
+    // ---------------------------------------------------------------- root collections: all denied
+    //
+    // `claimLinks/{hash}` holds album-recovery link hashes — readable, it would turn a database dump
+    // into working links; redemption goes through `POST /v1/claim`. `platform/*` holds the live-event
+    // counter and the public-creation kill switch (spec 11 §1). `publisherLease/*` is leader election
+    // (spec 04 §4). None of them has a client use case, so none of them gets a rule.
   }
 }

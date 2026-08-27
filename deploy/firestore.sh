@@ -44,13 +44,29 @@ ensure_index "media visibility+status+uploadedAt" media \
   --field-config=field-path=visibility,order=ascending \
   --field-config=field-path=status,order=ascending \
   --field-config=field-path=uploadedAt,order=descending
-ensure_index "media visibility+isHighlight+aestheticScore" media \
+# Highlights and the private album both carry one more filter than spec 09 §3's list implies, and
+# both for the same reason (S9): spec 04 §2 requires `status=='indexed'` on *every* public-surface
+# query, and a subject may not read a Ring-0 item they appear in. A Firestore query whose filters do
+# not guarantee the security rule fails entirely rather than skipping the document, so the filters and
+# the rules are one design — which makes these the indexes those queries actually need.
+ensure_index "media visibility+status+isHighlight+aestheticScore" media \
   --field-config=field-path=visibility,order=ascending \
+  --field-config=field-path=status,order=ascending \
   --field-config=field-path=curator.isHighlight,order=ascending \
   --field-config=field-path=curator.aestheticScore,order=descending
-ensure_index "media albumOf+capturedAt" media \
+ensure_index "media visibility+albumOf+capturedAt" media \
+  --field-config=field-path=visibility,order=ascending \
   --field-config=field-path=albumOf,array-config=contains \
   --field-config=field-path=capturedAt,order=descending
+# "My uploads" orders by createdAt, whose *single-field* index is disabled below (hotspot); a
+# composite led by uploaderUid spreads the writes by uploader and serves the query.
+ensure_index "media uploaderUid+createdAt" media \
+  --field-config=field-path=uploaderUid,order=ascending \
+  --field-config=field-path=createdAt,order=descending
+# The host's moderation queue: everything the Guardian routed to `host_review` (spec 03 §5.3).
+ensure_index "media guardian.verdict+uploadedAt" media \
+  --field-config=field-path=guardian.verdict,order=ascending \
+  --field-config=field-path=uploadedAt,order=descending
 ensure_index "bounties status+expiresAt" bounties \
   --field-config=field-path=status,order=ascending \
   --field-config=field-path=expiresAt,order=ascending
@@ -74,8 +90,25 @@ gcloud firestore indexes fields update createdAt --async \
 note "media.createdAt indexes disabled"
 
 step "Security rules"
-# Deny-by-default until spec 04's recompute_visibility and the S9 rules matrix land. A closed
-# database that needs the API is the safe intermediate state; an open one is not.
+# GUARD (added S9, after the 2026-08-27 incident — HANDOFF §9). `firebase deploy --only
+# firestore:rules` pushes whatever is on disk, and it has no idea a file was edited to be permissive
+# for a local emulator run. That is how production spent 98 minutes with `allow read, write: if true`.
+# So: refuse to deploy a rules file that grants an unconditional write, or that opens the recursive
+# wildcard. `ALLOW_PERMISSIVE_RULES=1` overrides it deliberately and loudly; nothing sets that by
+# accident. Note what is *not* matched — `match /kiosk/{document} { allow read: if true; }` is spec 09
+# §3 verbatim and legitimate, so the guard looks for unconditional *writes* and for the catch-all.
+if grep -nE 'allow[^:]*write[^:]*:[[:space:]]*if[[:space:]]+true' "${REPO_ROOT}/firestore.rules" >/dev/null 2>&1 \
+   || grep -nE 'match[[:space:]]*/\{document=\*\*\}' -A3 "${REPO_ROOT}/firestore.rules" | grep -qE 'if[[:space:]]+true'; then
+  if [[ "${ALLOW_PERMISSIVE_RULES:-0}" == "1" ]]; then
+    note "WARNING: permissive rules deployed on purpose (ALLOW_PERMISSIVE_RULES=1)"
+  else
+    echo "REFUSING to deploy firestore.rules: it grants an unconditional write." >&2
+    grep -nE 'if[[:space:]]+true' "${REPO_ROOT}/firestore.rules" >&2 || true
+    echo "If this is a leftover emulator edit, stash it. To override: ALLOW_PERMISSIVE_RULES=1" >&2
+    exit 1
+  fi
+fi
+
 if command -v firebase >/dev/null 2>&1 && [[ -f "${REPO_ROOT}/firestore.rules" ]]; then
   (cd "${REPO_ROOT}" && firebase deploy --only firestore:rules --project "${PROJECT_ID}" >/dev/null) \
     && note "firestore.rules deployed" \

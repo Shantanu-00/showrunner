@@ -45,7 +45,14 @@ export function listenPublicGallery(
 
 /** Highlights tab (spec 04 §3): same gate + `isHighlight==true`, aesthetic-ordered; the
  * vipWeight re-rank on top of this is a client-side, deterministic re-sort (lib/scoring.ts) —
- * shared for every viewer, never personalized. */
+ * shared for every viewer, never personalized.
+ *
+ * `status=='indexed'` is not optional here even though spec 04 §3 only names it on the main gallery
+ * query: spec 04 §2 requires it on *every* public-surface query, and the security rules enforce
+ * exactly that pair. A photo can be `public` for a second or two before its last stage lands, and a
+ * Firestore query whose filters don't guarantee the read rule fails outright rather than skipping the
+ * document — so leaving it off would make Highlights break intermittently under load, which is the
+ * worst possible way to discover it. */
 export function listenHighlights(
   eventId: string,
   onData: (items: MediaDoc[]) => void,
@@ -54,6 +61,7 @@ export function listenHighlights(
   const q = query(
     mediaCol(eventId),
     where("visibility", "==", "public"),
+    where("status", "==", "indexed"),
     where("curator.isHighlight", "==", true),
     orderBy("curator.aestheticScore", "desc"),
     limit(GRID_LIMIT)
@@ -65,8 +73,13 @@ export function listenHighlights(
   );
 }
 
-/** Private album (spec 04 §3): `albumOf array-contains personId`, capturedAt desc. Rules (spec
- * 09 §3) silently drop any `visibility=='self'` item the viewer isn't the uploader of. */
+/** Private album (spec 04 §3): `albumOf array-contains personId`, capturedAt desc.
+ *
+ * The `visibility in ['pool','public']` filter is the rule boundary, not a nicety. A subject appears
+ * in `albumOf` even on an item whose uploader chose Ring 0, and spec 04 §2 says a `self` item belongs
+ * to its uploader alone — so the security rule denies those. Firestore fails a *whole query* when a
+ * returned document is denied, which means the filter has to exclude them client-side or the album
+ * breaks the first time anyone in it uploads a private photo. */
 export function listenPrivateAlbum(
   eventId: string,
   personId: string,
@@ -76,6 +89,7 @@ export function listenPrivateAlbum(
   const q = query(
     mediaCol(eventId),
     where("albumOf", "array-contains", personId),
+    where("visibility", "in", ["pool", "public"]),
     orderBy("capturedAt", "desc"),
     limit(GRID_LIMIT)
   );
