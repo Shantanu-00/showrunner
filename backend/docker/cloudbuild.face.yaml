@@ -1,0 +1,9 @@
+# `gcloud run deploy --source` cannot point at an alternate Dockerfile, and `gcloud builds
+# submit --tag` always builds `./Dockerfile` — worker-face needs docker/Dockerfile.face instead,
+# so it gets a small explicit build config. Invoked from the repo root with the `backend/`
+# directory as build context: `gcloud builds submit backend --config backend/docker/cloudbuild.face.yaml --substitutions=_IMAGE=...`
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "docker/Dockerfile.face", "-t", "$_IMAGE", "."]
+images:
+  - "$_IMAGE"

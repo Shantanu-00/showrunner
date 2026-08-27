@@ -1,0 +1,65 @@
+# worker-face only — InsightFace baked at build (spec 09 §1). backend/Dockerfile serves
+# api/intake/dlq/worker-curate and never carries this weight.
+#
+# Two stages: `builder` needs a compiler to build insightface's native extensions and to run the
+# bake; the runtime stage needs neither, only the shared libs opencv dlopens at runtime. Cutting
+# build-essential and pip's build cache out of the shipped image is the trim HANDOFF §9 flagged
+# against the B1 risk probe's 1049 MB single-stage image.
+#
+# Build from the `backend/` directory as context (requirements*.txt, schemas/, shared/,
+# workers/, main.py all live there) — see backend/docker/cloudbuild.face.yaml.
+FROM python:3.11-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      libgl1 \
+      libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt requirements-face.txt ./
+RUN pip install --prefix=/install -r requirements-face.txt
+
+# Bake the model into the image using the exact packages the runtime stage will ship.
+#
+# insightface 1.0.1 IGNORES the INSIGHTFACE_HOME env var — it resolves the model dir from the
+# `root=` kwarg only (default `~/.insightface`, invisible to a non-root runtime user). Pass root
+# explicitly, and pass the SAME value at runtime via MODEL_ROOT (backend/shared/settings.py) or
+# the worker silently re-downloads 326 MB on every boot instead of failing loudly.
+ENV PYTHONPATH=/install/lib/python3.11/site-packages
+ENV MODEL_ROOT=/models
+RUN python -c "\
+import os, insightface;\
+app = insightface.app.FaceAnalysis(name='buffalo_l', root=os.environ['MODEL_ROOT'], providers=['CPUExecutionProvider']);\
+app.prepare(ctx_id=-1, det_size=(640, 640));\
+print('buffalo_l baked')"
+
+# Fail the build loudly if the bake landed somewhere the runtime won't look. Keep this line:
+# without it, a mis-rooted bake ships silently and only shows up as a slow, quietly-redownloading
+# service on Cloud Run.
+RUN test -d "$MODEL_ROOT/models/buffalo_l" && du -sh "$MODEL_ROOT/models/buffalo_l"
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MODEL_ROOT=/models
+
+# Runtime needs opencv's shared libs, not a compiler.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libgl1 \
+      libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /install /usr/local
+COPY --from=builder /models /models
+
+WORKDIR /app
+COPY . ./
+
+ENV PORT=8080 SERVICE=worker-face
+# One worker per container, same reasoning as backend/Dockerfile: Cloud Run scales by instance.
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT} --workers 1

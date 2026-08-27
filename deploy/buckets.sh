@@ -12,6 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 API_SA="$(sa_email "${SA_API}")"
 INTAKE_SA="$(sa_email "${SA_INTAKE}")"
 CURATE_SA="$(sa_email "${SA_CURATE}")"
+FACE_SA="$(sa_email "${SA_FACE}")"
 
 CORS_DIR="$(mktemp -d)"
 trap 'rm -rf "${CORS_DIR}"' EXIT
@@ -99,6 +100,10 @@ grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${INTAKE_SA}" "roles/stora
 # worker-curate: reads one render (classify_768 / poster) and writes nothing to any bucket. It has
 # no grant at all on raw — the Curator never sees a guest's full-resolution original.
 grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${CURATE_SA}" "roles/storage.objectViewer"
+# worker-face: reads display_1600 (falling back to classify_768) for the faces stage; the selfie
+# path never touches GCS at all (the base64 body goes straight to /embed). Same no-raw-bucket
+# posture as worker-curate — it never sees a guest's original either.
+grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${FACE_SA}" "roles/storage.objectViewer"
 
 echo
 echo "Buckets ready: ${RAW_BUCKET} · ${DERIVED_BUCKET} · ${CURATED_BUCKET}"

@@ -58,6 +58,14 @@ ensure_index "reels persona+version" reels \
   --field-config=field-path=persona,order=ascending \
   --field-config=field-path=version,order=descending
 
+step "Vector index (spec 09 §3): faces.embedding, 512-d"
+# A vector index declares dimension only; COSINE is a `find_nearest(distance_measure=...)`
+# argument at query time (shared/faces.py), not an index property — the index just has to exist.
+# Double-quoted, not single: the unescaped {..} is bash brace-expansion syntax and unquoted (or
+# single-quoted-then-split) it silently fans out into two broken flags instead of one.
+ensure_index "faces embedding (512-d vector)" faces \
+  "--field-config=field-path=embedding,vector-config={dimension=512,flat}"
+
 step "Single-field exemption: media.createdAt"
 # ULID doc IDs already spread writes, but an indexed monotonically-increasing timestamp is its own
 # 500 writes/s hotspot — and nothing orders by createdAt (capturedAt does that job).

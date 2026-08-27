@@ -9,9 +9,11 @@ most likely to be quietly wrong: that capture time (not upload time) drives the 
 and that GPS does not survive in the stored original.
 
 Two things this deliberately does *not* assert. `status` stops at `processing`, not `indexed`,
-because `indexed` needs `faces` and `safety` too and those workers land in S5/S9; and `visibility`
-is `pool` even for a Ring-2 upload, because `public` additionally requires a Guardian `public_ok`
-that nothing writes yet. Both are the correct answers today, so both are checked as such.
+because `indexed` needs `safety` too (S9) — the generated photo has no face in it, so the faces
+stage settles `done` with zero detections and buys `status` nothing on its own; see
+`smoke_faces.py` for the face-indexing and claim-flow path (S5) on a photo that *does* have one.
+`visibility` is `pool` even for a Ring-2 upload, because `public` additionally requires a Guardian
+`public_ok` that nothing writes yet. Both are the correct answers today, so both are checked as such.
 
     python scripts/smoke_upload.py --event-id dev_01J...
     python scripts/smoke_upload.py --event-id dev_... --idempotency   # re-PUT, expect no change
@@ -312,8 +314,8 @@ def check_curate(
     ok(f"visibility={expect_visibility} (written by recompute_visibility in the stage transaction)")
 
     if doc.get("status") == "indexed":
-        fail("status=indexed with faces/safety still pending — the derived status is too eager")
-    ok(f"status={doc.get('status')} (indexed waits for faces + safety — S5/S9)")
+        fail("status=indexed with safety still pending — the derived status is too eager")
+    ok(f"status={doc.get('status')} (indexed waits for safety — S9)")
 
     worker, end_to_end = stage_ms(doc, "curate")
     print(f"      curate: worker {worker}ms · queued→done {end_to_end}ms")

@@ -1,4 +1,4 @@
-.PHONY: up down dev-event smoke seed eval rules-test \
+.PHONY: up down dev-event smoke smoke-faces seed eval rules-test \
         deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
         deploy-video-prep deploy-render deploy-publisher
 
@@ -18,6 +18,11 @@ dev-event:
 # Real anonymous sign-in → signed URL → GCS → Eventarc → intake. Set SMOKE_EVENT_ID first.
 smoke:
 	$(PY) scripts/smoke_upload.py
+
+# Face Indexer + claim flow: selfie enrollment fills an album; a VIP-matching selfie holds for
+# host review and the review endpoint approves it. Needs worker-face deployed.
+smoke-faces:
+	$(PY) scripts/smoke_faces.py
 
 seed:
 	$(PY) backend/seed.py --event demo
@@ -44,9 +49,14 @@ deploy-curate:
 	gcloud run deploy worker-curate --source backend --region $(REGION) \
 	  --update-env-vars SERVICE=worker-curate
 
-# B2 workers: heavier dependency sets, hence their own Dockerfiles.
+# B2 workers: heavier dependency sets, hence their own Dockerfiles. worker-face cannot use
+# `--source` (it would pick up backend/Dockerfile, the wrong one) — build explicitly with the
+# alternate Dockerfile via backend/docker/cloudbuild.face.yaml, then deploy that image.
 deploy-face:
-	gcloud run deploy worker-face --source backend --region $(REGION) \
+	$(eval FACE_IMAGE := $(REGION)-docker.pkg.dev/$(shell gcloud config get-value project)/showrunner/worker-face:$(shell git rev-parse --short HEAD))
+	gcloud builds submit backend --config backend/docker/cloudbuild.face.yaml \
+	  --substitutions _IMAGE=$(FACE_IMAGE)
+	gcloud run deploy worker-face --image $(FACE_IMAGE) --region $(REGION) \
 	  --update-env-vars SERVICE=worker-face
 
 deploy-safety:

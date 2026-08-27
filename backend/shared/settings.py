@@ -30,6 +30,26 @@ MAX_VIDEO_BYTES = 200 * 1024 * 1024
 MAX_FILES_PER_CALL = 50  # spec 01 §3
 SIGNED_URL_TTL_MINUTES = 15  # spec 01 §3
 
+# --- face index rails ------------------------------------------------------------------------
+# The two numbers spec 02 §3.1 pins for the claim-size gate's review card and magic links.
+CLAIM_EXEMPLARS = 4
+CLAIM_LINK_TTL_DAYS = 30
+
+#: A selfie arrives as base64 in a JSON body; anything larger than this is a mistake or an attack.
+SELFIE_MAX_BYTES = 8 * 1024 * 1024
+
+#: Engineering rails, not product policy — they bound write amplification, they do not decide
+#: anything. A 60-face baraat photo is a crowd shot, not 60 album memberships, and one media doc
+#: should never fan out into hundreds of face docs; faces are kept largest-box-first, so the
+#: people the photo is *about* are the ones that survive the cut.
+MAX_FACES_PER_MEDIA = 25
+#: How many neighbours the face-level claim pulls. Well above CLAIM_REVIEW_THRESHOLD (8) so the
+#: audited `faceCount` is the real number rather than a truncated one.
+CLAIM_FACE_LIMIT = 100
+#: Nearest-neighbour probe depth for cluster adoption. >1 because the nearest hits may be other
+#: faces from the same photo, which are by definition *not* the same person.
+CLUSTER_PROBE_LIMIT = 8
+
 # Derived render sizes (spec 01 §4). classify_768 is what Gemini sees.
 THUMB_PX = 384
 CLASSIFY_PX = 768
@@ -132,6 +152,27 @@ class Settings:
         # OIDC identity Cloud Tasks uses when calling a worker; also the signBlob identity.
         self.tasks_sa_email: str = _env("TASKS_SA_EMAIL")
         self.signer_sa_email: str = _env("SIGNER_SA_EMAIL")
+
+        #: Where `buffalo_l` was baked (backend/docker/Dockerfile.face). insightface ignores
+        #: INSIGHTFACE_HOME and resolves models from its `root=` kwarg only, so this value must
+        #: match the Dockerfile's ENV or the worker silently re-downloads 326 MB on every boot.
+        self.face_model_root: str = _env("MODEL_ROOT", "/models")
+
+        # Face identity thresholds, all cosine similarity on unit-norm embeddings.
+        #
+        # τ_match and τ_cluster are spec 03 §5.2 verbatim. τ_claim is the one number in this
+        # session that no spec pins: spec 02 §3 fixes only its *shape* — "strict, higher than the
+        # photo-matching threshold" — so 0.60 is this build's choice, set deliberately above
+        # τ_cluster so a claim can never be looser than the clustering that grouped the faces it
+        # is claiming. The ambiguity margin is spec 02 §3 verbatim (twins and siblings).
+        # All four are env-overridable because spec 03 §5.2 calls for Day-3 calibration.
+        self.tau_match: float = _float_env("TAU_MATCH", 0.45)
+        self.tau_cluster: float = _float_env("TAU_CLUSTER", 0.55)
+        self.tau_claim: float = _float_env("TAU_CLAIM", 0.60)
+        self.claim_ambiguity_margin: float = _float_env("CLAIM_AMBIGUITY_MARGIN", 0.08)
+
+        #: Where the claim magic link points (spec 02 §3.1 — the code rides in the fragment).
+        self.app_origin: str = _env("NEXT_PUBLIC_APP_ORIGIN")
 
         # Product limits (spec 01 §3, spec 02 §3, spec 04 §2, spec 11 §1).
         self.upload_rate_limit_per_hour: int = _int_env("UPLOAD_RATE_LIMIT_PER_HOUR", 300)

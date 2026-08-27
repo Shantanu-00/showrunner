@@ -22,6 +22,7 @@ from shared import fs, log
 from shared.auth import Principal, caller
 from shared.settings import settings
 
+from .identity import claim_router, router as identity_router
 from .uploads import router as uploads_router
 
 log.configure("api")
@@ -41,6 +42,8 @@ app.add_middleware(
 )
 
 app.include_router(uploads_router)
+app.include_router(identity_router)
+app.include_router(claim_router)
 
 
 @app.get("/livez")
@@ -53,15 +56,18 @@ async def event_public(
     eventId: str = Path(min_length=1, max_length=128),
     principal: Principal = Depends(caller),
 ) -> dict[str, object]:
-    """The minimum an authenticated guest app needs to render the join screen.
+    """The minimum an authenticated guest app needs to render the join screen, the gallery's
+    stage chips, and the kiosk/PWA theme flip (spec 12 §3).
 
-    Deliberately narrow: name, status, timezone, active stage, theme. No cost figures, no
-    class, no demo flags, nothing that would leak platform state to a guest.
+    Deliberately narrow: name, status, timezone, active stage, theme, a stage label list. No
+    cost figures, no class, no demo flags, no stage timing/required moments, nothing that would
+    leak platform or operational state to a guest.
     """
     event = fs.get_event(eventId)
     if not event:
         return {"exists": False}
     status = event.get("status", EventStatus.DRAFT.value)
+    stages = event.get("stages") or []
     return {
         "exists": True,
         "eventId": eventId,
@@ -69,6 +75,11 @@ async def event_public(
         "status": status,
         "timezone": event.get("timezone"),
         "activeStage": event.get("stageOverride") or event.get("activeStage"),
+        "templateId": (event.get("eventTypeProfile") or {}).get("templateId"),
+        "stages": [
+            {"stageId": s.get("stageId"), "label": s.get("label"), "theme": s.get("theme")}
+            for s in stages
+        ],
         "uploadsOpen": status in {s.value for s in UPLOAD_OPEN_STATUSES},
         "publicFrozen": bool(event.get("publicFrozen")),
         "serverTime": dt.datetime.now(dt.timezone.utc),

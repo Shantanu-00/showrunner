@@ -53,8 +53,44 @@ def people_col(event_id: str) -> firestore.CollectionReference:
     return event_ref(event_id).collection("people")
 
 
+def person_ref(event_id: str, person_id: str) -> firestore.DocumentReference:
+    return people_col(event_id).document(person_id)
+
+
+def notices_col(event_id: str, person_id: str) -> firestore.CollectionReference:
+    """Person-scoped notices — the "new device joined" card in a private album (spec 02 §3.2).
+
+    Under the person rather than the event because that is exactly who may read it: the album
+    owner. A host-facing notice is an `ops/` alert, and the two must never be the same collection.
+    """
+    return person_ref(event_id, person_id).collection("notices")
+
+
 def faces_col(event_id: str) -> firestore.CollectionReference:
     return event_ref(event_id).collection("faces")
+
+
+def face_ref(event_id: str, face_id: str) -> firestore.DocumentReference:
+    return faces_col(event_id).document(face_id)
+
+
+def claim_audits_col(event_id: str) -> firestore.CollectionReference:
+    """`claimAudits/{claimId}` (spec 03 §1) — every claim, any size, host-visible and reversible."""
+    return event_ref(event_id).collection("claimAudits")
+
+
+def claim_audit_ref(event_id: str, claim_id: str) -> firestore.DocumentReference:
+    return claim_audits_col(event_id).document(claim_id)
+
+
+def claim_link_ref(code_hash: str) -> firestore.DocumentReference:
+    """`claimLinks/{hash}` — spec 02 §3.1, and deliberately a *root* collection.
+
+    The redemption endpoint (`POST /v1/claim`) receives a bare code and no event, so the hash has
+    to be addressable without knowing the event. Only the hash is stored; a leaked database dump
+    does not yield a working link.
+    """
+    return db().collection("claimLinks").document(code_hash)
 
 
 def bounty_ref(event_id: str, bounty_id: str) -> firestore.DocumentReference:

@@ -68,6 +68,7 @@ SA_API="sa-api"
 SA_INTAKE="sa-intake"
 SA_DLQ="sa-dlq"
 SA_CURATE="sa-curate"
+SA_FACE="sa-face"
 SA_TASKS="sa-tasks"
 SA_EVENTARC="sa-eventarc"
 

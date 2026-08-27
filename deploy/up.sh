@@ -50,6 +50,15 @@ step "Build (Cloud Build — no local Docker on this machine)"
 gcloud builds submit "${REPO_ROOT}/backend" --tag "${IMAGE}" --project "${PROJECT_ID}" >/dev/null
 note "built ${IMAGE}"
 
+# worker-face ships InsightFace baked in (~700 MB of native deps) and cannot ride the common
+# image without bloating api/intake's cold start — its own Dockerfile, its own build (spec 09 §1).
+FACE_IMAGE="${IMAGE_HOST}/${PROJECT_ID}/${REPO}/worker-face:${TAG}"
+step "Build worker-face (separate image — backend/docker/Dockerfile.face)"
+gcloud builds submit "${REPO_ROOT}/backend" \
+  --config "${REPO_ROOT}/backend/docker/cloudbuild.face.yaml" \
+  --substitutions "_IMAGE=${FACE_IMAGE}" --project "${PROJECT_ID}" >/dev/null
+note "built ${FACE_IMAGE}"
+
 # Shared runtime config. Worker URLs stay empty until B2 exists; tasks.enqueue logs a skipped
 # dispatch rather than queueing work nothing can consume.
 COMMON_ENV="ENVIRONMENT=${ENVIRONMENT:-production}"
@@ -97,6 +106,25 @@ grant_run_invoker worker-curate "serviceAccount:${TASKS_SA_EMAIL}"
 upsert_env WORKER_CURATE_URL "${CURATE_URL}"
 COMMON_ENV="${COMMON_ENV};WORKER_CURATE_URL=${CURATE_URL}"
 
+step "Deploy worker-face (Cloud Tasks target + api's /embed call, private — spec 09 §1: 2/4Gi, 0→5 min 1, concurrency 4)"
+gcloud run deploy worker-face \
+  --image "${FACE_IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
+  --service-account "$(sa_email "${SA_FACE}")" \
+  --cpu 2 --memory 4Gi --min-instances 1 --max-instances 5 --concurrency 4 \
+  --timeout 120 --no-allow-unauthenticated \
+  --set-env-vars "^;^SERVICE=worker-face;${COMMON_ENV}" \
+  --quiet >/dev/null
+FACE_URL="$(run_url worker-face)"
+note "worker-face → ${FACE_URL}"
+
+# Two callers, two reasons: sa-tasks dispatches the `faces` stage task, sa-api calls /embed
+# synchronously from the selfie enrollment/re-claim endpoints (spec 02 §3).
+grant_run_invoker worker-face "serviceAccount:${TASKS_SA_EMAIL}"
+grant_run_invoker worker-face "serviceAccount:$(sa_email "${SA_API}")"
+
+upsert_env WORKER_FACE_URL "${FACE_URL}"
+COMMON_ENV="${COMMON_ENV};WORKER_FACE_URL=${FACE_URL}"
+
 step "Deploy api (guest-facing, public — auth is enforced in-app via Firebase ID tokens)"
 gcloud run deploy api \
   --image "${IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
@@ -133,7 +161,7 @@ API_URL="$(run_url api)"
 upsert_env NEXT_PUBLIC_API_URL "${API_URL}"
 
 step "Health"
-for svc in api intake dlq worker-curate; do
+for svc in api intake dlq worker-curate worker-face; do
   url="$(run_url "${svc}")"
   if [[ "${svc}" == "api" ]]; then
     code="$(curl -s -o /dev/null -w '%{http_code}' "${url}/livez")"

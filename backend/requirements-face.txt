@@ -1,5 +1,9 @@
 # Face indexer only (backend/docker/Dockerfile.face). InsightFace + ONNX Runtime add ~700 MB
 # and ~25 s of cold start, which is fine for a min-instance=1 worker and unacceptable for intake.
+# Pins proven by the B1 risk probe (scripts/risk_tests/face_probe): insightface's onnx graphs
+# assume numpy<2, and opencv-python-headless (no GUI/X11 libs) is what a Cloud Run container needs.
 -r requirements.txt
-insightface
+numpy<2
+opencv-python-headless
 onnxruntime
+insightface
