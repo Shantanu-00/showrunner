@@ -83,3 +83,10 @@ temp_renders/
 scratch/
 cache/
 !backend/assets/audio/*.mp3
+
+# ==========================================
+# 7. B1 Risk-Probe Artifacts
+# ==========================================
+# Probe output: generated media, raw API responses, RESULTS.md. Regenerable by re-running
+# the probes; the durable record is HANDOFF §9 + docs/context/friction-log.md.
+scripts/risk_tests/artifacts/

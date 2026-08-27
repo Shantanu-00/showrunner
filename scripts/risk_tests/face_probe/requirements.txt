@@ -1,0 +1,7 @@
+# Probe-only pin set. The real worker (backend/workers/face) inherits whatever this proves.
+fastapi
+uvicorn[standard]
+numpy<2
+onnxruntime
+insightface
+opencv-python-headless
