@@ -24,7 +24,9 @@ from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from google.adk.agents import LlmAgent
+from google.adk.apps import App
 from google.adk.models import Gemini
+from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.runners import InMemoryRunner
 from google.genai import errors as genai_errors
 from google.genai import types
@@ -106,17 +108,25 @@ def adk_model(model_id: str) -> Gemini:
 _RUNNERS: dict[str, InMemoryRunner] = {}
 
 
-def _runner(agent: LlmAgent) -> InMemoryRunner:
+def _runner(agent: LlmAgent, plugins: list[BasePlugin] | None = None) -> InMemoryRunner:
     """One runner per agent for the process lifetime.
 
     Sessions are created and deleted per call instead: the perception agents are deliberately
     stateless (one photo, one judgment — Sessions and Memory Bank belong to the directors,
     spec 05), and an accumulating in-memory session store in a long-lived worker is a leak.
+
+    `plugins` (e.g. `ModelArmorPlugin`) belong to the runner, not the agent, so they are part of the
+    cache identity: a caller asking for a guarded run must never be handed the unguarded runner that
+    an earlier call created. Guarded runners are therefore keyed separately rather than mutating the
+    cached one — a plugin that could be attached after the fact could also be detached after the fact.
     """
-    runner = _RUNNERS.get(agent.name)
+    key = agent.name if not plugins else f"{agent.name}+{','.join(p.name for p in plugins)}"
+    runner = _RUNNERS.get(key)
     if runner is None:
-        runner = InMemoryRunner(agent=agent, app_name="showrunner")
-        _RUNNERS[agent.name] = runner
+        runner = InMemoryRunner(
+            app=App(name="showrunner", root_agent=agent, plugins=list(plugins or []))
+        )
+        _RUNNERS[key] = runner
     return runner
 
 
@@ -135,9 +145,11 @@ def _classify_error(exc: Exception) -> ModelError:
     return TransientModelError(f"{type(exc).__name__}: {exc}")
 
 
-async def _invoke(agent: LlmAgent, parts: list[types.Part]) -> tuple[str, ModelUsage, str | None]:
+async def _invoke(
+    agent: LlmAgent, parts: list[types.Part], plugins: list[BasePlugin] | None = None
+) -> tuple[str, ModelUsage, str | None]:
     """One agent turn. Returns (raw text, usage, finish reason)."""
-    runner = _runner(agent)
+    runner = _runner(agent, plugins)
     session = await runner.session_service.create_session(
         app_name="showrunner", user_id="worker"
     )
@@ -184,8 +196,13 @@ async def run_structured(
     schema: type[T],
     *,
     stage: str,
+    plugins: list[BasePlugin] | None = None,
 ) -> tuple[T, ModelUsage]:
     """Run `agent` and return its output parsed into `schema`.
+
+    `plugins` is how a caller opts into `ModelArmorPlugin` (services/armor_plugin.py). A prompt it
+    deflects surfaces here as a `PermanentModelError`, which is the correct classification: the same
+    text will match again on every retry.
 
     A schema-invalid response gets exactly **one** retry (spec 03 §6) before it is declared
     permanent: the first bad parse is usually a truncation or a stray code fence, and a second
@@ -196,7 +213,7 @@ async def run_structured(
     last: Exception | None = None
 
     for attempt in (1, 2):
-        raw, usage, finish = await _invoke(agent, parts)
+        raw, usage, finish = await _invoke(agent, parts, plugins)
         total = total + usage
 
         if finish not in _CLEAN_FINISH:

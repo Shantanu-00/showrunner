@@ -174,6 +174,13 @@ class Settings:
         #: Where the claim magic link points (spec 02 §3.1 — the code rides in the fragment).
         self.app_origin: str = _env("NEXT_PUBLIC_APP_ORIGIN")
 
+        #: Model Armor template (text surfaces only — spec 03 §4.7). The *location* is read out of
+        #: this resource name by `services/armor.py`, so it is configured exactly once: Model Armor
+        #: is `us`/`eu` multi-region and lives on its own endpoint host, and a second copy of that
+        #: value is how a 404 ends up looking like a permissions problem. Empty = unchecked, logged
+        #: loudly, never silently treated as clean.
+        self.model_armor_template: str = _env("MODEL_ARMOR_TEMPLATE")
+
         # Product limits (spec 01 §3, spec 02 §3, spec 04 §2, spec 11 §1).
         self.upload_rate_limit_per_hour: int = _int_env("UPLOAD_RATE_LIMIT_PER_HOUR", 300)
         self.claim_review_threshold: int = _int_env("CLAIM_REVIEW_THRESHOLD", 8)
