@@ -33,6 +33,40 @@ def _emit(severity: str, message: str, **fields: Any) -> None:
     print(line, file=stream, flush=True)
 
 
+#: Fields promoted into the one-line summary of a stage log, in this order. Everything else still
+#: gets emitted as a queryable label, it just does not earn space in the collapsed row.
+_STAGE_SUMMARY_FIELDS = (
+    "stage",
+    "media_id",
+    "ms",
+    "tokens_in",
+    "tokens_out",
+    "stage_id",
+    "aesthetic",
+    "highlight",
+    "verdict",
+    "faces",
+    "visibility",
+    "err",
+)
+
+
+def stage(outcome: str, **fields: Any) -> None:
+    """Log one pipeline stage as a single readable line *and* as structured labels.
+
+    Logs Explorer shows a JSON payload's `message` as the collapsed summary and everything else
+    only after expanding the entry. Since these entries are read off a screen — the pipeline's
+    latency and token cost are meant to be legible at a glance, not after a click — the summary
+    carries the numbers inline (`stage=curate media=01J… ms=1180 tokens_in=1548 verdict=highlight`)
+    while the same values stay individually queryable for the Flight Deck and the cost ticker.
+
+    Keep the field names stable: `docs/specs/10-pipeline-visualizer.md` reads them back.
+    """
+    parts = [f"{key}={fields[key]}" for key in _STAGE_SUMMARY_FIELDS if fields.get(key) is not None]
+    severity = "ERROR" if outcome in ("failed", "failed_permanent") else "INFO"
+    _emit(severity, " ".join([f"{outcome}:", *parts]), **fields)
+
+
 def debug(message: str, **fields: Any) -> None:
     _emit("DEBUG", message, **fields)
 

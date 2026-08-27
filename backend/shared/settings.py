@@ -35,6 +35,18 @@ THUMB_PX = 384
 CLASSIFY_PX = 768
 DISPLAY_PX = 1600
 
+# Stage fusion (spec 03 §5.1). The temporal prior is 1.0 inside a stage's scheduled window with a
+# ±30 min ramp, 0.15 outside — and *flattened* to 0.5 everywhere when EXIF is missing, so a wrong
+# upload-time prior can never outvote the visual signal on a WhatsApp forward.
+STAGE_PRIOR_IN_WINDOW = 1.0
+STAGE_PRIOR_OUT_OF_WINDOW = 0.15
+STAGE_PRIOR_RAMP_MINUTES = 30
+STAGE_PRIOR_FLAT = 0.5
+
+# Cloud Tasks gives up after 5 attempts (spec 09 §2). The handler needs the same number to know
+# which attempt is its last, because that is the one that must quarantine instead of retrying.
+MAX_STAGE_ATTEMPTS = 5
+
 EXT_BY_CONTENT_TYPE = {
     "image/jpeg": "jpg",
     "image/png": "png",
@@ -90,6 +102,13 @@ class Settings:
 
         self.project: str = _env("GOOGLE_CLOUD_PROJECT")
         self.location: str = _env("GOOGLE_CLOUD_LOCATION", "us-central1")
+        #: GenAI publisher models serve from `global`; a us-central1 call 404s. Kept separate
+        #: from `location` on purpose — that one builds Cloud Tasks queue paths.
+        self.genai_location: str = _env("GENAI_LOCATION", "global")
+
+        # Models — verbatim from .env.example, which postdates every model's training data.
+        self.model_classifier: str = _env("MODEL_CLASSIFIER", "gemini-3.5-flash-lite")
+        self.model_director: str = _env("MODEL_DIRECTOR", "gemini-3.7-flash")
 
         self.raw_bucket: str = _env("RAW_MEDIA_BUCKET")
         self.derived_bucket: str = _env("DERIVED_MEDIA_BUCKET")

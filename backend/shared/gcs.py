@@ -49,6 +49,19 @@ def gs_uri(bucket: str, path: str) -> str:
     return f"gs://{bucket}/{path}"
 
 
+def parse_gs_uri(uri: str) -> tuple[str, str] | None:
+    """`gs://bucket/path` → (bucket, path), else None.
+
+    Media docs store render locations as URIs, so every downstream worker starts by splitting one.
+    Returning None instead of raising lets the caller classify a malformed URI as permanent — no
+    number of retries will make it parse.
+    """
+    if not uri or not uri.startswith("gs://"):
+        return None
+    bucket, _, path = uri[len("gs://") :].partition("/")
+    return (bucket, path) if bucket and path else None
+
+
 def parse_object_path(name: str) -> tuple[str, str] | None:
     """`events/{eventId}/media/{mediaId}/original.ext` → (eventId, mediaId), else None.
 
