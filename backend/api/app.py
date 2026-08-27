@@ -23,6 +23,7 @@ from shared.auth import Principal, caller
 from shared.settings import settings
 
 from .identity import claim_router, router as identity_router
+from .moderation import router as moderation_router
 from .uploads import router as uploads_router
 
 log.configure("api")
@@ -44,6 +45,7 @@ app.add_middleware(
 app.include_router(uploads_router)
 app.include_router(identity_router)
 app.include_router(claim_router)
+app.include_router(moderation_router)
 
 
 @app.get("/livez")
