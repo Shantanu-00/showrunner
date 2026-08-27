@@ -14,6 +14,10 @@ google-cloud-vision
 google-cloud-secret-manager
 google-adk>=2.7,<3
 google-genai
+# Model Armor has no pinned client library; services/armor.py calls its REST surface through
+# google-auth's AuthorizedSession, which needs requests. Transitively present via google-api-core —
+# declared here because we import it directly.
+requests
 pillow
 pillow-heif
 piexif
