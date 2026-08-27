@@ -731,11 +731,37 @@
       <section id="section-2">
         <h2>2. Master diagram</h2>
         <p>Interactive full-stack architecture diagram illustrating the clients, data plane, Agent Runtime control plane, and cross-cutting governance rail.</p>
+
+        <!-- View Switcher Tabs -->
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+          <button id="tabGraphicBtn" class="btn-icon" style="background: var(--bg-surface-elevated); border-color: var(--accent-blue); color: var(--accent-blue);" onclick="switchDiagramView('graphic')">
+            🖼️ Rendered Infographic Diagram
+          </button>
+          <button id="tabMermaidBtn" class="btn-icon" onclick="switchDiagramView('mermaid')">
+            📐 Live Mermaid Flowchart
+          </button>
+        </div>
         
-        <div class="diagram-container" id="masterDiagramContainer">
+        <!-- Graphic View Card -->
+        <div class="diagram-container" id="graphicDiagramContainer" style="display: block;">
           <div class="diagram-header">
             <div class="diagram-title">
-              <span>📐 Master Architecture Flowchart</span>
+              <span>🖼️ High-Definition System Architecture Blueprint</span>
+            </div>
+            <div class="diagram-controls">
+              <button class="btn-ctrl" onclick="toggleFullscreen('graphicDiagramContainer')" title="Toggle Fullscreen">⛶</button>
+            </div>
+          </div>
+          <div class="diagram-viewport" style="padding: 1rem; text-align: center; overflow: hidden; background: #0B0F19;">
+            <img id="architectureGraphicImg" src="assets/architecture-diagram.jpg" alt="Showrunner Cloud Architecture Diagram" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.6);" />
+          </div>
+        </div>
+
+        <!-- Mermaid Flowchart Card -->
+        <div class="diagram-container" id="masterDiagramContainer" style="display: none;">
+          <div class="diagram-header">
+            <div class="diagram-title">
+              <span>📐 Master Architecture Flowchart (Mermaid)</span>
             </div>
             <div class="diagram-controls">
               <button class="btn-ctrl" onclick="zoomIn('master')" title="Zoom In">➕</button>
@@ -1148,6 +1174,34 @@ sequenceDiagram
       htmlEl.classList.add('light');
       themeIcon.textContent = '🌙';
       themeText.textContent = 'Dark Mode';
+    }
+
+    // Switch between Infographic and Mermaid diagram views
+    function switchDiagramView(view) {
+      const graphicContainer = document.getElementById('graphicDiagramContainer');
+      const masterContainer = document.getElementById('masterDiagramContainer');
+      const graphicBtn = document.getElementById('tabGraphicBtn');
+      const mermaidBtn = document.getElementById('tabMermaidBtn');
+
+      if (view === 'graphic') {
+        graphicContainer.style.display = 'block';
+        masterContainer.style.display = 'none';
+        graphicBtn.style.background = 'var(--bg-surface-elevated)';
+        graphicBtn.style.borderColor = 'var(--accent-blue)';
+        graphicBtn.style.color = 'var(--accent-blue)';
+        mermaidBtn.style.background = 'var(--bg-surface)';
+        mermaidBtn.style.borderColor = 'var(--border-subtle)';
+        mermaidBtn.style.color = 'var(--text-main)';
+      } else {
+        graphicContainer.style.display = 'none';
+        masterContainer.style.display = 'block';
+        mermaidBtn.style.background = 'var(--bg-surface-elevated)';
+        mermaidBtn.style.borderColor = 'var(--accent-blue)';
+        mermaidBtn.style.color = 'var(--accent-blue)';
+        graphicBtn.style.background = 'var(--bg-surface)';
+        graphicBtn.style.borderColor = 'var(--border-subtle)';
+        graphicBtn.style.color = 'var(--text-main)';
+      }
     }
 
     // Zoom Controls

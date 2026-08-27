@@ -1,5 +1,7 @@
 # Showrunner — System Architecture (review document)
 
+> **Visual interactive viewer**: open [`architecture.html`](architecture.html) for the full infographic diagram, interactive zoomable Mermaid flowcharts, sequence diagrams, and theme toggles.
+
 This is the complete architecture in one place, for review and for deriving the submission diagram. Mermaid blocks render on GitHub. Verified platform facts behind every choice: `research/google-stack-research-2026-08-24.md`. Behavior contracts: `specs/01–11`.
 
 ---
