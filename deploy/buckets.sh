@@ -13,6 +13,7 @@ API_SA="$(sa_email "${SA_API}")"
 INTAKE_SA="$(sa_email "${SA_INTAKE}")"
 CURATE_SA="$(sa_email "${SA_CURATE}")"
 FACE_SA="$(sa_email "${SA_FACE}")"
+SAFETY_SA="$(sa_email "${SA_SAFETY}")"
 
 CORS_DIR="$(mktemp -d)"
 trap 'rm -rf "${CORS_DIR}"' EXIT
@@ -104,6 +105,10 @@ grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${CURATE_SA}" "roles/stora
 # path never touches GCS at all (the base64 body goes straight to /embed). Same no-raw-bucket
 # posture as worker-curate — it never sees a guest's original either.
 grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${FACE_SA}" "roles/storage.objectViewer"
+# worker-safety: reads classify_768 for both Guardian passes (Vision charges per image, not per
+# pixel, so the small render is the right one). No raw grant either — the item most likely to be
+# genuinely sensitive is the one this worker looks at, and it still never sees the original.
+grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${SAFETY_SA}" "roles/storage.objectViewer"
 
 echo
 echo "Buckets ready: ${RAW_BUCKET} · ${DERIVED_BUCKET} · ${CURATED_BUCKET}"

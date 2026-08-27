@@ -80,6 +80,10 @@ COMMON_ENV="${COMMON_ENV};PRIORITY_QUEUE=${PRIORITY_QUEUE:-priority-queue}"
 COMMON_ENV="${COMMON_ENV};RENDERS_QUEUE=${RENDERS_QUEUE:-renders-queue}"
 COMMON_ENV="${COMMON_ENV};TASKS_SA_EMAIL=${TASKS_SA_EMAIL}"
 COMMON_ENV="${COMMON_ENV};SIGNER_SA_EMAIL=${SIGNER_SA_EMAIL}"
+# Model Armor guards text surfaces only (spec 03 §4.7). The template is created idempotently by
+# bootstrap.sh in the `us` multi-region — services/armor.py reads the location out of this resource
+# name rather than taking it as a second env var, so the two can never disagree.
+COMMON_ENV="${COMMON_ENV};MODEL_ARMOR_TEMPLATE=${MODEL_ARMOR_TEMPLATE:-projects/${PROJECT_ID}/locations/us/templates/showrunner-guard}"
 
 APP_ORIGINS="http://localhost:3000,https://${PROJECT_ID}.web.app,https://${PROJECT_ID}.firebaseapp.com"
 
@@ -125,6 +129,22 @@ grant_run_invoker worker-face "serviceAccount:$(sa_email "${SA_API}")"
 upsert_env WORKER_FACE_URL "${FACE_URL}"
 COMMON_ENV="${COMMON_ENV};WORKER_FACE_URL=${FACE_URL}"
 
+step "Deploy worker-safety (Cloud Tasks target, private — spec 09 §1: 1/1Gi, 0→10, concurrency 8)"
+gcloud run deploy worker-safety \
+  --image "${IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
+  --service-account "$(sa_email "${SA_SAFETY}")" \
+  --cpu 1 --memory 1Gi --min-instances 0 --max-instances 10 --concurrency 8 \
+  --timeout 120 --no-allow-unauthenticated \
+  --set-env-vars "^;^SERVICE=worker-safety;${COMMON_ENV}" \
+  --quiet >/dev/null
+SAFETY_URL="$(run_url worker-safety)"
+note "worker-safety → ${SAFETY_URL}"
+
+grant_run_invoker worker-safety "serviceAccount:${TASKS_SA_EMAIL}"
+
+upsert_env WORKER_SAFETY_URL "${SAFETY_URL}"
+COMMON_ENV="${COMMON_ENV};WORKER_SAFETY_URL=${SAFETY_URL}"
+
 step "Deploy api (guest-facing, public — auth is enforced in-app via Firebase ID tokens)"
 gcloud run deploy api \
   --image "${IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
@@ -161,7 +181,7 @@ API_URL="$(run_url api)"
 upsert_env NEXT_PUBLIC_API_URL "${API_URL}"
 
 step "Health"
-for svc in api intake dlq worker-curate worker-face; do
+for svc in api intake dlq worker-curate worker-face worker-safety; do
   url="$(run_url "${svc}")"
   if [[ "${svc}" == "api" ]]; then
     code="$(curl -s -o /dev/null -w '%{http_code}' "${url}/livez")"

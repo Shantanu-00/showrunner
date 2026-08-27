@@ -10,6 +10,7 @@ INTAKE_SA="$(sa_email "${SA_INTAKE}")"
 DLQ_SA="$(sa_email "${SA_DLQ}")"
 CURATE_SA="$(sa_email "${SA_CURATE}")"
 FACE_SA="$(sa_email "${SA_FACE}")"
+SAFETY_SA="$(sa_email "${SA_SAFETY}")"
 TASKS_SA="$(sa_email "${SA_TASKS}")"
 EVENTARC_SA="$(sa_email "${SA_EVENTARC}")"
 
@@ -19,6 +20,7 @@ ensure_sa "${SA_INTAKE}" "Showrunner intake (Eventarc target)"
 ensure_sa "${SA_DLQ}" "Showrunner dlq (dead-letter consumer)"
 ensure_sa "${SA_CURATE}" "Showrunner worker-curate (Curator agent)"
 ensure_sa "${SA_FACE}" "Showrunner worker-face (Face Indexer)"
+ensure_sa "${SA_SAFETY}" "Showrunner worker-safety (Guardian)"
 ensure_sa "${SA_TASKS}" "Showrunner Cloud Tasks OIDC identity"
 ensure_sa "${SA_EVENTARC}" "Showrunner Eventarc / Pub-Sub delivery identity"
 
@@ -57,6 +59,21 @@ grant_project_role "serviceAccount:${CURATE_SA}" "roles/aiplatform.user"
 
 step "worker-face: Firestore only — no LLM, no Vertex, no raw bucket"
 grant_project_role "serviceAccount:${FACE_SA}" "roles/datastore.user"
+
+step "worker-safety: Firestore + Vertex AI + Vision (the Guardian's two passes)"
+grant_project_role "serviceAccount:${SAFETY_SA}" "roles/datastore.user"
+# Pass 2, the dignity rubric. Same narrowest-role reasoning as sa-curate: `aiplatform.user` permits
+# generateContent on a publisher model and nothing else.
+grant_project_role "serviceAccount:${SAFETY_SA}" "roles/aiplatform.user"
+# Pass 1, SafeSearch. Vision's annotate methods carry no IAM permission of their own — access is
+# granted by being able to consume the project's Vision quota, which is what this role is.
+grant_project_role "serviceAccount:${SAFETY_SA}" "roles/serviceusage.serviceUsageConsumer"
+
+step "api: Model Armor on text surfaces (spec 09 §4.5)"
+# The itinerary paste, bounty briefs and captions are sanitized before they reach a prompt
+# (services/armor.py). `modelarmor.user` is the sanitize-only role — it cannot create or edit the
+# template, which is created once by deploy/bootstrap.sh.
+grant_project_role "serviceAccount:${API_SA}" "roles/modelarmor.user"
 
 step "Cloud Tasks OIDC: actAs for the enqueuers"
 # Creating a task that carries an OIDC token means acting as that identity — without this the

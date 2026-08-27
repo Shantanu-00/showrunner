@@ -69,6 +69,7 @@ SA_INTAKE="sa-intake"
 SA_DLQ="sa-dlq"
 SA_CURATE="sa-curate"
 SA_FACE="sa-face"
+SA_SAFETY="sa-safety"
 SA_TASKS="sa-tasks"
 SA_EVENTARC="sa-eventarc"
 
