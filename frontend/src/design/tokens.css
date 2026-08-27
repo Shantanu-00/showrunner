@@ -1,0 +1,80 @@
+/* Spec 12 §2 — design tokens. Single source of truth: no hex literals anywhere else. */
+:root {
+  /* base canvas — dark-first: venue kiosks live in dim rooms, photos pop on near-black,
+     and dark UIs read dramatically better on video */
+  --bg-0: #0b0709; /* app background, maroon-black undertone */
+  --bg-1: #171013; /* raised surface */
+  --bg-glass: rgb(23 16 19 / 0.72); /* + backdrop-filter: blur(16px) */
+  --maroon-900: #3d0c11;
+  --maroon-700: #5c1620;
+  --maroon-500: #7a1e2b;
+  --gold-500: #d4af6a;
+  --gold-300: #e9cf9a; /* accent + accent-soft defaults */
+  --ivory: #f5efe6; /* primary text */
+  --ink-muted: #a99e92; /* secondary text */
+  --ok: #7fb069;
+  --warn: #e0a458;
+  --danger: #c0392b;
+  --hairline: 1px solid rgb(212 175 106 / 0.35); /* gold hairline borders */
+  --radius-card: 12px;
+  --radius-banner: 20px;
+  --radius-pill: 999px;
+  --space: 4px; /* 4px grid; all spacing = multiples */
+  --dur-micro: 150ms;
+  --dur-standard: 240ms;
+  --dur-cinematic: 700ms;
+  --ease-luxe: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Spec 12 §3 — event-adaptive theme overrides. Accent pair per templateId. */
+[data-theme="wedding_hindu"] {
+  --bg-0: #0b0709;
+  --accent: #d4af6a;
+  --accent-2: #8c1d2f;
+}
+[data-theme="wedding_generic"],
+[data-theme="wedding_christian"],
+[data-theme="wedding_muslim"] {
+  --bg-0: #0e0c12;
+  --accent: #e9cf9a;
+  --accent-2: #b76e79;
+}
+[data-theme="birthday"] {
+  --bg-0: #0b0e16;
+  --accent: #f27059;
+  --accent-2: #f2c14e;
+}
+[data-theme="bachelor_bachelorette"] {
+  --bg-0: #070709;
+  --accent: #9b5de5;
+  --accent-2: #00f5d4;
+}
+[data-theme="graduation"] {
+  --bg-0: #0a1024;
+  --accent: #e3b23c;
+  --accent-2: #8ecae6;
+}
+[data-theme="corporate_offsite"] {
+  --bg-0: #0c1117;
+  --accent: #8ecae6;
+  --accent-2: #c9d1d9;
+}
+[data-theme="custom"] {
+  --bg-0: #0e0c12;
+  --accent: #e9cf9a;
+  --accent-2: #b76e79;
+}
+
+/* Spec 12 §3 — wedding_hindu stage accents. */
+[data-theme="wedding_hindu"][data-stage="haldi"] {
+  --accent: #e3b23c;
+}
+[data-theme="wedding_hindu"][data-stage="sangeet"] {
+  --accent: #9b5de5;
+}
+[data-theme="wedding_hindu"][data-stage="pheras"] {
+  --accent: #8c1d2f;
+}
+[data-theme="wedding_hindu"][data-stage="reception"] {
+  --accent: #d4af6a;
+}
