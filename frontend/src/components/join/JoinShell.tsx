@@ -1,27 +1,63 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ensureAnonymousAuth } from "@/lib/firebase";
+import { ensureAnonymousAuth, getUid } from "@/lib/firebase";
+import { getEventPublic } from "@/lib/api";
 import * as outbox from "@/lib/outbox";
 import { drain, installResumeTriggers, onOutboxChange } from "@/lib/uploadManager";
-import type { BatchConsent, OutboxItem } from "@/lib/types";
+import type { BatchConsent, EventPublicInfo, OutboxItem } from "@/lib/types";
 import { TabBar, type JoinTab } from "./TabBar";
 import { SendSheet } from "./SendSheet";
 import { Filmstrip } from "./Filmstrip";
+import { EventTab } from "@/components/gallery/EventTab";
+import { MeTab } from "@/components/me/MeTab";
 
 export function JoinShell({ eventId }: { eventId: string }) {
   const [tab, setTab] = useState<JoinTab>("event");
   const [authReady, setAuthReady] = useState(false);
+  const [uid, setUid] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
   const [items, setItems] = useState<OutboxItem[]>([]);
   const [online, setOnline] = useState(true);
+  const [eventInfo, setEventInfo] = useState<EventPublicInfo | null>(null);
+  const [judgeMode, setJudgeMode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void ensureAnonymousAuth().then(() => setAuthReady(true));
+    void ensureAnonymousAuth().then(() => {
+      setAuthReady(true);
+      setUid(getUid());
+    });
     const uninstall = installResumeTriggers();
     return uninstall;
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setJudgeMode(params.get("judge") === "1");
+    const requestedTab = params.get("tab"); // e.g. the /claim redemption landing on Me
+    if (requestedTab === "me" || requestedTab === "event") setTab(requestedTab);
+  }, []);
+
+  // Spec 12 §3: `data-theme`/`data-stage` on <html> retune every open surface with a pure
+  // CSS-variable swap — no reload, no re-render. One REST call at load (this is deliberately
+  // NOT a listener/poll — the theme flip demo beat lives on the kiosk, which does listen live).
+  useEffect(() => {
+    if (!authReady) return;
+    let cancelled = false;
+    void getEventPublic(eventId).then(
+      (info) => {
+        if (cancelled) return;
+        setEventInfo(info);
+        if (info.templateId) document.documentElement.dataset.theme = info.templateId;
+        if (info.activeStage) document.documentElement.dataset.stage = info.activeStage;
+      },
+      () => {}
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId, authReady]);
 
   useEffect(() => {
     const refresh = () => void outbox.listAll().then(setItems);
@@ -85,13 +121,7 @@ export function JoinShell({ eventId }: { eventId: string }) {
         )}
       </header>
 
-      {tab === "event" && (
-        <section className="px-5">
-          <p className="text-center mt-16" style={{ color: "var(--ink-muted)" }}>
-            The kiosk is waiting for its first photo. Scan, shoot, make history.
-          </p>
-        </section>
-      )}
+      {tab === "event" && <EventTab eventId={eventId} eventInfo={eventInfo} judgeMode={judgeMode} />}
 
       {tab === "camera" && (
         <section className="px-5">
@@ -101,13 +131,7 @@ export function JoinShell({ eventId }: { eventId: string }) {
         </section>
       )}
 
-      {tab === "me" && (
-        <section className="px-5">
-          <p className="text-center mt-16" style={{ color: "var(--ink-muted)" }}>
-            Take a selfie and every photo of you finds its way here.
-          </p>
-        </section>
-      )}
+      {tab === "me" && authReady && uid && <MeTab eventId={eventId} uid={uid} />}
 
       <Filmstrip items={items} />
 

@@ -60,3 +60,15 @@ export function ensureAnonymousAuth(): Promise<User> {
 export function getUid(): string | null {
   return auth?.currentUser?.uid ?? null;
 }
+
+/** Spec 02 §1: after enroll/claim/reclaim the server mints custom claims for the uid; the
+ * client must force-refresh its ID token to see them. Returns the claims the rules also read. */
+export async function refreshClaims(): Promise<{ personId?: string; host?: string }> {
+  const user = auth?.currentUser;
+  if (!user) return {};
+  const result = await user.getIdTokenResult(true);
+  return {
+    personId: typeof result.claims.personId === "string" ? result.claims.personId : undefined,
+    host: typeof result.claims.host === "string" ? result.claims.host : undefined,
+  };
+}
