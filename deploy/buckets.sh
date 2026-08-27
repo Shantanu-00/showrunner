@@ -11,6 +11,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 API_SA="$(sa_email "${SA_API}")"
 INTAKE_SA="$(sa_email "${SA_INTAKE}")"
+CURATE_SA="$(sa_email "${SA_CURATE}")"
 
 CORS_DIR="$(mktemp -d)"
 trap 'rm -rf "${CORS_DIR}"' EXIT
@@ -95,6 +96,9 @@ grant_bucket_role "${CURATED_BUCKET}" "serviceAccount:${API_SA}" "roles/storage.
 grant_bucket_role "${RAW_BUCKET}" "serviceAccount:${INTAKE_SA}" "roles/storage.objectAdmin"
 # ...and only ever creates in derived.
 grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${INTAKE_SA}" "roles/storage.objectCreator"
+# worker-curate: reads one render (classify_768 / poster) and writes nothing to any bucket. It has
+# no grant at all on raw — the Curator never sees a guest's full-resolution original.
+grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${CURATE_SA}" "roles/storage.objectViewer"
 
 echo
 echo "Buckets ready: ${RAW_BUCKET} · ${DERIVED_BUCKET} · ${CURATED_BUCKET}"

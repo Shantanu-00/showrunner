@@ -4,8 +4,12 @@
 #
 #   bootstrap (APIs) → service accounts → buckets → Firestore → queues → build → deploy → Eventarc
 #
-# Services and their scaling come from spec 09 §1. One image serves api/intake/dlq; $SERVICE
-# selects which (see backend/main.py), so this builds once and deploys three times.
+# Services and their scaling come from spec 09 §1. One image serves api/intake/dlq/worker-curate;
+# $SERVICE selects which (see backend/main.py), so this builds once and deploys four times.
+#
+# Deploy order matters in one place: `worker-curate` goes up *before* `intake`, because intake
+# dispatches to it by URL and a Cloud Tasks target it does not know about is a silently skipped
+# dispatch, not an error. Anything that produces work is deployed after the thing that consumes it.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SKIP_BOOTSTRAP="${SKIP_BOOTSTRAP:-0}"
@@ -51,6 +55,11 @@ note "built ${IMAGE}"
 COMMON_ENV="ENVIRONMENT=${ENVIRONMENT:-production}"
 COMMON_ENV="${COMMON_ENV};GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
 COMMON_ENV="${COMMON_ENV};GOOGLE_CLOUD_LOCATION=${REGION}"
+# The GenAI publisher models serve from `global`, not from ${REGION} — a regional call 404s
+# (friction log 2026-08-27). This is the model endpoint only; Run/Tasks/Firestore stay regional.
+COMMON_ENV="${COMMON_ENV};GENAI_LOCATION=${GENAI_LOCATION:-global}"
+COMMON_ENV="${COMMON_ENV};MODEL_CLASSIFIER=${MODEL_CLASSIFIER:-gemini-3.5-flash-lite}"
+COMMON_ENV="${COMMON_ENV};MODEL_DIRECTOR=${MODEL_DIRECTOR:-gemini-3.7-flash}"
 COMMON_ENV="${COMMON_ENV};RAW_MEDIA_BUCKET=${RAW_BUCKET}"
 COMMON_ENV="${COMMON_ENV};DERIVED_MEDIA_BUCKET=${DERIVED_BUCKET}"
 COMMON_ENV="${COMMON_ENV};CURATED_REELS_BUCKET=${CURATED_BUCKET}"
@@ -68,6 +77,26 @@ APP_ORIGINS="http://localhost:3000,https://${PROJECT_ID}.web.app,https://${PROJE
 # ALLOWED_ORIGINS is itself comma-separated, which collides with --set-env-vars' default comma
 # delimiter between KEY=VALUE pairs — so every deploy below uses the `^;^` alternate-delimiter
 # syntax (semicolons split pairs; commas inside a value are then just characters).
+step "Deploy worker-curate (Cloud Tasks target, private — spec 09 §1: 1/1Gi, 0→10, concurrency 8)"
+gcloud run deploy worker-curate \
+  --image "${IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
+  --service-account "$(sa_email "${SA_CURATE}")" \
+  --cpu 1 --memory 1Gi --min-instances 0 --max-instances 10 --concurrency 8 \
+  --timeout 120 --no-allow-unauthenticated \
+  --set-env-vars "^;^SERVICE=worker-curate;${COMMON_ENV}" \
+  --quiet >/dev/null
+CURATE_URL="$(run_url worker-curate)"
+note "worker-curate → ${CURATE_URL}"
+
+# Only sa-tasks may call it, and only this service. The handler additionally trusts nothing from
+# the request body it has not re-read from Firestore.
+grant_run_invoker worker-curate "serviceAccount:${TASKS_SA_EMAIL}"
+
+# Now that the target exists, intake can be told where to dispatch. Recorded in .env too, so a
+# `make deploy-intake` later keeps the wiring instead of quietly reverting to skipped dispatches.
+upsert_env WORKER_CURATE_URL "${CURATE_URL}"
+COMMON_ENV="${COMMON_ENV};WORKER_CURATE_URL=${CURATE_URL}"
+
 step "Deploy api (guest-facing, public — auth is enforced in-app via Firebase ID tokens)"
 gcloud run deploy api \
   --image "${IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
@@ -104,7 +133,7 @@ API_URL="$(run_url api)"
 upsert_env NEXT_PUBLIC_API_URL "${API_URL}"
 
 step "Health"
-for svc in api intake dlq; do
+for svc in api intake dlq worker-curate; do
   url="$(run_url "${svc}")"
   if [[ "${svc}" == "api" ]]; then
     code="$(curl -s -o /dev/null -w '%{http_code}' "${url}/livez")"

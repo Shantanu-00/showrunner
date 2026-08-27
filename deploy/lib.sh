@@ -67,6 +67,7 @@ CURATED_BUCKET="${CURATED_REELS_BUCKET:-showrunner-curated-reels}"
 SA_API="sa-api"
 SA_INTAKE="sa-intake"
 SA_DLQ="sa-dlq"
+SA_CURATE="sa-curate"
 SA_TASKS="sa-tasks"
 SA_EVENTARC="sa-eventarc"
 
@@ -108,6 +109,15 @@ grant_bucket_role() {
   gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
     --member "${member}" --role "${role}" >/dev/null
   note "gs://${bucket}: ${role} → ${member}"
+}
+
+grant_run_invoker() {
+  # Per-service, not project-wide: sa-tasks may call exactly the workers it dispatches to.
+  local service="$1" member="$2"
+  gcloud run services add-iam-policy-binding "${service}" \
+    --member "${member}" --role "roles/run.invoker" \
+    --region "${REGION}" --project "${PROJECT_ID}" >/dev/null
+  note "run ${service}: roles/run.invoker → ${member}"
 }
 
 run_url() {

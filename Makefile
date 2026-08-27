@@ -1,6 +1,6 @@
 .PHONY: up down dev-event smoke seed eval rules-test \
-        deploy-api deploy-intake deploy-dlq deploy-face deploy-safety deploy-video-prep \
-        deploy-render deploy-publisher
+        deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
+        deploy-video-prep deploy-render deploy-publisher
 
 REGION := us-central1
 PY := python
@@ -28,7 +28,8 @@ eval:
 rules-test:
 	firebase emulators:exec --only firestore "$(PY) rules-tests/run_matrix.py"
 
-# api / intake / dlq share one image; $$SERVICE picks the app at runtime (backend/main.py).
+# api / intake / dlq / worker-curate share one image; $$SERVICE picks the app at runtime
+# (backend/main.py).
 # --update-env-vars (not --set-env-vars) so a quick redeploy keeps the config up.sh applied.
 deploy-api:
 	gcloud run deploy api --source backend --region $(REGION) --update-env-vars SERVICE=api
@@ -38,6 +39,10 @@ deploy-intake:
 
 deploy-dlq:
 	gcloud run deploy dlq --source backend --region $(REGION) --update-env-vars SERVICE=dlq
+
+deploy-curate:
+	gcloud run deploy worker-curate --source backend --region $(REGION) \
+	  --update-env-vars SERVICE=worker-curate
 
 # B2 workers: heavier dependency sets, hence their own Dockerfiles.
 deploy-face:

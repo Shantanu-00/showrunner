@@ -8,6 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 API_SA="$(sa_email "${SA_API}")"
 INTAKE_SA="$(sa_email "${SA_INTAKE}")"
 DLQ_SA="$(sa_email "${SA_DLQ}")"
+CURATE_SA="$(sa_email "${SA_CURATE}")"
 TASKS_SA="$(sa_email "${SA_TASKS}")"
 EVENTARC_SA="$(sa_email "${SA_EVENTARC}")"
 
@@ -15,6 +16,7 @@ step "Creating service accounts"
 ensure_sa "${SA_API}" "Showrunner api (guest-facing surface)"
 ensure_sa "${SA_INTAKE}" "Showrunner intake (Eventarc target)"
 ensure_sa "${SA_DLQ}" "Showrunner dlq (dead-letter consumer)"
+ensure_sa "${SA_CURATE}" "Showrunner worker-curate (Curator agent)"
 ensure_sa "${SA_TASKS}" "Showrunner Cloud Tasks OIDC identity"
 ensure_sa "${SA_EVENTARC}" "Showrunner Eventarc / Pub-Sub delivery identity"
 
@@ -44,6 +46,12 @@ grant_project_role "serviceAccount:${INTAKE_SA}" "roles/eventarc.eventReceiver"
 
 step "dlq: Firestore only"
 grant_project_role "serviceAccount:${DLQ_SA}" "roles/datastore.user"
+
+step "worker-curate: Firestore + Vertex AI"
+grant_project_role "serviceAccount:${CURATE_SA}" "roles/datastore.user"
+# The Curator's one paid call. `aiplatform.user` is the narrowest role that permits
+# generateContent on a publisher model; the worker has no other Vertex surface.
+grant_project_role "serviceAccount:${CURATE_SA}" "roles/aiplatform.user"
 
 step "Cloud Tasks OIDC: actAs for the enqueuers"
 # Creating a task that carries an OIDC token means acting as that identity — without this the
