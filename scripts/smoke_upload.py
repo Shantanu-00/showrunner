@@ -1,17 +1,23 @@
 """End-to-end smoke test of the upload spine — the real code path, not a simulation.
 
 Anonymous Firebase sign-in → `POST /uploads` → signed-URL PUT straight to GCS → Eventarc →
-intake → Firestore. Exactly what the PWA will do in S3, which is why this stays useful
-afterwards as the warm-up probe in spec 09 §5's runbook.
+intake → Cloud Tasks → `worker-curate` → Firestore. Exactly what the PWA will do in S3, which is
+why this stays useful afterwards as the warm-up probe in spec 09 §5's runbook.
 
 The generated photo carries **GPS EXIF and a DateTimeOriginal**, so one run checks the two things
 most likely to be quietly wrong: that capture time (not upload time) drives the temporal prior,
 and that GPS does not survive in the stored original.
 
+Two things this deliberately does *not* assert. `status` stops at `processing`, not `indexed`,
+because `indexed` needs `faces` and `safety` too and those workers land in S5/S9; and `visibility`
+is `pool` even for a Ring-2 upload, because `public` additionally requires a Guardian `public_ok`
+that nothing writes yet. Both are the correct answers today, so both are checked as such.
+
     python scripts/smoke_upload.py --event-id dev_01J...
     python scripts/smoke_upload.py --event-id dev_... --idempotency   # re-PUT, expect no change
     python scripts/smoke_upload.py --event-id dev_... --duplicate     # same bytes, fresh mediaId
     python scripts/smoke_upload.py --event-id dev_... --corrupt       # expect permanent rejection
+    python scripts/smoke_upload.py --event-id dev_... --chaos 1       # inject a 500, expect a retry
 """
 
 from __future__ import annotations
@@ -35,11 +41,23 @@ from PIL import Image
 BACKEND = Path(__file__).resolve().parents[1] / "backend"
 sys.path.insert(0, str(BACKEND))
 
+# Windows picks cp1252 for a piped stdout, and the arrows in this script's output are then a
+# UnicodeEncodeError two thirds of the way through a passing run.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from shared import fs, gcs  # noqa: E402
 from shared.settings import settings  # noqa: E402
 from shared.ulid import new_ulid  # noqa: E402
 
 TERMINAL = {"processing", "indexed", "rejected", "quarantined"}
+
+#: A stage state that will not change without a replay.
+SETTLED = {"done", "failed", "failed_permanent"}
+
+#: What spec 09 §2 prices one Curator photo at, and what the classify queue's rate is derived
+#: from. A run that lands far off this is a cost regression, not a pass.
+CURATE_TOKENS_IN_RAIL = 1548
 
 
 def fail(message: str) -> None:
@@ -170,15 +188,157 @@ def wait_for(event_id: str, media_id: str, timeout: float) -> dict[str, Any]:
     return {}
 
 
+def wait_for_stage(event_id: str, media_id: str, stage: str, timeout: float) -> dict[str, Any]:
+    """Poll until `stages.{stage}` settles. Reports attempts as they climb, so a retry is visible."""
+    ref = fs.media_ref(event_id, media_id)
+    started = time.time()
+    last: tuple[str, int] = ("", 0)
+    while time.time() - started < timeout:
+        doc: dict[str, Any] = ref.get().to_dict() or {}
+        state = str((doc.get("stages") or {}).get(stage) or "")
+        attempts = int((doc.get("attempts") or {}).get(stage) or 0)
+        if (state, attempts) != last:
+            print(f"      stages.{stage}={state or '(none)'} attempts={attempts}  t+{time.time() - started:.1f}s")
+            last = (state, attempts)
+        if state in SETTLED:
+            return doc
+        time.sleep(1.0)
+    fail(
+        f"timed out after {timeout:.0f}s waiting for stages.{stage} (last={last[0]!r}). "
+        "If it never left 'pending', intake had no worker URL to dispatch to — redeploy intake "
+        "after worker-curate exists (deploy/up.sh does this in the right order)."
+    )
+    return {}
+
+
 def object_exists(bucket: str, path: str) -> bool:
     return gcs.get_blob(bucket, path) is not None
+
+
+def stage_ms(doc: dict[str, Any], stage: str) -> tuple[int | None, int | None]:
+    """(worker time, end-to-end time) in ms, from the stage's own timestamps.
+
+    Worker time is `startedAt`→`doneAt` — the number spec 09 §2's budget is about. End-to-end adds
+    the queue hop and, on a scaled-to-zero service, a cold start, which is why they are reported
+    separately rather than averaged into one misleading figure.
+    """
+    timings = (doc.get("stageTimings") or {}).get(stage) or {}
+
+    def delta(a: str, b: str) -> int | None:
+        start, end = timings.get(a), timings.get(b)
+        if not isinstance(start, dt.datetime) or not isinstance(end, dt.datetime):
+            return None
+        return int((end - start).total_seconds() * 1000)
+
+    return delta("startedAt", "doneAt"), delta("queuedAt", "doneAt")
+
+
+def check_curate(
+    doc: dict[str, Any],
+    event: dict[str, Any],
+    expect_visibility: str,
+    *,
+    synthetic: bool,
+) -> None:
+    """Assert the Curator's contract on the stored document (spec 03 §5.1)."""
+    state = (doc.get("stages") or {}).get("curate")
+    if state != "done":
+        reason = (doc.get("stageErrors") or {}).get("curate")
+        fail(f"stages.curate is {state!r}, expected 'done' (error={reason!r})")
+    ok("stages.curate=done")
+
+    curator = doc.get("curator") or {}
+    if not curator:
+        fail("stages.curate=done but there is no `curator` block on the document")
+
+    aesthetic = curator.get("aestheticScore")
+    if not isinstance(aesthetic, (int, float)) or not 0.0 <= float(aesthetic) <= 1.0:
+        fail(f"curator.aestheticScore is {aesthetic!r}, expected a float in [0,1]")
+
+    # The generated photo is a gradient of nothing, so a *low* score is the correct answer. A high
+    # one means the rubric anchors are not landing — which is a real regression, since `publicFloor`
+    # is an absolute threshold. Skipped for `--file`, where the right score is unknown.
+    if synthetic and float(aesthetic) > 0.5:
+        fail(f"curator.aestheticScore={aesthetic} on a synthetic gradient — the rubric is not landing")
+    ok(f"aestheticScore={aesthetic} isHighlight={curator.get('isHighlight')} tags={curator.get('momentTags')}")
+
+    # Fusion: the stored stageId must be the argmax of a normalised posterior over stages this
+    # event actually has — a stage name the event does not own means the label space leaked.
+    stage_ids = [s.get("stageId") for s in (event.get("stages") or []) if s.get("stageId")]
+    posterior = curator.get("stagePosterior") or {}
+    stage_id = curator.get("stageId")
+    if stage_ids:
+        stray = sorted(set(posterior) - set(stage_ids))
+        if stray:
+            fail(f"stagePosterior contains stages this event does not have: {stray}")
+        if stage_id is not None and stage_id not in stage_ids:
+            fail(f"curator.stageId={stage_id!r} is not one of the event's stages {stage_ids}")
+        total = sum(float(v) for v in posterior.values())
+        if stage_id is None:
+            # An honest "don't know": no visual evidence anywhere, so nothing is claimed.
+            if total > 1e-6:
+                fail(f"stageId is null but stagePosterior sums to {total:.3f} — fusion disagrees with itself")
+            ok("stageId=null with a zero posterior (no visual evidence — honest)")
+        else:
+            if abs(total - 1.0) > 0.01:
+                fail(f"stagePosterior sums to {total:.3f}, expected 1.0 (not normalised)")
+            best = max(posterior, key=lambda k: float(posterior[k]))
+            if best != stage_id:
+                fail(f"curator.stageId={stage_id!r} is not the posterior argmax ({best!r})")
+            ok(f"stageId={stage_id} p={float(posterior[stage_id]):.3f} (argmax of {len(posterior)} stages)")
+    else:
+        ok("event has no schedule — no stage attribution expected")
+
+    glossary = set((event.get("eventTypeProfile") or {}).get("culturalGlossary") or [])
+    outside = [term for term in (curator.get("culturalElements") or []) if term not in glossary]
+    if outside:
+        fail(f"culturalElements outside the host's glossary: {outside} (spec 11 §2)")
+    ok(f"culturalElements={curator.get('culturalElements') or []} (within glossary)")
+
+    if curator.get("needsReview"):
+        fail("curator.needsReview=true — the conservative default was written, so the call failed")
+
+    usage = doc.get("usage") or {}
+    tokens_in, tokens_out = int(usage.get("tokensIn") or 0), int(usage.get("tokensOut") or 0)
+    if tokens_in <= 0:
+        fail("usage.tokensIn is 0 — the cost ticker did not record the call")
+    drift = (tokens_in - CURATE_TOKENS_IN_RAIL) / CURATE_TOKENS_IN_RAIL * 100
+    ok(f"usage: {tokens_in} in / {tokens_out} out ({drift:+.0f}% vs the spec 09 §2 rail of {CURATE_TOKENS_IN_RAIL})")
+    if drift > 15:
+        fail(f"input tokens {drift:+.0f}% over the rail — the queue rates are calibrated against it")
+
+    if doc.get("visibility") != expect_visibility:
+        fail(f"visibility={doc.get('visibility')!r}, expected {expect_visibility!r}")
+    ok(f"visibility={expect_visibility} (written by recompute_visibility in the stage transaction)")
+
+    if doc.get("status") == "indexed":
+        fail("status=indexed with faces/safety still pending — the derived status is too eager")
+    ok(f"status={doc.get('status')} (indexed waits for faces + safety — S5/S9)")
+
+    worker, end_to_end = stage_ms(doc, "curate")
+    print(f"      curate: worker {worker}ms · queued→done {end_to_end}ms")
+    if worker is not None and worker > 5000:
+        print("      NOTE  worker time over the 5 s milestone — check for a cold start in the logs")
+
+
+def set_chaos(event_id: str, stage: str, fail_next: int) -> None:
+    """Arm the failure injector for the next `fail_next` deliveries of `stage` (see shared/chaos)."""
+    fs.ops_col(event_id).document("chaos").set(
+        {"failNext": fail_next, "stages": [stage], "reason": "smoke test chaos injection"}
+    )
+    ok(f"ops/chaos armed: failNext={fail_next} stage={stage}")
 
 
 # ---------------------------------------------------------------- main
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Smoke-test the upload → intake spine.")
+    # Before the parser, not after: the flag defaults below read the environment, and `.env` is
+    # only merged into it as a side effect of building Settings. Reversed, `make smoke` sees none
+    # of the values `deploy/up.sh` wrote and fails claiming they were never set.
+    cfg = settings()
+
+    ap = argparse.ArgumentParser(description="Smoke-test the upload → intake → Curator spine.")
     ap.add_argument("--event-id", default=os.environ.get("SMOKE_EVENT_ID"))
     ap.add_argument("--api", default=os.environ.get("NEXT_PUBLIC_API_URL"))
     ap.add_argument("--file", default=None, help="upload a real photo instead of a generated one")
@@ -188,9 +348,16 @@ def main() -> int:
     ap.add_argument("--idempotency", action="store_true", help="re-PUT the same bytes afterwards")
     ap.add_argument("--duplicate", action="store_true", help="upload the same bytes twice under two ids")
     ap.add_argument("--corrupt", action="store_true", help="upload truncated bytes (expect rejected)")
+    ap.add_argument("--skip-curate", action="store_true", help="stop at intake, do not wait for the Curator")
+    ap.add_argument(
+        "--chaos",
+        type=int,
+        default=0,
+        metavar="N",
+        help="make the first N curate deliveries fail with a 500, then expect the retries to win",
+    )
     args = ap.parse_args()
 
-    cfg = settings()
     api = (args.api or "").rstrip("/")
     api_key = os.environ.get("NEXT_PUBLIC_FIREBASE_API_KEY", "")
     if not args.event_id:
@@ -222,6 +389,11 @@ def main() -> int:
         # Valid JPEG header, truncated payload: decodes far enough to look real, then fails.
         data = data[: len(data) // 3]
     print(f"photo: {len(data)} bytes  capturedLocal={captured_local.isoformat()}")
+
+    if args.chaos:
+        if event.get("class") not in ("protected_demo", "internal_dev"):
+            fail(f"--chaos needs a protected_demo/internal_dev event; this one is {event.get('class')!r}")
+        set_chaos(args.event_id, "curate", args.chaos)
 
     token, uid = sign_in_anonymously(api_key)
     ok(f"anonymous uid {uid}")
@@ -283,6 +455,28 @@ def main() -> int:
         if original != kept:
             fail("DateTimeOriginal changed during the GPS strip — the rewrite was not lossless")
         ok("DateTimeOriginal preserved (lossless rewrite)")
+
+    if not args.skip_curate:
+        # Cloud Tasks' minimum backoff is 10 s (spec 09 §2), so each injected failure costs at
+        # least that before the retry that succeeds — the budget has to grow with the injections.
+        budget = args.timeout + args.chaos * 60.0
+        print(f"      waiting for the Curator (budget {budget:.0f}s)")
+        doc = wait_for_stage(args.event_id, media_id, "curate", budget)
+        check_curate(
+            doc,
+            event,
+            "self" if args.consent == "self" else "pool",
+            synthetic=not args.file,
+        )
+
+        if args.chaos:
+            attempts = int((doc.get("attempts") or {}).get("curate") or 0)
+            if attempts <= args.chaos:
+                fail(f"attempts.curate={attempts} after {args.chaos} injected failures — chaos did not fire")
+            ok(f"survived {args.chaos} injected 500s: attempts.curate={attempts}, stage still done")
+            # Disarm, so a later run against this event is not silently testing chaos.
+            fs.ops_col(args.event_id).document("chaos").delete()
+            ok("ops/chaos cleared")
 
     if args.idempotency:
         before = {k: str(v) for k, v in (fs.media_ref(args.event_id, media_id).get().to_dict() or {}).items()}
