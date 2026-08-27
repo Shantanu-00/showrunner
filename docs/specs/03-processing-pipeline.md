@@ -10,8 +10,11 @@ events/{eventId}                     # Event Graph: stages[], requiredMoments[],
                                      # (VIPs are NOT an array here — VIP-ness lives on people/{personId}.tier, spec 11 §3)
   media/{mediaId}                    # see §3 (state machine)
   faces/{faceId}                     # {mediaId, box, embedding(512, unit-norm, vector-indexed), personId?, clusterId?}
-  people/{personId}                  # {displayName, uidLinks[], selfieEmbedding?, tier: 0-3, consent, tasteProfile}
+  people/{personId}                  # {displayName, uidLinks[], tier: 0-3, consent}
                                      # tier: 0=Principal 1=InnerCircle 2=NamedVIP 3=Guest(default) — spec 11 §3
+  people/{personId}/private/{doc}     # anything a guest may not read about another guest (spec 07 taste profile)
+  enrollments/{personId}              # {embedding} — the selfie face template, no client rule grants it
+
   guests/{uid}                       # {points, uploads, personId?}
   bounties/{bountyId}                # spec 05
   reels/{reelId}                     # spec 06
@@ -85,7 +88,7 @@ media/{mediaId}: {
 
 ### 5.2 Face Indexer (no LLM)
 - InsightFace `buffalo_l` (ONNX CPU, warm in the worker container; ~150–300 ms/photo): detect → 5-pt align → 512-d embed → L2-normalize.
-- Match: `findNearest(DOT_PRODUCT)` against enrolled `people.selfieEmbedding`, threshold τ_match = 0.45 cosine (calibrate Day 3 on 20 labeled pairs; store distance for tuning).
+- Match: `findNearest(DOT_PRODUCT)` against enrolled selfie embeddings (`enrollments/{personId}.embedding` — kept out of the person document because Firestore rules grant whole documents and `people/{personId}` must stay readable for display names and VIP tiers), threshold τ_match = 0.45 cosine (calibrate Day 3 on 20 labeled pairs; store distance for tuning).
 - No match → assign/attach `clusterId` via incremental threshold clustering (τ_cluster = 0.55) so unclaimed people still group ("Person 7").
 - **Split-brain tolerance (concurrency is real here):** with `max-concurrent=8` on the face queue plus vector-index visibility lag, two workers processing the same unclaimed person can each create a cluster — this is *accepted, not prevented* (serializing cluster creation would kill throughput). Two mechanisms make it harmless: (a) **claims are face-level, not cluster-level** — selfie enrollment/re-claim runs `findNearest` over the `faces` embeddings themselves and claims *every* face ≥ τ_claim regardless of `clusterId`, so fragmentation never costs an album a photo; (b) a **cluster-merge reconciliation sweep** (folded into the hourly orphan sweep) compares cluster centroids and merges pairs ≥ τ_cluster in one batched update. Optimistic create, deterministic reconcile.
 - Writes `faces/` docs + denormalized `media.faces[]`.

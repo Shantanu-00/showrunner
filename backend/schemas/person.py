@@ -40,11 +40,25 @@ class PersonConsent(BaseModel):
     retentionNoticeShown: bool = False
 
 
+class Enrollment(BaseModel):
+    """`events/{eventId}/enrollments/{personId}` — the selfie face template, and nothing else.
+
+    Spec 03 §1 sketches this field on the person document. It is stored separately because Firestore
+    security rules grant or deny whole documents: the person document has to be readable by other
+    guests (kiosk uploader credits, the leaderboard's display names, the deterministic tier→vipWeight
+    lookup behind Highlights ranking), and a rule that allows that would also hand every guest a copy
+    of everyone's biometric. No client rule grants this collection at all.
+    """
+
+    personId: str
+    embedding: list[float]  # 512-d, unit-norm
+    createdAt: dt.datetime | None = None
+
+
 class Person(BaseModel):
     personId: str
     displayName: str | None = None
     uidLinks: list[str] = Field(default_factory=list)
-    selfieEmbedding: list[float] | None = None  # 512-d, unit-norm
     tier: Tier = Tier.GUEST
     hostEnrolled: bool = False  # host-enrolled persons require host approval to be claimed
     featured: bool = False  # audited ranking override only, never a visibility override

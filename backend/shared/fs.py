@@ -57,6 +57,24 @@ def person_ref(event_id: str, person_id: str) -> firestore.DocumentReference:
     return people_col(event_id).document(person_id)
 
 
+def enrollments_col(event_id: str) -> firestore.CollectionReference:
+    """`enrollments/{personId}` — the selfie embedding, and *only* that (spec 02 §4).
+
+    Kept out of the person document on purpose. Firestore security rules cannot hide a field: any
+    rule that lets a guest read `people/{p}` for a display name and a VIP tier — which the kiosk
+    leaderboard, the album header and the Highlights ranking all need — would hand every guest at
+    the event a copy of everyone else's face template. So the biometric lives in its own collection
+    that no client rule grants at all, and only `worker-face` and `api` (via `shared/faces.py`) ever
+    read it. Same reasoning applies to anything else genuinely private about a person: put it here
+    or under `people/{p}/private/…`, both of which are deny-all in `firestore.rules`.
+    """
+    return event_ref(event_id).collection("enrollments")
+
+
+def enrollment_ref(event_id: str, person_id: str) -> firestore.DocumentReference:
+    return enrollments_col(event_id).document(person_id)
+
+
 def notices_col(event_id: str, person_id: str) -> firestore.CollectionReference:
     """Person-scoped notices — the "new device joined" card in a private album (spec 02 §3.2).
 

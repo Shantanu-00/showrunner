@@ -91,11 +91,32 @@ class PersonHit:
 
 
 def enrolled_people(event_id: str) -> list[dict[str, Any]]:
-    """Every person in this event who consented to a selfie embedding."""
-    query = fs.people_col(event_id).where(
-        filter=FieldFilter("consent.selfieEnrolled", "==", True)
-    )
-    return [snap.to_dict() or {} for snap in query.stream()]
+    """Every person in this event who consented to a selfie embedding, with that embedding attached.
+
+    Two reads, not one: the person document carries the identity a client may see (display name,
+    tier, consent flags) and `enrollments/{personId}` carries the face template no client may ever
+    see (see `fs.enrollments_col` for why the split exists). They are joined here, once, so every
+    caller downstream still works with a single person dict and the security boundary costs one
+    batched `get_all` per invocation — enrolled people number in the dozens, and this is the same
+    scan-not-index reasoning as note 2 in this module's docstring.
+    """
+    people = {
+        snap.id: (snap.to_dict() or {})
+        for snap in fs.people_col(event_id)
+        .where(filter=FieldFilter("consent.selfieEnrolled", "==", True))
+        .stream()
+    }
+    if not people:
+        return []
+
+    refs = [fs.enrollment_ref(event_id, person_id) for person_id in people]
+    for snap in fs.db().get_all(refs):
+        if not snap.exists:
+            continue
+        embedding = (snap.to_dict() or {}).get("embedding")
+        if embedding is not None:
+            people[snap.id]["selfieEmbedding"] = embedding
+    return list(people.values())
 
 
 def match_people(

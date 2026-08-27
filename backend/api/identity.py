@@ -207,12 +207,22 @@ def _create_person_and_claim(
 ) -> EnrollResponse:
     cfg = settings()
     person_id = new_ulid()
+    # The face template goes to `enrollments/{personId}`, never onto the person document: the person
+    # document is readable by other guests (kiosk credits, leaderboard names, the tier→vipWeight
+    # lookup) and Firestore rules cannot withhold one field of a document they grant (see
+    # `fs.enrollments_col`). One extra write; the biometric never leaves the server.
+    fs.enrollment_ref(event_id, person_id).set(
+        {
+            "personId": person_id,
+            "embedding": embedding,
+            "createdAt": fs.SERVER_TIMESTAMP,
+        }
+    )
     fs.person_ref(event_id, person_id).set(
         {
             "personId": person_id,
             "displayName": req.displayName,
             "uidLinks": [principal.uid],
-            "selfieEmbedding": embedding,
             "tier": int(Tier.GUEST),
             "hostEnrolled": False,
             "featured": False,
@@ -587,6 +597,9 @@ async def delete_me(
         except Exception as exc:  # noqa: BLE001 - claim cleanup must not block the deletion
             log.warn("claim_clear_failed", uid=uid, err=str(exc))
 
+    # The face template is a separate document (spec 02 §5's "deletes person doc + embeddings"), so
+    # deleting the person is not enough — this is the write that makes the promise true.
+    fs.enrollment_ref(eventId, person_id).delete()
     person_ref.delete()
     log.info("person_deleted", event_id=eventId, person=person_id, faces=sum(len(v) for v in grouped.values()))
     return {"ok": True, "personId": person_id}
