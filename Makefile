@@ -1,4 +1,9 @@
-.PHONY: up down seed eval rules-test deploy-api deploy-intake deploy-face deploy-safety deploy-video-prep deploy-render deploy-publisher
+.PHONY: up down dev-event smoke seed eval rules-test \
+        deploy-api deploy-intake deploy-dlq deploy-face deploy-safety deploy-video-prep \
+        deploy-render deploy-publisher
+
+REGION := us-central1
+PY := python
 
 up:
 	./deploy/up.sh
@@ -6,32 +11,50 @@ up:
 down:
 	./deploy/scale-down.sh
 
+# Creates an internal_dev event and prints its id (spec 11 §1.1 — class is server-assigned).
+dev-event:
+	$(PY) scripts/dev_event.py
+
+# Real anonymous sign-in → signed URL → GCS → Eventarc → intake. Set SMOKE_EVENT_ID first.
+smoke:
+	$(PY) scripts/smoke_upload.py
+
 seed:
-	python backend/seed.py --event demo
+	$(PY) backend/seed.py --event demo
 
 eval:
-	python eval/run_eval.py
+	$(PY) eval/run_eval.py
 
 rules-test:
-	firebase emulators:exec --only firestore "python rules-tests/run_matrix.py"
+	firebase emulators:exec --only firestore "$(PY) rules-tests/run_matrix.py"
 
+# api / intake / dlq share one image; $$SERVICE picks the app at runtime (backend/main.py).
+# --update-env-vars (not --set-env-vars) so a quick redeploy keeps the config up.sh applied.
 deploy-api:
-	gcloud run deploy api --source backend --region us-central1
+	gcloud run deploy api --source backend --region $(REGION) --update-env-vars SERVICE=api
 
 deploy-intake:
-	gcloud run deploy intake --source backend --region us-central1
+	gcloud run deploy intake --source backend --region $(REGION) --update-env-vars SERVICE=intake
 
+deploy-dlq:
+	gcloud run deploy dlq --source backend --region $(REGION) --update-env-vars SERVICE=dlq
+
+# B2 workers: heavier dependency sets, hence their own Dockerfiles.
 deploy-face:
-	gcloud run deploy worker-face --source backend/workers/face --region us-central1
+	gcloud run deploy worker-face --source backend --region $(REGION) \
+	  --update-env-vars SERVICE=worker-face
 
 deploy-safety:
-	gcloud run deploy worker-safety --source backend/workers/safety --region us-central1
+	gcloud run deploy worker-safety --source backend --region $(REGION) \
+	  --update-env-vars SERVICE=worker-safety
 
 deploy-video-prep:
-	gcloud run deploy worker-video-prep --source backend/workers/video_prep --region us-central1
+	gcloud run deploy worker-video-prep --source backend --region $(REGION) \
+	  --update-env-vars SERVICE=worker-video-prep
 
 deploy-render:
-	gcloud run jobs deploy render --source backend/render --region us-central1
+	gcloud run jobs deploy render --source backend --region $(REGION)
 
 deploy-publisher:
-	gcloud run deploy publisher --source backend/publisher --region us-central1
+	gcloud run deploy publisher --source backend --region $(REGION) \
+	  --update-env-vars SERVICE=publisher
