@@ -22,6 +22,7 @@ from shared import fs, log
 from shared.auth import Principal, caller
 from shared.settings import settings
 
+from .host import create_router as host_create_router, router as host_router
 from .identity import claim_router, router as identity_router
 from .internal import router as internal_router
 from .moderation import router as moderation_router
@@ -44,6 +45,8 @@ app.add_middleware(
 )
 
 app.include_router(uploads_router)
+app.include_router(host_create_router)
+app.include_router(host_router)
 app.include_router(identity_router)
 app.include_router(claim_router)
 app.include_router(moderation_router)

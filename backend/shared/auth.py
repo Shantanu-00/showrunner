@@ -61,3 +61,23 @@ def verify_bearer(authorization: str | None) -> Principal:
 async def caller(authorization: str | None = Header(default=None)) -> Principal:
     """FastAPI dependency: the authenticated caller, anonymous or not."""
     return verify_bearer(authorization)
+
+
+def merge_custom_claims(uid: str, **updates: object) -> dict[str, object]:
+    """Grant/clear one claim without wiping the others.
+
+    `firebase_admin.auth.set_custom_user_claims` replaces the *entire* claims object — there is no
+    partial update on the wire. Every claim-granting path in this codebase used to call it directly
+    with only the claim it cared about, which means granting `host` to a uid that already carries an
+    enrolled guest's `personId` would silently erase that guest's identity, and vice versa (a host
+    who later selfie-enrolls at their own event would lose their `host` claim). Read-merge-write here
+    once, used everywhere a claim is granted. `None` deletes a key instead of writing it.
+    """
+    current = dict(fb_auth.get_user(uid).custom_claims or {})
+    for key, value in updates.items():
+        if value is None:
+            current.pop(key, None)
+        else:
+            current[key] = value
+    fb_auth.set_custom_user_claims(uid, current)
+    return current

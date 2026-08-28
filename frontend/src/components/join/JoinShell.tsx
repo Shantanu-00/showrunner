@@ -10,6 +10,8 @@ import { useRouteEventId } from "@/lib/routeParams";
 import { TabBar, type JoinTab } from "./TabBar";
 import { SendSheet } from "./SendSheet";
 import { Filmstrip } from "./Filmstrip";
+import { BountyBanner } from "./BountyBanner";
+import { AwardBurst } from "./AwardBurst";
 import { EventTab } from "@/components/gallery/EventTab";
 import { MeTab } from "@/components/me/MeTab";
 
@@ -19,6 +21,7 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   const [authReady, setAuthReady] = useState(false);
   const [uid, setUid] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
+  const [pendingBountyId, setPendingBountyId] = useState<string | null>(null);
   const [items, setItems] = useState<OutboxItem[]>([]);
   const [online, setOnline] = useState(true);
   const [eventInfo, setEventInfo] = useState<EventPublicInfo | null>(null);
@@ -79,9 +82,19 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
     };
   }, []);
 
-  function onCameraTabTap() {
+  /** Spec 05 §3: "guest taps banner → camera → upload flows the normal pipeline with `bountyId`
+   * stamped at intent time." `bountyId` is set (or cleared) *before* the OS picker opens, not
+   * after a file comes back — some browsers never fire the file input's `onChange` at all when
+   * the picker is cancelled, so clearing on that event would leave a stale bounty attached to
+   * whatever the guest shoots next through the ordinary camera tab. */
+  function onCameraTabTap(bountyId: string | null = null) {
+    setPendingBountyId(bountyId);
     setTab("camera");
     fileInputRef.current?.click();
+  }
+
+  function onShootNow(bountyId: string) {
+    onCameraTabTap(bountyId);
   }
 
   function onFilesSelected(fileList: FileList | null) {
@@ -91,8 +104,9 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
 
   async function onConfirmSend(consent: BatchConsent) {
     if (!pendingFiles) return;
-    await outbox.enqueue(pendingFiles, { eventId, consent });
+    await outbox.enqueue(pendingFiles, { eventId, consent, bountyId: pendingBountyId ?? undefined });
     setPendingFiles(null);
+    setPendingBountyId(null);
     setItems(await outbox.listAll());
     void drain();
   }
@@ -123,7 +137,12 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
         )}
       </header>
 
-      {tab === "event" && <EventTab eventId={eventId} eventInfo={eventInfo} judgeMode={judgeMode} />}
+      {authReady && <BountyBanner eventId={eventId} onShootNow={onShootNow} />}
+      {uid && <AwardBurst eventId={eventId} uid={uid} />}
+
+      {tab === "event" && (
+        <EventTab eventId={eventId} eventInfo={eventInfo} judgeMode={judgeMode} onShootNow={onShootNow} />
+      )}
 
       {tab === "camera" && (
         <section className="px-5">
@@ -151,7 +170,10 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
         <SendSheet
           fileCount={pendingFiles.length}
           onConfirm={(consent) => void onConfirmSend(consent)}
-          onCancel={() => setPendingFiles(null)}
+          onCancel={() => {
+            setPendingFiles(null);
+            setPendingBountyId(null);
+          }}
         />
       )}
 

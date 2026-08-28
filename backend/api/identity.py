@@ -26,7 +26,6 @@ import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, Path
-from firebase_admin import auth as fb_auth
 from google.cloud import firestore
 
 from schemas.common import BoundingBox, ConsentRing
@@ -52,7 +51,7 @@ from schemas.identity import (
 )
 from schemas.person import Tier
 from shared import errors, faces as faces_lib, fs, gcs, internal, log
-from shared.auth import Principal, caller
+from shared.auth import Principal, caller, merge_custom_claims
 from shared.settings import (
     CLAIM_EXEMPLARS,
     CLAIM_FACE_LIMIT,
@@ -108,7 +107,7 @@ def _require_person(principal: Principal) -> str:
 
 def _grant_identity(event_id: str, uid: str, person_id: str) -> None:
     """The one identity-granting call in this module — see the module docstring."""
-    fb_auth.set_custom_user_claims(uid, {"personId": person_id})
+    merge_custom_claims(uid, personId=person_id)
     fs.person_ref(event_id, person_id).update({"uidLinks": firestore.ArrayUnion([uid])})
 
 
@@ -244,7 +243,7 @@ def _create_person_and_claim(
     top_similarity = max((h.similarity for h in hits), default=0.0)
     claim_id = new_ulid()
 
-    fb_auth.set_custom_user_claims(principal.uid, {"personId": person_id})
+    merge_custom_claims(principal.uid, personId=person_id)
 
     if face_count >= cfg.claim_review_threshold:
         selfie_uri = _store_review_selfie(event_id, claim_id, image_bytes)
@@ -593,7 +592,8 @@ async def delete_me(
 
     for uid in uid_links:
         try:
-            fb_auth.set_custom_user_claims(uid, {})
+            # Clears only `personId` — a uid that also hosts some event keeps that claim.
+            merge_custom_claims(uid, personId=None)
         except Exception as exc:  # noqa: BLE001 - claim cleanup must not block the deletion
             log.warn("claim_clear_failed", uid=uid, err=str(exc))
 

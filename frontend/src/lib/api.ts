@@ -13,7 +13,10 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
-async function authedFetch(path: string, init: RequestInit): Promise<Response> {
+/** Exported for `lib/hostApi.ts` — the host console is a separate surface (spec 12 §8) with its
+ * own file, but there is exactly one way any client here talks to `api`, and it shouldn't be
+ * reinvented per surface. */
+export async function authedFetch(path: string, init: RequestInit): Promise<Response> {
   const token = await auth?.currentUser?.getIdToken();
   return fetch(`${API_URL}${path}`, {
     ...init,
@@ -25,17 +28,33 @@ async function authedFetch(path: string, init: RequestInit): Promise<Response> {
   });
 }
 
-/** Small, honest error the UI shows inline — never a stack trace, never a crash. */
+/** Small, honest error the UI shows inline — never a stack trace, never a crash. Every backend
+ * error body is `{code, message, ...extra}` (`shared/errors.py`); `code`/`contactUrl` ride along
+ * so a surface that cares (the host console's `CAPACITY` message) can read them, while every
+ * existing caller that only checks `.status` is unaffected. */
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  code?: string;
+  contactUrl?: string;
+
+  constructor(public status: number, message: string, code?: string, contactUrl?: string) {
     super(message);
+    this.code = code;
+    this.contactUrl = contactUrl;
   }
 }
 
-async function authedJson<T>(path: string, init: RequestInit): Promise<T> {
+export async function authedJson<T>(path: string, init: RequestInit): Promise<T> {
   const res = await authedFetch(path, init);
   if (!res.ok) {
-    throw new ApiError(res.status, `${init.method ?? "GET"} ${path} → ${res.status}`);
+    const fallback = `${init.method ?? "GET"} ${path} → ${res.status}`;
+    let detail: { code?: string; message?: string; contactUrl?: string } = {};
+    try {
+      const body = await res.json();
+      detail = (body?.detail ?? body) as typeof detail;
+    } catch {
+      // A non-JSON error body (a proxy 502, a cold start) — the fallback message covers it.
+    }
+    throw new ApiError(res.status, detail.message || fallback, detail.code, detail.contactUrl);
   }
   return res.json();
 }

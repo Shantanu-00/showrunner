@@ -81,13 +81,81 @@ body {
   animation: ken-burns var(--ken-burns-duration, 6s) linear forwards;
 }
 
+/* Bounty banner choreography (spec 12 §7): slide+fade in on `--ease-luxe`, a quiet retreat on
+   expiry/dismiss, and the award burst is one CSS-only "confetti" sweep (no canvas dependency —
+   ≤60 absolutely-positioned pieces, each animating this same keyframe with a randomised delay/
+   drift set inline by the component, which is cheaper than a second animation per particle). */
+@keyframes banner-in {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes banner-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+}
+.banner-in {
+  animation: banner-in var(--dur-standard) var(--ease-luxe) forwards;
+}
+.banner-out {
+  animation: banner-out var(--dur-standard) var(--ease-luxe) forwards;
+}
+@keyframes confetti-fall {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--confetti-x, 0), 140px) rotate(var(--confetti-rot, 180deg));
+    opacity: 0;
+  }
+}
+.confetti-piece {
+  animation: confetti-fall 1.2s ease-out forwards;
+}
+@keyframes points-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.points-pop {
+  animation: points-pop var(--dur-standard) var(--ease-luxe) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .skeleton-shimmer,
   .consent-ring,
-  .ken-burns {
+  .ken-burns,
+  .banner-in,
+  .banner-out,
+  .confetti-piece,
+  .points-pop {
     animation: none !important;
   }
   .ken-burns {
     transform: scale(1.08);
+  }
+  .banner-out {
+    opacity: 0;
   }
 }

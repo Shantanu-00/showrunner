@@ -295,6 +295,7 @@ export interface BountyDoc {
   targetVipName?: string | null;
   audience?: "all" | "nearStage" | "topContributors";
   kioskTakeover?: boolean;
+  createdAt?: string | null;
   expiresAt?: string | null;
 }
 

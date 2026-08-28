@@ -63,17 +63,35 @@ def recompute(
     if not lease.ok:
         return {"status": "not_leader", "eventId": event_id, "holder": lease.blocked_by}
 
-    current = store.playlist(event_id)
-    premiere = store.premiere_reel(event_id, current.get("premieredReelIds") or [])
-    built = program.build(
-        store.candidates(event_id),
-        now=dt.datetime.now(dt.timezone.utc),
-        active_stage_id=context.active_stage_id,
-        previous_stage_id=context.previous_stage_id,
-        theme=context.theme,
-        premiere_reel_id=premiere,
-        takeover_bounty_id=store.takeover_bounty(event_id),
-    )
+    # PANIC: freeze public (spec 08 §5). One write on the event doc — `event.publicFrozen` — has to
+    # collapse the wall in ≤2s with no second mechanism to keep in sync, so the frozen check is a
+    # pool of zero candidates rather than a filter threaded through `program.build`: no reel premiere,
+    # no bounty takeover, no hero, nothing that could still be showing a person on the screen.
+    # `recompute_visibility` already refuses `public` for any *new* item while frozen (spec 04 §2's
+    # `not event.get('publicFrozen')` term); this is what makes the *existing* wall obey it too,
+    # since a frozen event's already-public media keeps its `visibility` field unchanged for the
+    # instant unfreeze restores (spec 08 §5: "items keep their state; unfreeze restores instantly").
+    premiere: str | None = None
+    if context.event.get("publicFrozen"):
+        built = program.build(
+            [],
+            now=dt.datetime.now(dt.timezone.utc),
+            active_stage_id=context.active_stage_id,
+            previous_stage_id=context.previous_stage_id,
+            theme=context.theme,
+        )
+    else:
+        current = store.playlist(event_id)
+        premiere = store.premiere_reel(event_id, current.get("premieredReelIds") or [])
+        built = program.build(
+            store.candidates(event_id),
+            now=dt.datetime.now(dt.timezone.utc),
+            active_stage_id=context.active_stage_id,
+            previous_stage_id=context.previous_stage_id,
+            theme=context.theme,
+            premiere_reel_id=premiere,
+            takeover_bounty_id=store.takeover_bounty(event_id),
+        )
     written = store.publish(
         event_id, built, trigger=trigger, holder=holder, premiered=premiere
     )

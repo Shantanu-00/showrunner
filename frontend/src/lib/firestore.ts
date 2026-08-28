@@ -275,6 +275,39 @@ export function listenPeopleDirectory(
   );
 }
 
+/** Every open bounty (spec 05 §3's `active`/`escalated`) — the missions sheet and the guest
+ * banner (spec 12 §7) both read from this one listener rather than each running their own query. */
+export function listenActiveBounties(
+  eventId: string,
+  onData: (items: BountyDoc[]) => void,
+  onError: (err: Error) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "events", eventId, "bounties"),
+    where("status", "in", ["active", "escalated"])
+  );
+  return onSnapshot(
+    q,
+    (snap) => onData(snap.docs.map((d) => d.data() as BountyDoc)),
+    onError
+  );
+}
+
+/** `guests/{uid}.points` — the one signal the award burst needs (spec 12 §7): any *increase*
+ * is a fulfilled bounty (or any future point source) without the client having to reconstruct
+ * which submission earned it, since `points` is already the ledger's own running total. */
+export function listenGuestPoints(
+  eventId: string,
+  uid: string,
+  onPoints: (points: number) => void
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, "events", eventId, "guests", uid),
+    (snap) => onPoints(snap.exists() ? (snap.data().points as number | undefined) ?? 0 : 0),
+    () => onPoints(0)
+  );
+}
+
 /** `bounty_call` slot (spec 04 §4 references it by `bountyId`; spec 05 owns the doc). */
 export function listenBounty(
   eventId: string,
