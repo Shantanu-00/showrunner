@@ -8,7 +8,9 @@ This is the complete architecture in one place, for review and for deriving the 
 
 ## 1. The one-paragraph shape
 
-**An event-driven data plane feeding a goal-driven control plane, with governance as a cross-cutting rail.** Guest media flows push-based from phones into Cloud Storage, through Eventarc and rate-limited Cloud Tasks queues, into three perception workers (Gemini classification, face embedding, safety), landing as richly-annotated Firestore documents whose real-time listeners drive every screen. Above that, two director agents on Agent Runtime own strategy: one watches coverage and dispatches bounties; one commissions and renders reels. A single deterministic visibility function — not any LLM — decides what the public ever sees.
+**An event-driven data plane feeding a goal-driven control plane, with governance as a cross-cutting rail.** Guest media flows push-based from phones into Cloud Storage, through Eventarc and rate-limited Cloud Tasks queues, into three perception workers (Gemini classification, face embedding, safety), landing as richly-annotated Firestore documents whose real-time listeners drive every screen. Above that, director agents own strategy: one watches coverage and dispatches bounties to the crowd; one commissions and renders reels. A single deterministic visibility function — not any LLM — decides what the public ever sees.
+
+**Where the directors run, stated plainly because the answer changed during the build:** the Story Director runs on Cloud Run, inside the Cloud Scheduler tick that already holds the per-event lease, not on Agent Runtime. Its reasoning step is one ADK `LlmAgent`; everything around it — the coverage aggregation, the guardrails, the bounty writes, the points award, the rolling tick window — is deterministic Python, because by this document's own agent test (§3) those steps make no judgments and therefore must not be agents. What that costs is the managed Sessions/Memory Bank/Registry rows Agent Runtime grants automatically; what it buys is that the guardrails execute in the same process and the same transaction scope as the lease protecting them. The host's free-text preferences are the one soft input, and they are read from Memory Bank when an Agent Engine resource is configured and from the event document otherwise — nothing that gates a bounty, a point award or an exposure reads either.
 
 ---
 
@@ -36,9 +38,9 @@ flowchart TB
     DERIVED[("Cloud Storage<br/>derived + curated buckets")]
   end
 
-  subgraph CONTROL["CONTROL PLANE — Agent Runtime (Gemini Enterprise Agent Platform)"]
+  subgraph CONTROL["CONTROL PLANE — goal-driven, scheduler-triggered"]
     SCHED["Cloud Scheduler<br/>global 2-min tick + lease"]
-    SD["Story Director — ADK, Gemini 3.7 Flash<br/>coverage gap analysis → bounties,<br/>stage drift, escalation, commissions<br/>Sessions + Memory Bank"]
+    SD["Story Director — ADK LlmAgent, Gemini 3.7 Flash<br/>in the tick on Cloud Run: api<br/>coverage ledger → gap analysis → bounties,<br/>stage drift, escalation, commissions<br/>rolling 10-tick window in Firestore"]
     RD["Reel Director — ADK, Gemini 3.7 Flash<br/>narrative brief → EDL → critic loop<br/>Lyria 3 soundtrack, versioned supersession"]
     RENDER["Cloud Run Job: render<br/>ffmpeg + librosa beat grid<br/>1080x1920 reels, Pillow collages"]
   end
@@ -127,7 +129,8 @@ Commission (stage end / director action / host) → SELECT diversity-sampled can
 | Firebase Auth (anonymous + custom tokens/claims) | zero-friction guests, magic links, host claim | Identity without signup friction |
 | Firebase Hosting | PWA + kiosk | CDN included |
 | FCM | web push (progressive enhancement) | Firestore banners remain the demo-safe primary |
-| **Agent Runtime (GEAP)** | Story + Reel Directors | Managed Sessions, **Memory Bank**, auto **Agent Identity** (SPIFFE) + **Agent Registry** entry + **Observability** dashboards |
+| **ADK (Agent Development Kit)** | Curator, Guardian, Story Director, bounty validator | Structured output, plugin seam (Model Armor sits in front of the model, not beside it), one runner per agent per process |
+| **Agent Runtime (GEAP)** | *optional*: Memory Bank for the host's free-text standing preferences, scoped `{eventId}:host` | Not on the critical path. The Story Director runs in the Cloud Scheduler tick on Cloud Run (§1) so its guardrails execute in the same process as the lease protecting them; Memory Bank holds taste and never anything that gates exposure or spend (spec 11 §4) |
 | Model Armor | host itinerary, captions, bounty text | Used *as designed* — prompt injection/PII on text surfaces (image screening is Preview; wrong tool for photos) |
 | Cloud Vision | SafeSearch + face quality/joy signals | GA visual safety gate; emotion/blur ranking |
 | Gemini 3.5 Flash-Lite / 3.7 Flash | perception volume / director reasoning | Price-performance split; both satisfy "3.5 or newer" |
@@ -176,7 +179,7 @@ The centerpiece is the **Flight Deck** (`/host/flightdeck`, spec 10): a live pag
 - [ ] Every arrow in §2 is push except Scheduler→SD (deliberate control loop) — agreed?
 - [ ] The only writer of `visibility` is `recompute_visibility`; LLMs never gate exposure — agreed?
 - [ ] Cloud Tasks as the single throttle point (not Pub/Sub fan-out) — agreed?
-- [ ] Directors on Agent Runtime (identity/registry/memory/observability for free) vs everything-on-Cloud-Run — agreed?
+- [x] Directors on Agent Runtime vs everything-on-Cloud-Run — **settled 2026-08-28: Cloud Run, inside the tick.** The guardrails are the product; they belong in the same process and transaction scope as the lease that serialises them. Agent Runtime stays optional, for Memory Bank only.
 - [ ] Face identity in our ONNX model + Firestore, never Gemini — agreed?
 - [ ] Kill switches: event.status master switch + publicFrozen panic + per-item yank — sufficient?
 - [ ] Cluster fragmentation is harmless (face-level claims) and self-healing (hourly merge sweep, spec 03 §5.2) — agreed?
