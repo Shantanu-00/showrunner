@@ -4,6 +4,7 @@ import { useState } from "react";
 import { finalizeEvent, goLive, pauseEvent, resumeEvent, wrapEvent } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
 import type { ConsoleSummary, HostEventDoc } from "@/lib/hostTypes";
+import { TickCountdown } from "./TickCountdown";
 
 const STEPS: HostEventDoc["status"][] = ["draft", "live", "paused", "wrapping", "wrapped"];
 
@@ -84,6 +85,9 @@ export function LifecyclePanel({
         <Kpi label="Guests" value={summary?.guests ?? "—"} />
         <Kpi label="Coverage" value={summary ? `${summary.coveragePct}%` : "—"} />
         <Kpi label="Cost so far" value={summary ? `$${summary.costSoFarUsd.toFixed(2)}` : "—"} />
+        {(event.status === "live" || event.status === "wrapping") && (
+          <TickCountdown eventId={eventId} eventClass={event.class} />
+        )}
       </div>
 
       <div className="flex flex-wrap gap-3">

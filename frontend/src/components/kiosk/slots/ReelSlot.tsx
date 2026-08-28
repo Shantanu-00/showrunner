@@ -4,9 +4,29 @@ import { useEffect, useState } from "react";
 import type { ReelDoc, ReelSlot as ReelSlotType } from "@/lib/types";
 import { listenReel } from "@/lib/firestore";
 
-/** `reel` premiere takeover storyboard (spec 12 §6): title card → play → end card. The render
- * pipeline is a later session (spec 06); this renders whatever's actually there today —
- * a real published clip if one exists, honestly "still in the edit room" if not. */
+/** `reel` premiere takeover storyboard (spec 12 §6): title card → play → end card.
+ *
+ * The pre-roll card is honest about which of three states the reel is actually in: rendering (with the
+ * real percentage the job writes at its own stage boundaries — spec 06 §3 step 5, never a fake timer),
+ * nothing yet, or a reel that was taken down because a constituent photograph lost eligibility
+ * (spec 06 §7). A spinner for all three would be the no-spinner rule broken three ways. */
+function preroll(reel: ReelDoc | null): string {
+  if (!reel) return "Tonight’s premieres are still in the edit room.";
+  switch (reel.status) {
+    case "directing":
+    case "composing":
+      return "Choosing the shots and writing the score…";
+    case "rendering":
+      return `Rendering · ${reel.progress ?? 0}%`;
+    case "unpublished":
+      return "Pulled: someone in this film asked not to be shown.";
+    case "failed":
+      return "Tonight’s premieres are still in the edit room.";
+    default:
+      return "Tonight’s premieres are still in the edit room.";
+  }
+}
+
 export function ReelSlot({ eventId, slot }: { eventId: string; slot: ReelSlotType }) {
   const [reel, setReel] = useState<ReelDoc | null>(null);
   const [ended, setEnded] = useState(false);
@@ -33,11 +53,7 @@ export function ReelSlot({ eventId, slot }: { eventId: string; slot: ReelSlotTyp
         >
           {reel?.title ?? "The Couple"}
         </p>
-        {!reel?.videoUri && (
-          <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
-            Tonight&rsquo;s premieres are still in the edit room.
-          </p>
-        )}
+        {!reel?.videoUri && <p className="text-sm" style={{ color: "var(--ink-muted)" }}>{preroll(reel)}</p>}
       </div>
     );
   }

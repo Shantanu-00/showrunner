@@ -5,7 +5,7 @@ import { ensureAnonymousAuth, getUid } from "@/lib/firebase";
 import { getEventPublic } from "@/lib/api";
 import * as outbox from "@/lib/outbox";
 import { drain, installResumeTriggers, onOutboxChange } from "@/lib/uploadManager";
-import type { BatchConsent, EventPublicInfo, OutboxItem } from "@/lib/types";
+import type { BatchConsent, DoneLedgerEntry, EventPublicInfo, OutboxItem } from "@/lib/types";
 import { useRouteEventId } from "@/lib/routeParams";
 import { TabBar, type JoinTab } from "./TabBar";
 import { SendSheet } from "./SendSheet";
@@ -23,6 +23,7 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
   const [pendingBountyId, setPendingBountyId] = useState<string | null>(null);
   const [items, setItems] = useState<OutboxItem[]>([]);
+  const [doneItems, setDoneItems] = useState<DoneLedgerEntry[]>([]);
   const [online, setOnline] = useState(true);
   const [eventInfo, setEventInfo] = useState<EventPublicInfo | null>(null);
   const [judgeMode, setJudgeMode] = useState(false);
@@ -65,7 +66,10 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   }, [eventId, authReady]);
 
   useEffect(() => {
-    const refresh = () => void outbox.listAll().then(setItems);
+    const refresh = () => {
+      void outbox.listAll().then(setItems);
+      void outbox.listDoneLedger().then(setDoneItems);
+    };
     refresh();
     return onOutboxChange(refresh);
   }, []);
@@ -154,7 +158,7 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
 
       {tab === "me" && authReady && uid && <MeTab eventId={eventId} uid={uid} />}
 
-      <Filmstrip items={items} />
+      <Filmstrip items={items} doneItems={doneItems} eventId={eventId} />
 
       <input
         ref={fileInputRef}

@@ -131,6 +131,14 @@ export interface WrapReport {
   topContributors: Contributor[];
 }
 
+/** `ledger/directorState` (spec 05 §1) — read live, host-only, purely for the next-tick
+ * countdown (EXECUTION-PLAN §7e row 11): real evidence the Scheduler is firing unprompted,
+ * not a value the client invents. */
+export interface DirectorTickState {
+  lastTickAtMs: number | null;
+  tickCount: number;
+}
+
 export interface ConsoleSummary {
   eventId: string;
   status: EventStatus;

@@ -133,6 +133,15 @@ export interface MediaDoc {
   status: MediaStatus;
   duplicateOf?: string | null;
   deleted: boolean;
+  /** Parallel stage flags (spec 03 §3) — what the filmstrip's per-item tail reads to show real
+   * progress instead of a guess. `thumb`/`video_prep` are mutually exclusive by media kind. */
+  stages?: {
+    thumb?: StageState | null;
+    video_prep?: StageState | null;
+    curate?: StageState | null;
+    faces?: StageState | null;
+    safety?: StageState | null;
+  } | null;
 
   consent: { ring: ConsentRing };
   subjectVetoes: string[];
@@ -299,11 +308,28 @@ export interface BountyDoc {
   expiresAt?: string | null;
 }
 
-/** `events/{eventId}/reels/{reelId}` (spec 06 — not built this session; same rationale as
- * `BountyDoc` above). */
+/** `events/{eventId}/reels/{reelId}` — spec 06 §1, mirroring `backend/schemas/reel.py::ReelDoc`.
+ *
+ * `videoUri` is an **api** path, not a GCS URL: the curated bucket has public-access-prevention, and a
+ * `<video>` element cannot carry an auth header, so the backend serves a 302 to a short-lived signed URL
+ * after re-checking the reel's `visibility` on every request. That is what makes spec 06 §7's consent
+ * interlock actually revoke access rather than merely hide a link. */
 export interface ReelDoc {
   reelId: string;
   title: string;
   videoUri?: string | null;
-  status: "rendering" | "published" | "unpublished";
+  status:
+    | "directing"
+    | "composing"
+    | "rendering"
+    | "published"
+    | "superseded"
+    | "unpublished"
+    | "failed";
+  /** 0–100, written by the render job at its own stage boundaries (never a timer). */
+  progress?: number;
+  durationSec?: number | null;
+  narrativeBrief?: string;
+  musicCaption?: string | null;
+  tempoBpm?: number | null;
 }
