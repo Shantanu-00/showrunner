@@ -284,14 +284,17 @@ export interface VisibilityResponse {
   visibility: "self" | "pool" | "public" | null;
 }
 
-/** `events/{eventId}/bounties/{bountyId}` (spec 05 — not built this session; shape sketched
- * from spec 05's slot contract and spec 12 §6's poster copy so the kiosk renders whatever the
- * Story Director eventually writes there, without guessing fields it doesn't need). */
+/** `events/{eventId}/bounties/{bountyId}` — spec 05 §3, mirroring `backend/schemas/bounty.py`.
+ * `title` is the wanted-poster headline on the wall; `copy` is the sentence in a guest's pocket. */
 export interface BountyDoc {
   bountyId: string;
-  ask: string;
-  pointsAward: number;
-  status: "active" | "escalated" | "fulfilled" | "expired";
+  title: string;
+  copy: string;
+  points: number;
+  status: "active" | "escalated" | "fulfilled" | "expired" | "cancelled";
+  targetVipName?: string | null;
+  audience?: "all" | "nearStage" | "topContributors";
+  kioskTakeover?: boolean;
   expiresAt?: string | null;
 }
 

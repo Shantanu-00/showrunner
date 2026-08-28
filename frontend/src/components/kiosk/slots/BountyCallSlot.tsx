@@ -27,14 +27,14 @@ export function BountyCallSlot({ eventId, slot }: { eventId: string; slot: Bount
         className="font-[var(--font-display)] mb-6"
         style={{ color: "var(--ivory)", fontSize: "min(8vw, 61px)" }}
       >
-        {bounty?.ask ?? "the next great shot"}
+        {bounty?.title ?? "the next great shot"}
       </p>
       {bounty && (
         <span
           className="inline-block px-5 py-2 rounded-[var(--radius-pill)] font-mono text-lg mb-8"
           style={{ background: "var(--gold-500)", color: "var(--bg-0)" }}
         >
-          +{bounty.pointsAward}
+          +{bounty.points}
         </span>
       )}
       <JoinQr url={joinUrl(eventId)} sizePx={180} />

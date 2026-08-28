@@ -1,4 +1,4 @@
-.PHONY: up down dev-event smoke smoke-faces smoke-safety smoke-autonomy seed eval demo-reset rules-test \
+.PHONY: up down dev-event smoke smoke-faces smoke-safety smoke-autonomy smoke-director seed eval demo-reset rules-test \
         deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
         deploy-video-prep deploy-render deploy-publisher deploy-hosting
 
@@ -36,6 +36,12 @@ smoke-safety:
 # diversity table with no network and no spend.
 smoke-autonomy:
 	$(PY) scripts/smoke_autonomy.py
+
+# The Story Director: a coverage gap is noticed and a crowd is asked to fix it, a submission is judged
+# and paid exactly once, an expired bounty becomes an admitted gap. `--guardrails-only` runs spec 05
+# §1's whole guardrail set as a decision table: no network, no Firestore, no spend.
+smoke-director:
+	$(PY) scripts/smoke_director.py
 
 seed:
 	$(PY) backend/seed.py --event demo
