@@ -40,9 +40,13 @@ def media_ref(event_id: str, media_id: str) -> firestore.DocumentReference:
     return media_col(event_id).document(media_id)
 
 
+def hashes_col(event_id: str) -> firestore.CollectionReference:
+    return event_ref(event_id).collection("hashes")
+
+
 def hash_ref(event_id: str, md5_hex: str) -> firestore.DocumentReference:
     """Exact-content dedupe register (spec 01 §5). Scoped per event, not global."""
-    return event_ref(event_id).collection("hashes").document(md5_hex)
+    return hashes_col(event_id).document(md5_hex)
 
 
 def guest_ref(event_id: str, uid: str) -> firestore.DocumentReference:

@@ -129,6 +129,7 @@ class Settings:
         # Models — verbatim from .env.example, which postdates every model's training data.
         self.model_classifier: str = _env("MODEL_CLASSIFIER", "gemini-3.5-flash-lite")
         self.model_director: str = _env("MODEL_DIRECTOR", "gemini-3.7-flash")
+        self.model_image_edit: str = _env("MODEL_IMAGE_EDIT", "gemini-3.1-flash-image")
 
         self.raw_bucket: str = _env("RAW_MEDIA_BUCKET")
         self.derived_bucket: str = _env("DERIVED_MEDIA_BUCKET")

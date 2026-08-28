@@ -1,4 +1,4 @@
-.PHONY: up down dev-event smoke smoke-faces smoke-safety seed eval rules-test \
+.PHONY: up down dev-event smoke smoke-faces smoke-safety seed eval demo-reset rules-test \
         deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
         deploy-video-prep deploy-render deploy-publisher
 
@@ -29,8 +29,15 @@ smoke-faces:
 smoke-safety:
 	$(PY) scripts/smoke_safety.py
 
+# Wipes the demo event's people/media/ops, then re-generates the AI cast (cached) and re-uploads
+# the ~25 golden fixtures through the real pipeline. Re-runnable: always starts from a clean event.
 seed:
 	$(PY) backend/seed.py --event demo
+
+# Wipes the demo event without reseeding — the video plan's "make demo-reset" dependency
+# (HANDOFF §7b): every retake after the first needs to run on clean state.
+demo-reset:
+	$(PY) backend/seed.py --event demo --reset-only
 
 eval:
 	$(PY) eval/run_eval.py

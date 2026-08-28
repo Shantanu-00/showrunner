@@ -91,3 +91,10 @@ cache/
 # Probe output: generated media, raw API responses, RESULTS.md. Regenerable by re-running
 # the probes; the durable record is HANDOFF §9 + docs/context/friction-log.md.
 scripts/risk_tests/artifacts/
+
+# ==========================================
+# 8. Eval seed run output & generated cast portraits
+# ==========================================
+# Regenerable by `make seed`; the durable record is the printed table + eval/artifacts/eval_report.json
+# committed nowhere (re-run to see current results).
+eval/artifacts/
