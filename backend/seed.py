@@ -45,7 +45,7 @@ import dev_event  # noqa: E402
 from schemas.event import DemoConfig, Event, EventClass, EventStatus, EventTemplateId  # noqa: E402
 from schemas.event import EventTypeProfile, SensitivityProfile, VipTopology  # noqa: E402
 from schemas.person import Tier  # noqa: E402
-from shared import fs, internal as face_internal  # noqa: E402
+from shared import coverage, fs, internal as face_internal  # noqa: E402
 from shared.settings import settings  # noqa: E402
 from shared.ulid import new_ulid  # noqa: E402
 
@@ -89,12 +89,29 @@ def reset_event(event_id: str) -> None:
     — `stages` stops at `thumb`, `status` is forced straight to `indexed` (intake/app.py's
     duplicate branch), and Curator/Guardian never run. Found live, this session, exactly that way.
     """
-    for collection in (fs.media_col, fs.people_col, fs.enrollments_col, fs.claim_audits_col, fs.ops_col, fs.hashes_col):
+    for collection in (
+        fs.media_col,
+        fs.people_col,
+        fs.enrollments_col,
+        fs.claim_audits_col,
+        fs.ops_col,
+        fs.hashes_col,
+        fs.bounties_col,
+    ):
         docs = list(collection(event_id).stream())
         for doc in docs:
             doc.reference.delete()
         if docs:
             log(f"reset: cleared {len(docs)} doc(s) from {collection(event_id).id}")
+
+    # The Story Director's state, for the same reason `hashes` is on that list: a reset that clears the
+    # photographs but not the counters that counted them leaves the director reasoning about coverage
+    # that no longer exists — and leaves `lastStageId` set, so the reseeded event's active stage never
+    # looks like a transition and its required-moment bounties are never armed (spec 05 §2).
+    shards = coverage.clear(event_id)
+    if shards:
+        log(f"reset: cleared {shards} coverage shard(s)")
+    fs.director_state_ref(event_id).delete()
 
 
 def ensure_event(event_id: str, timezone: str) -> dict[str, Any]:

@@ -8,6 +8,7 @@ greppable from code.
 from __future__ import annotations
 
 import functools
+from enum import Enum
 from typing import Any
 
 from google.cloud import firestore
@@ -49,8 +50,12 @@ def hash_ref(event_id: str, md5_hex: str) -> firestore.DocumentReference:
     return hashes_col(event_id).document(md5_hex)
 
 
+def guests_col(event_id: str) -> firestore.CollectionReference:
+    return event_ref(event_id).collection("guests")
+
+
 def guest_ref(event_id: str, uid: str) -> firestore.DocumentReference:
-    return event_ref(event_id).collection("guests").document(uid)
+    return guests_col(event_id).document(uid)
 
 
 def people_col(event_id: str) -> firestore.CollectionReference:
@@ -115,8 +120,33 @@ def claim_link_ref(code_hash: str) -> firestore.DocumentReference:
     return db().collection("claimLinks").document(code_hash)
 
 
+def host_link_ref(code_hash: str) -> firestore.DocumentReference:
+    """`hostLinks/{hash}` — spec 08 §1's host magic link, same shape as `claim_link_ref` and for the
+    same reason: redemption (`POST /v1/host-claim`) receives a bare code with no event, so the hash
+    has to be addressable without one, and only the hash is ever stored."""
+    return db().collection("hostLinks").document(code_hash)
+
+
+def event_creation_limiter_ref(uid: str) -> firestore.DocumentReference:
+    """`eventCreationLimiter/{uid}` — spec 08 §1's "rate-limited" unauthenticated create.
+
+    A root doc keyed by uid rather than anything event-scoped, because the thing being limited is
+    one anonymous session creating many events, which by definition happens before any event exists
+    to scope it to.
+    """
+    return db().collection("eventCreationLimiter").document(uid)
+
+
+def bounties_col(event_id: str) -> firestore.CollectionReference:
+    return event_ref(event_id).collection("bounties")
+
+
 def bounty_ref(event_id: str, bounty_id: str) -> firestore.DocumentReference:
-    return event_ref(event_id).collection("bounties").document(bounty_id)
+    return bounties_col(event_id).document(bounty_id)
+
+
+def reels_col(event_id: str) -> firestore.CollectionReference:
+    return event_ref(event_id).collection("reels")
 
 
 def ops_col(event_id: str) -> firestore.CollectionReference:
@@ -137,6 +167,39 @@ def kiosk_playlist_ref(event_id: str) -> firestore.DocumentReference:
 def ledger_ref(event_id: str, doc: str) -> firestore.DocumentReference:
     """`ledger/{doc}` — the Story Director's aggregate state (spec 05 §1)."""
     return event_ref(event_id).collection("ledger").document(doc)
+
+
+def director_state_ref(event_id: str) -> firestore.DocumentReference:
+    """`ledger/directorState` — the Story Director's tick-to-tick working memory (spec 05 §1).
+
+    Firestore rather than Agent Runtime Sessions, and the reasoning is HANDOFF §4.18's: this document
+    holds the rolling 10-tick window, the last stage the director saw, the deferred reel commissions
+    and the permanent coverage gaps the wrap report has to be honest about. All four are read inside
+    transactions, are the host console's evidence surface, and must survive the director being
+    redeployed — which is the definition of a system of record, not of a session cache. What *does*
+    live in soft, probabilistic storage is the host's free-text taste (`directors/story/memory.py`),
+    and nothing there gates a bounty, a point award or an exposure.
+    """
+    return ledger_ref(event_id, "directorState")
+
+
+def coverage_stage_shards_col(event_id: str) -> firestore.CollectionReference:
+    """`ledger/coverageShards/stages/{stageId}` — the incremental coverage ledger (spec 05 §1).
+
+    A materialized view, not a cache. Recomputing coverage inside the tick is O(photos) — tens of
+    seconds at five thousand photos, at which point a 30-second demo tick overlaps itself — so the
+    counters are bumped once, inside the very transaction that already sets `status='indexed'`
+    (`shared/coverage.py`, called from `shared/pipeline.py`). The tick then reads a handful of small
+    documents and stays O(1) as the event grows.
+
+    Sharded per stage for the same reason `ops/pulse_shards` is sharded per worker type (HANDOFF
+    §4.13): one counter document for a whole wedding would be the one hot document in the system.
+    """
+    return ledger_ref(event_id, "coverageShards").collection("stages")
+
+
+def coverage_stage_shard_ref(event_id: str, stage_id: str) -> firestore.DocumentReference:
+    return coverage_stage_shards_col(event_id).document(stage_id)
 
 
 def platform_doc(name: str) -> firestore.DocumentReference:
@@ -167,6 +230,26 @@ def publisher_lease_ref(event_id: str) -> firestore.DocumentReference:
 
 
 # ---------------------------------------------------------------- helpers
+
+
+def to_firestore(value: Any) -> Any:
+    """`pydantic_model.model_dump(by_alias=True)`, made safe for `.set()`/`.update()`.
+
+    `model_dump(mode="json")` is the tempting one-liner and the wrong one: it stringifies every
+    datetime, and a stage window (`EventStage.startsAt`/`endsAt`) or a wrap report's `generatedAt`
+    stored as a string can never be compared against a photo's `capturedAt` again (the same trap
+    `scripts/dev_event.py::firestore_ready` exists to avoid — this is that function's production
+    home, since `backend/api` writers need it too and should not import a dev script to get it).
+    Enums still need converting, or the Firestore client raises on a value it does not recognise;
+    datetimes and everything else pass through untouched.
+    """
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {k: to_firestore(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_firestore(v) for v in value]
+    return value
 
 
 def get_event(event_id: str) -> dict[str, Any] | None:

@@ -31,6 +31,14 @@ from .settings import settings
 #: commit in the same transaction. Used for `status='indexed'` (see `shared.pipeline`).
 Derive = Callable[[dict[str, Any]], dict[str, Any]]
 
+#: A write to some *other* document that must land or not land with this one. The only user is the
+#: coverage ledger (`shared.coverage`), and the reason it is a hook rather than a second call is
+#: spec 05's requirement that the counters be exact: a coverage bump committed outside this
+#: transaction could survive a rolled-back index, and one that ran before it could be lost by a
+#: retry. Receives the transaction and the post-update document; may write, must not read after the
+#: transaction has started writing, and must never raise.
+SideEffect = Callable[[firestore.Transaction, dict[str, Any]], None]
+
 
 def public_floor(event: dict[str, Any]) -> float:
     """The aesthetic bar for Ring 2 to actually reach a public surface (spec 04 §2).
@@ -94,6 +102,7 @@ def _apply(
     event: dict[str, Any],
     extra: dict[str, Any] | None,
     derive: Derive | None,
+    side_effect: SideEffect | None,
 ) -> str | None:
     """Read the document, decide, write — atomically, so concurrent workers agree."""
     snap = ref.get(transaction=transaction)
@@ -120,6 +129,13 @@ def _apply(
 
     resolved = decide(merged, event)
     updates["visibility"] = resolved.value
+    merged["visibility"] = resolved.value
+
+    if side_effect is not None:
+        # Before the media write, so a hook that needs a read of its own still has one available:
+        # Firestore requires every read in a transaction to precede every write.
+        side_effect(transaction, merged)
+
     transaction.update(ref, updates)
     return resolved.value
 
@@ -152,6 +168,7 @@ def recompute_visibility(
     event: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
     derive: Derive | None = None,
+    side_effect: SideEffect | None = None,
 ) -> str | None:
     """Recompute and store `visibility`, optionally committing `extra` in the same transaction.
 
@@ -164,6 +181,7 @@ def recompute_visibility(
         resolved_event,
         extra,
         derive,
+        side_effect,
     )
     if resolved is None:
         log.warn("visibility_media_missing", event_id=event_id, media_id=media_id)

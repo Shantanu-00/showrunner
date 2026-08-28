@@ -7,8 +7,10 @@ around it, and all of that is failure handling, so it lives here once:
 - **Claim** absorbs a duplicate Cloud Tasks delivery and refuses to spend money on media that has
   already been rejected, deleted or deduped.
 - **Complete** stamps the stage `done`, sums token usage, derives `status='indexed'` when the last
-  stage lands, and recomputes visibility — one transaction, because a viewer must never observe a
-  document whose verdict and exposure disagree.
+  stage lands, bumps the Story Director's coverage counters on that transition, and recomputes
+  visibility — one transaction, because a viewer must never observe a document whose verdict and
+  exposure disagree, and because a coverage ledger that can drift from the media it counts is a
+  ledger the director cannot reason from.
 - **Fail** implements spec 03 §6's taxonomy: transient failures go back to the queue (max 5
   attempts, the queue owns the backoff), permanent ones are absorbed on the spot with the stage's
   conservative default so a poisoned photo costs exactly one pass instead of a retry storm.
@@ -35,7 +37,7 @@ from google.cloud import firestore
 
 from schemas.common import MediaStatus, Stage, StageState
 
-from . import fs, log
+from . import coverage, fs, log
 from .settings import MAX_STAGE_ATTEMPTS
 from .visibility import recompute_visibility
 
@@ -165,9 +167,35 @@ def _derive_status(media: dict[str, Any]) -> dict[str, Any]:
 def _settle(
     event_id: str, media_id: str, updates: dict[str, Any], event: dict[str, Any] | None
 ) -> str | None:
-    """Commit a stage outcome, the derived status and the visibility consequence in one write."""
+    """Commit a stage outcome, the derived status, the coverage bump and the visibility consequence
+    in one write.
+
+    The coverage counters (spec 05 §1, `shared/coverage.py`) ride this transaction rather than taking
+    one of their own, and the trigger is the *transition* into `indexed` rather than the state: the
+    `transitioned` flag is set by the derive hook, which returns an update exactly once per item and
+    never again. A replayed stage, a re-delivered task and a host re-review therefore all bump
+    nothing, with no separate idempotency key to keep in sync. The flag is recomputed on every
+    transaction attempt, so an optimistic-concurrency retry cannot double-count either.
+    """
+    transitioned = False
+
+    def derive(media: dict[str, Any]) -> dict[str, Any]:
+        nonlocal transitioned
+        derived = _derive_status(media)
+        transitioned = bool(derived)
+        return derived
+
+    def side_effect(transaction: Any, media: dict[str, Any]) -> None:
+        if transitioned:
+            coverage.bump(transaction, event_id, media)
+
     return recompute_visibility(
-        event_id, media_id, event=event, extra=updates, derive=_derive_status
+        event_id,
+        media_id,
+        event=event,
+        extra=updates,
+        derive=derive,
+        side_effect=side_effect,
     )
 
 

@@ -84,6 +84,55 @@ PUBLISHER_RENEW_SECONDS = 45  # comfortably inside the TTL: two renewals may fai
 #: cadence is 30 s and it is delivered server-side — a console loop reads as a button press.
 DEMO_INTERLEAVE_SECONDS = 30
 
+# --- Story Director rails (spec 05) -----------------------------------------------------------
+#
+# Everything spec 05 §1 pins is copied verbatim and marked so; the four values it leaves open are
+# marked just as clearly and recorded in HANDOFF §9, same discipline as τ_claim (§4.16) and the two
+# kiosk constants (§4.20). None of them is env-overridable on purpose: a guardrail an operator can
+# widen from a deploy flag is a guardrail in name only.
+DIRECTOR_MAX_NEW_BOUNTIES_PER_TICK = 2  # spec 05 §1 verbatim
+DIRECTOR_MAX_ACTIVE_BOUNTIES = 6  # spec 05 §1 verbatim
+BOUNTY_POINTS_MIN = 50  # spec 05 §1 verbatim: clamp(basePoints × vipWeight, 50, 300)
+BOUNTY_POINTS_MAX = 300  # spec 05 §1 verbatim
+STAGE_ADVANCE_MIN_CONFIDENCE = 0.8  # spec 05 §1 verbatim
+STAGE_ADVANCE_WINDOW_MINUTES = 45  # spec 05 §1 verbatim ("scheduled window agrees ±45 min")
+DIRECTOR_SESSION_WINDOW = 10  # spec 05 §1 verbatim ("rolling window of the last 10 tick summaries")
+NEAR_STAGE_WINDOW_MINUTES = 15  # spec 05 §4 verbatim ("guests who uploaded in the last 15 min")
+UPLOAD_VELOCITY_WINDOW_MINUTES = 5  # spec 05 §1 verbatim ("upload velocity (5-min window)")
+
+#: NOT spec-pinned. The midpoint of the [50, 300] guardrail band, so a tier-3 gap pays the middle of
+#: the range and a tier-0 gap (×3.0) saturates at the ceiling — which is exactly the ordering spec 11
+#: §3.3 asks for ("the guardrail is the ceiling; tier is the reason a bride's-mother bounty outpays a
+#: generic one"). The model may propose its own `basePoints`; this is the default and the clamp.
+BOUNTY_DEFAULT_BASE_POINTS = 100
+#: NOT spec-pinned. Spec 05 §3 has `expiresInMin` as a model-chosen field and §3's escalation fires
+#: at "half-life", so the default has to be long enough for a guest to notice a banner, walk to the
+#: right room and take a photograph, and short enough that a missed moment expires while the event
+#: still remembers it. 20 minutes puts escalation at 10.
+BOUNTY_DEFAULT_TTL_MINUTES = 20
+BOUNTY_MIN_TTL_MINUTES = 5
+BOUNTY_MAX_TTL_MINUTES = 90
+#: NOT spec-pinned. Spec 05 §3's "partial credit (right moment, weak quality) → smaller award,
+#: bounty stays open". Two fifths: visibly worth having, visibly not the whole prize.
+BOUNTY_PARTIAL_FRACTION = 0.4
+#: NOT spec-pinned. Spec 05 §4 requires a "per-uid daily points cap" without a number. 1,000 is
+#: roughly ten maximum-value bounties — beyond any legitimate guest's day, and low enough that a
+#: scripted submitter cannot own the leaderboard.
+GUEST_DAILY_POINTS_CAP = 1000
+#: The Curator's moment-match confidence a bounty submission must clear to be fulfilled rather than
+#: partially credited. Not spec-pinned; deliberately strict, because a false fulfilment closes a
+#: coverage gap that is still open.
+BOUNTY_MATCH_CONFIDENCE = 0.6
+#: How many recent indexed items the ledger reads for the stage-drift signal (spec 05 §2's "a run of
+#: high-confidence off-schedule classifications, e.g. 12 of the last 20"). 20 is that sentence.
+DRIFT_SAMPLE_SIZE = 20
+#: A visual score this high for a stage other than the active one counts as one drift vote.
+DRIFT_MIN_VISUAL = 0.6
+#: And this many votes out of `DRIFT_SAMPLE_SIZE` make it a signal worth reasoning about, rather than
+#: two guests wandering off. Spec 05 §2's example is 12 of 20; 0.5 is that, rounded to a fraction so
+#: it still means something when the sample is short.
+DRIFT_VOTE_FRACTION = 0.5
+
 # --- kiosk program rails (spec 04 §4) ---------------------------------------------------------
 KIOSK_PROGRAM_SECONDS = 300  # "~5 min program, recomputed on triggers"
 KIOSK_HERO_HOLD_SEC = 6  # spec 04 §4's slot sketch, verbatim
@@ -234,6 +283,13 @@ class Settings:
         #: Where the claim magic link points (spec 02 §3.1 — the code rides in the fragment).
         self.app_origin: str = _env("NEXT_PUBLIC_APP_ORIGIN")
 
+        #: A Vertex AI Agent Engine resource id, when one exists. Empty is the normal case and not a
+        #: degraded one: it selects the Firestore-backed read of the host's free-text preferences
+        #: (`directors/story/memory.py`) over a Memory Bank recall of the same text at the same
+        #: `{eventId}:host` scope. Nothing that gates a bounty, a point award or an exposure reads
+        #: either path (spec 11 §4).
+        self.agent_engine_id: str = _env("AGENT_ENGINE_ID")
+
         #: Model Armor template (text surfaces only — spec 03 §4.7). The *location* is read out of
         #: this resource name by `services/armor.py`, so it is configured exactly once: Model Armor
         #: is `us`/`eu` multi-region and lives on its own endpoint host, and a second copy of that
@@ -248,6 +304,12 @@ class Settings:
         self.max_concurrent_live_events: int = _int_env("MAX_CONCURRENT_LIVE_EVENTS", 3)
         self.public_event_max_live_minutes: int = _int_env("PUBLIC_EVENT_MAX_LIVE_MINUTES", 60)
         self.public_event_cost_ceiling_usd: float = _float_env("PUBLIC_EVENT_COST_CEILING_USD", 3.0)
+        #: NOT spec-pinned. Spec 08 §1 says event creation is "unauthenticated create,
+        #: rate-limited" without a number — same discipline as the other flagged-not-pinned
+        #: constants above. 10/hour is generous for a legitimate host setting up co-hosts or
+        #: retrying a mistake, and low enough that a scripted caller cannot cheaply farm slots
+        #: against the spec 11 capacity cap.
+        self.event_create_rate_limit_per_hour: int = _int_env("EVENT_CREATE_RATE_LIMIT_PER_HOUR", 10)
 
     def queue_path(self, queue: str) -> str:
         return f"projects/{self.project}/locations/{self.location}/queues/{queue}"

@@ -26,9 +26,9 @@ Four decisions here are load-bearing:
    outage than the stale wall it was trying to fix. Per-event failures are reported in the response
    body and logged; the response itself is 200.
 
-The Story Director (spec 05's Ledger → Reason → Act) lands in S8b and replaces the body of
-`_do_work` — the lease, the fan-out, the auth and the cadence are this session's and are already
-what the Scheduler job page proves.
+The Story Director (spec 05's Validate → Expire → Arm → Ledger → Reason → Act) is the body of
+`_do_work`. It runs *inside* the lease taken here and takes none of its own; the lease, the fan-out,
+the auth and the cadence are unchanged from the session that built them.
 """
 
 from __future__ import annotations
@@ -39,9 +39,11 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Header, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+from directors.story import director
 from schemas.event import EventClass, EventStatus
 from shared import errors, fs, internal, leases, log, oidc, tasks
 from shared.auth import Principal, verify_bearer
@@ -134,27 +136,50 @@ def _targets(demo: bool, event_id: str | None, principal: Principal | None) -> l
 # ---------------------------------------------------------------- the work
 
 
-def _do_work(event_id: str, event: dict[str, Any], *, tick_id: str) -> dict[str, Any]:
+async def _do_work(event_id: str, event: dict[str, Any], *, tick_id: str) -> dict[str, Any]:
     """What one tick does for one event, under its lease.
 
-    **S8a (now):** refresh the wall. Spec 04 §4 lists "every 5 min as fallback" among the publisher's
-    recompute triggers, and delivering that from the tick rather than from inside the publisher is
-    what makes it survive the publisher being scaled to zero — during the judging month the Scheduler
-    is the only thing still running on a timer, so it is the right place for the guarantee to live.
+    Two things, in this order and for that reason:
 
-    **S8b (next):** the Story Director — spec 05 §1's `Ledger → Reason → Act` on Agent Runtime, with
-    the sharded coverage ledger, gap analysis and bounty issuance. It replaces the body of this
-    function; the lease, the fan-out, the cadence and the auth above do not change.
+    **The Story Director** (spec 05 §1's Validate → Expire → Arm → Ledger → Reason → Act,
+    `directors/story/director.py`). It runs *inside* the lease this endpoint already holds and takes
+    none of its own — a second lease would deadlock against the first, and extending the first would
+    throttle the cadence it exists to protect (HANDOFF §4.20).
+
+    **Then the wall.** Spec 04 §4 lists "every 5 min as fallback" among the publisher's recompute
+    triggers, and delivering that from the tick rather than from inside the publisher is what makes it
+    survive the publisher being scaled to zero — during the judging month the Scheduler is the only
+    thing still running on a timer. The nudge comes *after* the director so that a bounty escalated to
+    a kiosk takeover, an announcement or an auto-advanced stage is on the screen at the end of the same
+    tick that decided it, rather than up to two minutes later.
+
+    A director failure is reported and does not stop the wall refresh; a publisher failure is reported
+    and does not undo a bounty. Neither fails the tick (see this module's fourth design note).
     """
     report: dict[str, Any] = {"eventId": event_id, "tickId": tick_id}
+
     try:
-        report["publisher"] = internal.nudge_publisher(event_id, reason="tick")
+        report["director"] = await director.run_tick(event_id, event, tick_id=tick_id)
+    except Exception as exc:  # noqa: BLE001 - one event's director must not stop its wall or the fleet
+        log.error("tick_director_failed", event_id=event_id, tick_id=tick_id, err=str(exc))
+        report["director"] = {"status": "failed", "error": str(exc)[:300]}
+        fs.ops_alert(
+            event_id,
+            "director_failed",
+            f"the story director failed on this tick: {str(exc)[:300]}",
+            severity="error",
+            tickId=tick_id,
+        )
+
+    try:
+        report["publisher"] = await run_in_threadpool(
+            internal.nudge_publisher, event_id, reason="tick"
+        )
     except internal.PublisherError as exc:
-        # A stale wall is not a reason to fail a tick — and once S8b lands, definitely not a reason
-        # to skip issuing a bounty.
+        # A stale wall is not a reason to fail a tick, and definitely not a reason to lose a bounty
+        # that has already been issued.
         log.warn("tick_publisher_nudge_failed", event_id=event_id, err=str(exc))
         report["publisher"] = {"status": "unreachable", "error": str(exc)[:200]}
-    report["director"] = "pending_s8b"
     return report
 
 
@@ -172,14 +197,17 @@ async def tick(
     started = dt.datetime.now(dt.timezone.utc)
     caller_kind, principal = _authorize(request, authorization)
 
-    targets = _targets(demo, eventId, principal)
+    targets = await run_in_threadpool(_targets, demo, eventId, principal)
     ticked: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
 
     for event_id, event in targets:
         tick_id = new_ulid()
-        lease = leases.acquire(
-            fs.tick_ref(event_id), tick_id, ttl_seconds=TICK_LEASE_MINUTES * 60
+        # Every Firestore call in this loop goes through the threadpool. `api` serves guests' upload
+        # requests from the same process at concurrency 80, so a tick that blocked the event loop for
+        # the seconds a director takes would stall every phone talking to this instance.
+        lease = await run_in_threadpool(
+            leases.acquire, fs.tick_ref(event_id), tick_id, ttl_seconds=TICK_LEASE_MINUTES * 60
         )
         if not lease.ok:
             # The previous tick is still running. Spec 05 §1's whole reason for the lease.
@@ -188,12 +216,13 @@ async def tick(
 
         outcome, report = "ok", {"eventId": event_id, "tickId": tick_id}
         try:
-            report = _do_work(event_id, event, tick_id=tick_id)
+            report = await _do_work(event_id, event, tick_id=tick_id)
         except Exception as exc:  # noqa: BLE001 - one event's failure is not the fleet's
             outcome = "error"
             report["error"] = str(exc)[:300]
             log.error("tick_failed", event_id=event_id, tick_id=tick_id, err=str(exc))
-            fs.ops_alert(
+            await run_in_threadpool(
+                fs.ops_alert,
                 event_id,
                 "director_tick_failed",
                 f"a director tick failed: {str(exc)[:300]}",
@@ -201,7 +230,8 @@ async def tick(
                 tickId=tick_id,
             )
         finally:
-            leases.release(
+            await run_in_threadpool(
+                leases.release,
                 lease,
                 lastTickAt=fs.SERVER_TIMESTAMP,
                 lastOutcome=outcome,
@@ -213,7 +243,8 @@ async def tick(
     interleaved = _interleave(demo, interleave, request)
 
     ms = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
-    _pulse(
+    await run_in_threadpool(
+        _pulse,
         mode="demo" if demo else "schedule",
         interleave=interleave,
         caller=caller_kind,
