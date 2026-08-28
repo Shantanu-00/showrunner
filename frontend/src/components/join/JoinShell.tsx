@@ -6,13 +6,15 @@ import { getEventPublic } from "@/lib/api";
 import * as outbox from "@/lib/outbox";
 import { drain, installResumeTriggers, onOutboxChange } from "@/lib/uploadManager";
 import type { BatchConsent, EventPublicInfo, OutboxItem } from "@/lib/types";
+import { useRouteEventId } from "@/lib/routeParams";
 import { TabBar, type JoinTab } from "./TabBar";
 import { SendSheet } from "./SendSheet";
 import { Filmstrip } from "./Filmstrip";
 import { EventTab } from "@/components/gallery/EventTab";
 import { MeTab } from "@/components/me/MeTab";
 
-export function JoinShell({ eventId }: { eventId: string }) {
+export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
+  const eventId = useRouteEventId("/join/", fallbackEventId);
   const [tab, setTab] = useState<JoinTab>("event");
   const [authReady, setAuthReady] = useState(false);
   const [uid, setUid] = useState<string | null>(null);

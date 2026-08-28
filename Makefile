@@ -1,6 +1,6 @@
 .PHONY: up down dev-event smoke smoke-faces smoke-safety seed eval demo-reset rules-test \
         deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
-        deploy-video-prep deploy-render deploy-publisher
+        deploy-video-prep deploy-render deploy-publisher deploy-hosting
 
 REGION := us-central1
 PY := python
@@ -85,3 +85,8 @@ deploy-render:
 deploy-publisher:
 	gcloud run deploy publisher --source backend --region $(REGION) \
 	  --update-env-vars SERVICE=publisher
+
+# Static PWA export → Firebase Hosting. Rebuild first so out/ reflects frontend/.env.local.
+deploy-hosting:
+	cd frontend && npm run build
+	firebase deploy --only hosting --project showrunner-hq

@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ensureAnonymousAuth, refreshClaims } from "@/lib/firebase";
 import { claimByCode, ApiError } from "@/lib/api";
+import { useRouteEventId } from "@/lib/routeParams";
 
 /** `/events/{eventId}/claim#<code>` (spec 02 §3.1, matches the real URL
  * `backend/api/identity.py::create_claim_link` builds). No custom token is minted — the server
  * grants `personId` directly to whichever uid is on this request's bearer token, so the only
  * client-side step after a successful call is a force-refreshed ID token. */
-export function ClaimShell({ eventId }: { eventId: string }) {
+export function ClaimShell({ eventId: fallbackEventId }: { eventId: string }) {
+  const eventId = useRouteEventId("/events/", fallbackEventId);
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
 

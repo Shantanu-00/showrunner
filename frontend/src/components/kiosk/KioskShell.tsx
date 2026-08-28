@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { ensureAnonymousAuth } from "@/lib/firebase";
 import { getEventPublic } from "@/lib/api";
 import type { EventPublicInfo } from "@/lib/types";
+import { useRouteEventId } from "@/lib/routeParams";
 import { KioskSetup } from "./KioskSetup";
 import { KioskShow } from "./KioskShow";
 
 /** `/kiosk/{eventId}` (spec 12 §5.3). Every client, kiosk included, signs in anonymously on
  * load — media-doc reads require an authed event member (spec 09 §3 rules). */
-export function KioskShell({ eventId }: { eventId: string }) {
+export function KioskShell({ eventId: fallbackEventId }: { eventId: string }) {
+  const eventId = useRouteEventId("/kiosk/", fallbackEventId);
   const [authReady, setAuthReady] = useState(false);
   const [eventInfo, setEventInfo] = useState<EventPublicInfo | null>(null);
   const [started, setStarted] = useState(false);
