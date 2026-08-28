@@ -25,6 +25,13 @@ no accumulated rounding.
 policy — HANDOFF §3) but because one subtitle file with real timings is far less error-prone than N
 `drawtext` filters carrying `enable='between(t,..)'` expressions, and it is the same file libass would
 use on the documented production path.
+
+**4. Every shot chain ends in an explicit `fps` filter, on top of `zoompan`'s own `fps=` parameter.**
+`xfade` refuses a variable frame rate ("the inputs needs to be a constant frame rate"), and the first
+real render (never exercised before this Job actually ran once) hit exactly that on a live audio+video
+graph that the offline smoke fixture — no ffmpeg, no real frame rate negotiation — could not catch:
+`zoompan`'s frame-rate metadata is not reliably what a downstream `xfade` reads back once `trim` and
+`format` sit between them, so the chain re-stamps a hard CFR itself instead of trusting it survived.
 """
 
 from __future__ import annotations
@@ -142,7 +149,7 @@ def _shot_chain(
             f"[fg{index}]scale={REEL_WIDTH}:{REEL_HEIGHT}:force_original_aspect_ratio=decrease[fgv{index}];"
             f"[bgv{index}][fgv{index}]overlay=(W-w)/2:(H-h)/2,"
             f"trim=duration={input_duration:.4f},setpts=PTS-STARTPTS,"
-            f"format=yuv420p,setsar=1[v{index}]"
+            f"format=yuv420p,setsar=1,fps={REEL_FPS}[v{index}]"
         )
 
     fx, fy, fw, _fh = _relative(shot.fromRect, base)
@@ -165,7 +172,7 @@ def _shot_chain(
         f"zoompan=z='{zoom}':x='{xexpr}':y='{yexpr}':d=1:"
         f"s={REEL_WIDTH}x{REEL_HEIGHT}:fps={REEL_FPS},"
         f"trim=duration={input_duration:.4f},setpts=PTS-STARTPTS,"
-        f"format=yuv420p,setsar=1[v{index}]"
+        f"format=yuv420p,setsar=1,fps={REEL_FPS}[v{index}]"
     )
 
 
@@ -289,17 +296,7 @@ def build_command(
     chain, inputs, offsets, total = _xfade_chain(shots)
     origin = shots[0].startSec
 
-    args: list[str] = [
-        "ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "warning",
-        # The render Job is 8 vCPU (spec 09 §1), and the Debian-packaged ffmpeg in
-        # Dockerfile.render's base image aborts an all-zoompan filtergraph under that many filter
-        # threads — "Terminating thread with return code -22 (Invalid argument)", both encoders
-        # never opening. Confirmed by reproducing dev_demo's exact failed argv: a newer upstream
-        # ffmpeg build renders it cleanly at any thread count, but this image's build only fails
-        # multi-threaded, so the filter graph — not the encoders, which stay multi-threaded — is
-        # pinned to one thread rather than betting on the packaged binary being safe here.
-        "-filter_complex_threads", "1",
-    ]
+    args: list[str] = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "warning"]
     for path, duration in zip(image_paths, inputs):
         args += ["-loop", "1", "-framerate", str(REEL_FPS), "-t", f"{duration:.4f}", "-i", path]
     if audio_path:
