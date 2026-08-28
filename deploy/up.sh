@@ -59,6 +59,15 @@ gcloud builds submit "${REPO_ROOT}/backend" \
   --substitutions "_IMAGE=${FACE_IMAGE}" --project "${PROJECT_ID}" >/dev/null
 note "built ${FACE_IMAGE}"
 
+# Same story for the reel renderer: ffmpeg + fonts + librosa's SciPy/numba stack is ~400 MB that
+# api/intake must never carry (spec 09 §1 gives `render` its own row and its own 8 vCPU / 32 GiB shape).
+RENDER_IMAGE="${IMAGE_HOST}/${PROJECT_ID}/${REPO}/render:${TAG}"
+step "Build render (separate image — backend/docker/Dockerfile.render)"
+gcloud builds submit "${REPO_ROOT}/backend" \
+  --config "${REPO_ROOT}/backend/docker/cloudbuild.render.yaml" \
+  --substitutions "_IMAGE=${RENDER_IMAGE}" --project "${PROJECT_ID}" >/dev/null
+note "built ${RENDER_IMAGE}"
+
 # Shared runtime config. Worker URLs stay empty until B2 exists; tasks.enqueue logs a skipped
 # dispatch rather than queueing work nothing can consume.
 COMMON_ENV="ENVIRONMENT=${ENVIRONMENT:-production}"
@@ -69,6 +78,10 @@ COMMON_ENV="${COMMON_ENV};GOOGLE_CLOUD_LOCATION=${REGION}"
 COMMON_ENV="${COMMON_ENV};GENAI_LOCATION=${GENAI_LOCATION:-global}"
 COMMON_ENV="${COMMON_ENV};MODEL_CLASSIFIER=${MODEL_CLASSIFIER:-gemini-3.5-flash-lite}"
 COMMON_ENV="${COMMON_ENV};MODEL_DIRECTOR=${MODEL_DIRECTOR:-gemini-3.7-flash}"
+# Lyria 3 Clip — every reel's soundtrack (spec 06 §3, bonus +0.2). Only the render job calls it, but the
+# value rides in COMMON_ENV so a `make deploy-api` cannot leave the two halves disagreeing about it.
+COMMON_ENV="${COMMON_ENV};MODEL_MUSIC=${MODEL_MUSIC:-lyria-3-clip-preview}"
+COMMON_ENV="${COMMON_ENV};RENDER_JOB_NAME=${RENDER_JOB_NAME:-render}"
 COMMON_ENV="${COMMON_ENV};RAW_MEDIA_BUCKET=${RAW_BUCKET}"
 COMMON_ENV="${COMMON_ENV};DERIVED_MEDIA_BUCKET=${DERIVED_BUCKET}"
 COMMON_ENV="${COMMON_ENV};CURATED_REELS_BUCKET=${CURATED_BUCKET}"
@@ -211,6 +224,12 @@ note "dlq → $(run_url dlq)"
 API_URL="$(run_url api)"
 upsert_env NEXT_PUBLIC_API_URL "${API_URL}"
 
+# The render job goes up after `api`, because a published reel's `videoUri` is an `api` path (the kiosk's
+# <video> cannot carry an auth header, so the document holds a URL that re-checks visibility and 302s to
+# a signed URL — backend/api/reels.py). The renderer writes that URL, so it has to know it.
+export RENDER_ENV="${COMMON_ENV};NEXT_PUBLIC_API_URL=${API_URL}"
+"${REPO_ROOT}/deploy/render.sh" "${RENDER_IMAGE}"
+
 # Last, because both jobs POST to the api URL that only exists once the deploy above finished.
 "${REPO_ROOT}/deploy/scheduler.sh" "${API_URL}"
 
@@ -231,6 +250,7 @@ cat <<SUMMARY
 Up. Buckets: ${RAW_BUCKET} · ${DERIVED_BUCKET} · ${CURATED_BUCKET}
 API: ${API_URL}
 Publisher: ${PUBLISHER_URL}   (kiosk playlist writer, min-instances 1)
+Render:    Cloud Run Job 'render' (8 vCPU / 32Gi, one execution per reel commission)
 Scheduler: director-tick (2 min) · director-tick-demo (1 min + 30 s interleave)
-Next: make dev-event  →  make smoke  →  make smoke-autonomy
+Next: make dev-event  →  make smoke  →  make smoke-autonomy  →  make smoke-reel
 SUMMARY

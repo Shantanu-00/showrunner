@@ -103,12 +103,17 @@ def _apply(
     extra: dict[str, Any] | None,
     derive: Derive | None,
     side_effect: SideEffect | None,
-) -> str | None:
-    """Read the document, decide, write — atomically, so concurrent workers agree."""
+) -> tuple[str, str | None] | None:
+    """Read the document, decide, write — atomically, so concurrent workers agree.
+
+    Returns `(resolved, previous)`. The previous value is what lets the caller notice a *demotion*
+    away from `public`, which is the only trigger for spec 06 §7's reel interlock.
+    """
     snap = ref.get(transaction=transaction)
     if not snap.exists:
         return None
     media = snap.to_dict() or {}
+    previous = media.get("visibility")
 
     updates: dict[str, Any] = dict(extra or {})
     # `extra` is the caller's own stage result. Applying it in this transaction is what makes
@@ -137,7 +142,7 @@ def _apply(
         side_effect(transaction, merged)
 
     transaction.update(ref, updates)
-    return resolved.value
+    return resolved.value, previous
 
 
 def _merge(media: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
@@ -175,7 +180,7 @@ def recompute_visibility(
     Returns the resolved value, or None if the media document is gone.
     """
     resolved_event = event if event is not None else (fs.get_event(event_id) or {})
-    resolved = _apply(
+    outcome = _apply(
         fs.db().transaction(),
         fs.media_ref(event_id, media_id),
         resolved_event,
@@ -183,6 +188,17 @@ def recompute_visibility(
         derive,
         side_effect,
     )
-    if resolved is None:
+    if outcome is None:
         log.warn("visibility_media_missing", event_id=event_id, media_id=media_id)
+        return None
+
+    resolved, previous = outcome
+    if previous == Visibility.PUBLIC.value and resolved != Visibility.PUBLIC.value:
+        # Spec 06 §7's consent interlock. Only on the demotion, and only after the commit — see
+        # `shared/reels.py` for why it is not inside the transaction and why `shared` owns it rather
+        # than `directors/reel`. Never raises, so a reel that will not come down cannot stop a
+        # photograph from going private.
+        from . import reels
+
+        reels.retract_containing(event_id, media_id)
     return resolved

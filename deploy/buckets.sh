@@ -14,6 +14,7 @@ INTAKE_SA="$(sa_email "${SA_INTAKE}")"
 CURATE_SA="$(sa_email "${SA_CURATE}")"
 FACE_SA="$(sa_email "${SA_FACE}")"
 SAFETY_SA="$(sa_email "${SA_SAFETY}")"
+RENDER_SA="$(sa_email "${SA_RENDER}")"
 
 CORS_DIR="$(mktemp -d)"
 trap 'rm -rf "${CORS_DIR}"' EXIT
@@ -109,6 +110,13 @@ grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${FACE_SA}" "roles/storage
 # pixel, so the small render is the right one). No raw grant either — the item most likely to be
 # genuinely sensitive is the one this worker looks at, and it still never sees the original.
 grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${SAFETY_SA}" "roles/storage.objectViewer"
+# render: the only identity in the project that WRITES the curated bucket (spec 09 §4). It reads
+# display_1600 for every shot and has no raw grant either — a reel is assembled from the same 1600 px
+# render the gallery serves. `objectCreator`, not `objectAdmin`: a reel is immutable once written, and a
+# better cut is a new version with a new id (spec 06 §4), so the renderer never needs to overwrite or
+# delete anything.
+grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${RENDER_SA}" "roles/storage.objectViewer"
+grant_bucket_role "${CURATED_BUCKET}" "serviceAccount:${RENDER_SA}" "roles/storage.objectCreator"
 
 echo
 echo "Buckets ready: ${RAW_BUCKET} · ${DERIVED_BUCKET} · ${CURATED_BUCKET}"

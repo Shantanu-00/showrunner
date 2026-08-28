@@ -1,0 +1,8 @@
+# Same reason as cloudbuild.face.yaml: `gcloud builds submit --tag` always builds `./Dockerfile`, and
+# the render job needs docker/Dockerfile.render. Invoked from the repo root with `backend/` as context:
+#   gcloud builds submit backend --config backend/docker/cloudbuild.render.yaml --substitutions=_IMAGE=...
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "docker/Dockerfile.render", "-t", "$_IMAGE", "."]
+images:
+  - "$_IMAGE"

@@ -71,6 +71,10 @@ SA_CURATE="sa-curate"
 SA_FACE="sa-face"
 SA_SAFETY="sa-safety"
 SA_PUBLISHER="sa-publisher"
+# The reel renderer, and the only identity in the fleet permitted to *write* the curated bucket
+# (spec 09 §4). It reads `derived` and has no grant on `raw` at all — a reel is built from the same
+# 1600 px render the gallery serves, never from a guest's original.
+SA_RENDER="sa-render"
 SA_TASKS="sa-tasks"
 SA_EVENTARC="sa-eventarc"
 # The identity Cloud Scheduler presents to `api`'s /internal/tick over OIDC. It holds no project
@@ -125,6 +129,16 @@ grant_run_invoker() {
     --member "${member}" --role "roles/run.invoker" \
     --region "${REGION}" --project "${PROJECT_ID}" >/dev/null
   note "run ${service}: roles/run.invoker → ${member}"
+}
+
+grant_run_job_invoker() {
+  # Per-job, not project-wide: `api` may start the render job and nothing else. `run.developer` is the
+  # role that carries `run.jobs.run`; there is no narrower predefined one for starting an execution.
+  local job="$1" member="$2"
+  gcloud run jobs add-iam-policy-binding "${job}" \
+    --member "${member}" --role "roles/run.developer" \
+    --region "${REGION}" --project "${PROJECT_ID}" >/dev/null
+  note "run job ${job}: roles/run.developer → ${member}"
 }
 
 run_url() {

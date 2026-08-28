@@ -1,0 +1,45 @@
+# The `render` Cloud Run Job only (spec 09 §1: 8 vCPU / 32 GiB, one task per commission).
+# backend/Dockerfile serves api/intake/dlq/worker-curate/worker-safety/publisher and must never carry
+# this weight: ffmpeg, the fonts and librosa's SciPy/numba stack are ~400 MB, and `intake` scales 0→20
+# on a burst (friction log 2026-08-27 — the face image's 1049 MB cost a 29.6 s cold start).
+#
+# Single-stage, unlike Dockerfile.face: nothing here needs a compiler at build time that the runtime
+# does not also need, because ffmpeg and libsndfile ship as binaries and librosa's wheels are prebuilt.
+# A second stage would copy the same bytes into a new layer for no saving.
+#
+# Build from the `backend/` directory as context — see backend/docker/cloudbuild.render.yaml.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# ffmpeg: the renderer. libsndfile1: what soundfile/librosa dlopen to decode the Lyria MP3.
+# fonts-dejavu-core: the `ass` filter resolves "DejaVu Sans" through fontconfig, and a missing font
+# silently renders every caption as blank rather than failing — so the font is part of the contract
+# with `directors/reel/ffmpeg_build.py`'s style block, not an optional nicety.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg \
+      libsndfile1 \
+      fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt requirements-render.txt ./
+RUN pip install -r requirements-render.txt
+
+COPY . ./
+
+# Fail the build rather than the first render if either half of the toolchain is missing. Both have
+# failed silently in this project's history in exactly this way: a missing binary looks like a bad
+# filtergraph, and a missing font looks like a captioning bug.
+RUN ffmpeg -hide_banner -version | head -1 \
+    && fc-match "DejaVu Sans" \
+    && python -c "import librosa, soundfile; print('librosa', librosa.__version__)"
+
+ENV SERVICE=render
+# A Job has no server. `args` here is the fallback for a manual `gcloud run jobs execute`; a real
+# execution overrides it per commission via `shared/jobs.py` (`--event <id> --reel <id>`).
+ENTRYPOINT ["python", "-m", "render.main"]

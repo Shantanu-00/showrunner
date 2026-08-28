@@ -12,6 +12,7 @@ CURATE_SA="$(sa_email "${SA_CURATE}")"
 FACE_SA="$(sa_email "${SA_FACE}")"
 SAFETY_SA="$(sa_email "${SA_SAFETY}")"
 PUBLISHER_SA="$(sa_email "${SA_PUBLISHER}")"
+RENDER_SA="$(sa_email "${SA_RENDER}")"
 TASKS_SA="$(sa_email "${SA_TASKS}")"
 SCHEDULER_SA="$(sa_email "${SA_SCHEDULER}")"
 EVENTARC_SA="$(sa_email "${SA_EVENTARC}")"
@@ -24,6 +25,7 @@ ensure_sa "${SA_CURATE}" "Showrunner worker-curate (Curator agent)"
 ensure_sa "${SA_FACE}" "Showrunner worker-face (Face Indexer)"
 ensure_sa "${SA_SAFETY}" "Showrunner worker-safety (Guardian)"
 ensure_sa "${SA_PUBLISHER}" "Showrunner publisher (kiosk playlist)"
+ensure_sa "${SA_RENDER}" "Showrunner render job (Reel Director)"
 ensure_sa "${SA_TASKS}" "Showrunner Cloud Tasks OIDC identity"
 ensure_sa "${SA_SCHEDULER}" "Showrunner Cloud Scheduler OIDC identity"
 ensure_sa "${SA_EVENTARC}" "Showrunner Eventarc / Pub-Sub delivery identity"
@@ -79,6 +81,22 @@ step "publisher: Firestore only — no LLM, no Vertex, no GCS, no Tasks"
 # believe about the most visible surface in the product when the service that owns it *cannot* call a
 # model even if a future session wanted it to.
 grant_project_role "serviceAccount:${PUBLISHER_SA}" "roles/datastore.user"
+
+step "render: Firestore + Vertex AI (the Reel Director's own model calls and Lyria)"
+# The render job runs spec 06 §3 end to end in one execution — DIRECT (gemini-3.7-flash), CRITIC
+# (flash-lite), Lyria 3, ffmpeg, publish — so it needs `aiplatform.user`, the same narrowest role
+# sa-curate and sa-safety carry. Bucket grants live in buckets.sh: read on `derived`, create on
+# `curated`, and deliberately **nothing** on `raw`.
+grant_project_role "serviceAccount:${RENDER_SA}" "roles/datastore.user"
+grant_project_role "serviceAccount:${RENDER_SA}" "roles/aiplatform.user"
+# Signed GET URLs for the finished file are minted by `api` as sa-api, not here — the renderer writes
+# the object and never hands anyone a link to it.
+
+step "api: act as the render job's identity (spec 06 §1's commissions)"
+# The Story Director's COMMISSION_REEL action and the host's console button both start a Cloud Run Job
+# execution, and starting a job means acting as that job's runtime identity. The `run.developer` grant
+# on the job itself lives in deploy/render.sh, because it needs the job to exist first.
+grant_sa_role "${RENDER_SA}" "serviceAccount:$(sa_email "${SA_API}")" "roles/iam.serviceAccountUser"
 
 step "scheduler: OIDC token minting for the director tick"
 # Cloud Scheduler impersonates this identity to mint the OIDC token it presents to `api`. Its own

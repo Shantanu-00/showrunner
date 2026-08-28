@@ -1,4 +1,5 @@
-.PHONY: up down dev-event smoke smoke-faces smoke-safety smoke-autonomy smoke-director seed eval demo-reset rules-test \
+.PHONY: up down dev-event smoke smoke-faces smoke-safety smoke-autonomy smoke-director smoke-reel \
+        seed eval demo-reset rules-test \
         deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
         deploy-video-prep deploy-render deploy-publisher deploy-hosting
 
@@ -42,6 +43,13 @@ smoke-autonomy:
 # §1's whole guardrail set as a decision table: no network, no Firestore, no spend.
 smoke-director:
 	$(PY) scripts/smoke_director.py
+
+# The Reel Director: a commissioned reel is directed, scored by Lyria, beat-snapped, rendered and
+# premiered on the wall. `--offline` runs every deterministic claim in spec 06 §8 — persona divergence,
+# the flat-storyboard rejection, the linter, cuts on beats, no face crossing the frame edge, the
+# filtergraph offsets — with no network, no ffmpeg and no spend.
+smoke-reel:
+	$(PY) scripts/smoke_reel.py
 
 seed:
 	$(PY) backend/seed.py --event demo
@@ -91,8 +99,13 @@ deploy-video-prep:
 	gcloud run deploy worker-video-prep --source backend --region $(REGION) \
 	  --update-env-vars SERVICE=worker-video-prep
 
+# The reel renderer needs ffmpeg + fonts + librosa, so it has its own Dockerfile and cannot use
+# `--source` (which would pick up backend/Dockerfile, the wrong one) — same shape as deploy-face.
 deploy-render:
-	gcloud run jobs deploy render --source backend --region $(REGION)
+	$(eval RENDER_IMAGE := $(REGION)-docker.pkg.dev/$(shell gcloud config get-value project)/showrunner/render:$(shell git rev-parse --short HEAD))
+	gcloud builds submit backend --config backend/docker/cloudbuild.render.yaml \
+	  --substitutions _IMAGE=$(RENDER_IMAGE)
+	./deploy/render.sh $(RENDER_IMAGE)
 
 deploy-publisher:
 	gcloud run deploy publisher --source backend --region $(REGION) \

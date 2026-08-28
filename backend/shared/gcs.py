@@ -123,6 +123,36 @@ def signed_put_url(
     return url, expires_at
 
 
+def signed_get_url(
+    bucket: str,
+    path: str,
+    *,
+    ttl_minutes: int = 60,
+    response_type: str | None = None,
+) -> str:
+    """V4 signed GET — short-lived read access to one private object.
+
+    Every bucket in this project has `--public-access-prevention` (deploy/buckets.sh), which is the
+    right default and means a published reel still has to be *served* somehow. The answer is not to
+    open the curated bucket: a public object stays fetchable by URL after spec 06 §7 unpublishes the
+    reel, which would make the consent interlock a UI behaviour rather than an enforced one. Instead
+    `api` re-checks the reel's `visibility` on every request and 302s here (`api/reels.py`), so the
+    grant is a minute long and revocation is immediate.
+
+    Same keyless signing path as `signed_put_url` — IAM signBlob as `SIGNER_SA_EMAIL`, no key file.
+    """
+    creds, signer = _signing_credentials()
+    blob = client().bucket(bucket).blob(path)
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=ttl_minutes),
+        method="GET",
+        response_type=response_type,
+        service_account_email=signer,
+        access_token=creds.token,
+    )
+
+
 def resumable_session(
     bucket: str,
     path: str,

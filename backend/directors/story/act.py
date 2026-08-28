@@ -402,8 +402,9 @@ class Outcome:
             "advancedTo": self.advanced,
             "proposedStage": self.proposed,
             "announced": self.announced,
-            # `commissioned`, never `rendered`: spec 06's Reel Director is B4-S11 and there is nothing
-            # to hand these to yet, so they are recorded on the director state for its SELECT step.
+            # `commissioned`, never `rendered`: the tick starts a render job and does not wait for it.
+            # A reel takes two to five minutes; the tick is thirty seconds. The `reels/{reelId}` document
+            # is where the outcome lands (spec 06 §1), and the kiosk premieres it off the publisher.
             "commissioned": [c["persona"] for c in self.commissioned],
             "rejected": self.rejected,
         }
@@ -691,20 +692,36 @@ def _execute(event_id: str, decision: Decision, *, tick_id: str, outcome: Outcom
         return
 
     if kind is ActionType.COMMISSION_REEL:
-        # Recorded, not executed. Spec 06's Reel Director is B4-S11; writing a half-shaped `reels/`
-        # document now would either be dead data or a contract S11 has to honour without having been
-        # consulted. The commission lands on the director state where S11's SELECT step will read it,
-        # and the tick report says `commissioned`, never `rendered`.
+        # Executed as of B4-S11: `directors/reel/commission.py` creates the `reels/` document and starts
+        # the render job, and it re-checks every guardrail (event status, the panic freeze, one in-flight
+        # commission per persona, the daily ceiling) rather than trusting this call site — the same
+        # discipline the bounty path follows. A refusal is *recorded* on the director state anyway, so a
+        # commission the director asked for is never silently lost: the wrap report can say the film was
+        # wanted and why it did not happen.
+        from directors.reel import commission as reel_commission
+        from schemas.reel import ReelPersona
+
+        result = reel_commission.commission(
+            event_id,
+            persona=ReelPersona(decision.persona),
+            stage_id=decision.stage_id,
+            reason=decision.reason,
+            commissioned_by="director",
+        )
         outcome.commissioned.append(
             session_mod.remember_commission(
                 {
                     "persona": decision.persona,
                     "stageId": decision.stage_id,
                     "reason": decision.reason,
-                    "status": "recorded",
+                    "status": "producing" if result.ok else "refused",
+                    "reelId": result.reel_id,
+                    "note": result.reason,
                 }
             )
         )
+        if not result.ok:
+            outcome.rejected.append(f"COMMISSION_REEL:{decision.persona}: {result.reason}")
         return
 
 

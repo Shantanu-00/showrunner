@@ -168,6 +168,53 @@ KIOSK_DIVERSITY_PENALTY = 0.35
 VIP_WEIGHT_BY_TIER = {0: 3.0, 1: 1.8, 2: 1.3, 3: 1.0}
 DEFAULT_TIER = 3
 
+# --- Reel Director rails (spec 06) ------------------------------------------------------------
+#
+# Spec 06 pins the shot-count band and the cost budget; everything else here is this build's choice,
+# flagged in HANDOFF §9 rather than silently made (same discipline as τ_claim §4.16, the Guardian's
+# reason codes, and the kiosk constants §4.20). None is env-overridable: the shot band and the
+# aesthetic floor are what stop a reel from being a slideshow of the worst photographs at the event.
+REEL_MIN_SHOTS = 10  # spec 06 §2.3 verbatim ("shot count (10–24)")
+REEL_MAX_SHOTS = 24  # spec 06 §2.3 verbatim
+REEL_CANDIDATE_CAP = 40  # spec 06 §3 step 1 verbatim ("cap 40")
+#: How many documents the SELECT query reads before diversity sampling cuts it to the cap. Wide
+#: enough that sampling has something to choose between, narrow enough to stay one page.
+REEL_CANDIDATE_FETCH = 150
+#: NOT spec-pinned — spec 06 §3 step 1 says "aesthetic floor" without a number. 0.35 is the same bar
+#: `directors/story/validate.py` uses to decide a bounty submission is worth points, and for the same
+#: reason: below it a photograph is evidence that something happened, not something to look at.
+REEL_AESTHETIC_FLOOR = 0.35
+#: Output canvas (spec 06 §3 step 5 verbatim: 1080×1920 H.264).
+REEL_WIDTH = 1080
+REEL_HEIGHT = 1920
+REEL_FPS = 30
+#: Ken Burns zoom headroom. The render reads the `display_1600` derived variant (never an original —
+#: `sa-render` has no raw-bucket grant), so 1.25× is about as far as a 1600 px source can be pushed
+#: at 1080×1920 before the softness shows. It is also the maximum a face box can be scaled by, which
+#: is what keeps `edl.py`'s containment proof cheap.
+REEL_ZOOM = 1.25
+#: Face safety margin, as a fraction of the frame, kept between a face box and the visible edge.
+REEL_FACE_MARGIN = 0.04
+REEL_TRANSITION_SEC = 0.5
+REEL_MIN_SHOT_SEC = 1.2
+REEL_MAX_SHOT_SEC = 4.5
+#: Beat-snap tolerance spec 06 §8 asserts against ("cuts land within ±80 ms of beat times").
+REEL_BEAT_TOLERANCE_MS = 80
+#: The critic's pass mark. Below it, DIRECT runs once more with the critique appended (spec 06 §2.4's
+#: "≤1 retry"). 0.6 is chosen so an ordinary storyboard passes first time and the deliberately-flat
+#: fixture in `scripts/smoke_reel.py` does not.
+REEL_CRITIC_PASS_SCORE = 0.6
+#: Spec 06 §2.4's rubric floor: "references ≥ 3 specific moments by name".
+REEL_CRITIC_MIN_MOMENTS = 3
+#: Spec 06 §6's per-version budget, used for the cost line on the reel document: direct+critic ≈$0.02,
+#: Lyria $0.04, render ≈$0.10 compute → <$0.20/version.
+REEL_LYRIA_COST_USD = 0.04
+REEL_RENDER_COST_USD = 0.10
+#: How long a commission may sit in `directing`/`rendering` before another commission of the same
+#: persona is allowed to start. Spec 06 §3 serialises per persona ("one active render each"); this is
+#: the crash backstop, because the process holding the commission is a Cloud Run Job that can die.
+REEL_STALE_MINUTES = 20
+
 EXT_BY_CONTENT_TYPE = {
     "image/jpeg": "jpg",
     "image/png": "png",
@@ -231,6 +278,10 @@ class Settings:
         self.model_classifier: str = _env("MODEL_CLASSIFIER", "gemini-3.5-flash-lite")
         self.model_director: str = _env("MODEL_DIRECTOR", "gemini-3.7-flash")
         self.model_image_edit: str = _env("MODEL_IMAGE_EDIT", "gemini-3.1-flash-image")
+        #: Lyria 3 Clip — every reel's soundtrack (spec 06 §3 step 4, bonus +0.2). Reached through
+        #: `interactions.create(stream=True)`, not `generate_content`, and only from `global`; see
+        #: `directors/reel/music.py` for the rest of the undocumented call shape.
+        self.model_music: str = _env("MODEL_MUSIC", "lyria-3-clip-preview")
 
         self.raw_bucket: str = _env("RAW_MEDIA_BUCKET")
         self.derived_bucket: str = _env("DERIVED_MEDIA_BUCKET")
@@ -254,6 +305,16 @@ class Settings:
         #: calls it directly so a Scheduler tick can nudge the playlist even on a judge-month
         #: deployment where `min-instances` is 0 and the listener is not running.
         self.publisher_url: str = _env("PUBLISHER_URL")
+        #: The Cloud Run **Job** that renders a reel (spec 09 §1: 8 vCPU / 32 GiB, task per
+        #: commission). Not a Cloud Tasks target — Tasks speaks HTTP and a Job is started through the
+        #: Run Admin API, so `shared/jobs.py` calls `run_job` instead. Empty means the same thing an
+        #: empty worker URL means in `tasks.enqueue`: log a skipped launch, never silently pretend.
+        self.render_job: str = _env("RENDER_JOB_NAME", "render")
+        #: Public base URL of `api`, used to build the reel's playable `videoUri`. The kiosk's
+        #: `<video src>` cannot carry an Authorization header, so the reel document stores a stable
+        #: API URL that 302s to a short-lived signed GCS URL (`api/reels.py`), rather than storing a
+        #: signed URL that would expire inside the document.
+        self.api_base_url: str = _env("NEXT_PUBLIC_API_URL")
 
         # OIDC identity Cloud Tasks uses when calling a worker; also the signBlob identity.
         self.tasks_sa_email: str = _env("TASKS_SA_EMAIL")

@@ -80,6 +80,19 @@ ensure_index "bounties status+expiresAt" bounties \
 ensure_index "reels persona+version" reels \
   --field-config=field-path=persona,order=ascending \
   --field-config=field-path=version,order=descending
+# The Reel Director's SELECT step (spec 06 §3 step 1): eligible media ordered by aesthetic rather than
+# by time, because a gallery is browsing and a reel is *choosing*. Deliberately not the
+# `+isHighlight+` index above — filtering on isHighlight would make a reel impossible at an event where
+# the Curator has not called anything a highlight yet, and the aesthetic floor is the right bar.
+ensure_index "media visibility+status+aestheticScore" media \
+  --field-config=field-path=visibility,order=ascending \
+  --field-config=field-path=status,order=ascending \
+  --field-config=field-path=curator.aestheticScore,order=descending
+# Spec 06 §7's consent interlock: which published reels contain a photograph that just lost public
+# eligibility (shared/reels.py, fired from the one writer of `visibility`).
+ensure_index "reels assetManifest+status" reels \
+  --field-config=field-path=assetManifest,array-config=contains \
+  --field-config=field-path=status,order=ascending
 
 step "Vector index (spec 09 §3): faces.embedding, 512-d"
 # A vector index declares dimension only; COSINE is a `find_nearest(distance_measure=...)`

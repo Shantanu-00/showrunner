@@ -12,6 +12,9 @@ google-cloud-storage
 google-cloud-tasks
 google-cloud-vision
 google-cloud-secret-manager
+# `api` starts the render Cloud Run **Job** per reel commission (spec 06 §1). Cloud Tasks cannot do
+# this — Tasks speaks HTTP and a Job has no URL — so `shared/jobs.py` calls the Run Admin API.
+google-cloud-run
 google-adk>=2.7,<3
 google-genai
 # Model Armor has no pinned client library; services/armor.py calls its REST surface through
