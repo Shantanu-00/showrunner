@@ -95,7 +95,9 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
             "validation": settled.as_report(),
             **outcome.as_report(),
             "gapsFound": len(led.gaps),
-            "openBounties": led.open_bounty_count,
+            # Post-arming, because the ledger was built before this tick armed anything and a report
+            # that said "0 open" next to two freshly issued bounties would be read as a bug.
+            "openBounties": led.open_bounty_count + len(outcome.armed) + len(outcome.issued),
             "activeStage": led.active_stage_id,
             "drift": led.drift.as_line(),
             "tokensIn": usage.tokensIn,

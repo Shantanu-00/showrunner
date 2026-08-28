@@ -124,7 +124,13 @@ def reason_agent() -> LlmAgent:
             # in the same words every time — which reads, correctly, as a template. Low enough that the
             # *choice* of gap stays stable across a retry; high enough that the sentence does not.
             temperature=0.4,
-            max_output_tokens=1024,
+            # 1024 was not enough and the failure was not obvious: `DirectorAction` is one flat shape
+            # covering six action types (schemas/director.py explains why), so the model fills every
+            # nullable field of every action it emits — measured at ~180 output tokens per action
+            # against ~35 for the fields that action actually uses. A plan with the maximum useful
+            # number of actions truncated mid-string, and a truncated JSON object surfaces as a
+            # *validation* error, which reads like a prompt problem rather than a budget one.
+            max_output_tokens=4096,
         ),
     )
 

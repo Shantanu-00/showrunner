@@ -176,7 +176,14 @@ async def _invoke(
             if event.is_final_response() and event.content and event.content.parts:
                 text_chunks += [p.text for p in event.content.parts if p.text]
     except Exception as exc:  # noqa: BLE001 - classified, then re-raised as ours
-        raise _classify_error(exc) from exc
+        # Carry whatever this call already burned. The prompt was paid for whether or not the answer
+        # was usable, and a cost ticker that only counts successful calls understates the bill exactly
+        # when things are going wrong. This path is not hypothetical: when `output_schema` is set, ADK
+        # validates the response itself, so a truncated answer raises *here* rather than at our own
+        # parse below, and without this line the tick would report zero tokens for a call it made.
+        error = _classify_error(exc)
+        error.usage = usage
+        raise error from exc
     finally:
         try:
             await runner.session_service.delete_session(
