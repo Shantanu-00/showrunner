@@ -51,7 +51,7 @@ from shared.settings import (
     settings,
 )
 
-from . import agent, critic, edl as edl_mod, music, render as render_mod, select, store
+from . import agent, critic, edl as edl_mod, music, opener as opener_mod, render as render_mod, select, store
 
 STAGE = "reel"
 
@@ -236,6 +236,18 @@ async def run(event_id: str, reel_id: str) -> Report:
         )
 
         # ---------------------------------------------------------------- 6. RENDER
+        opener_video, opener_cost = None, 0.0
+        if persona is ReelPersona.COUPLE:
+            # Spec 06 §5: once per event, not once per version — `opener.ensure` caches the clip on
+            # the event document, so every version after the first pays nothing for it.
+            op = opener_mod.ensure(event_id, candidates)
+            if op.ok:
+                opener_video, opener_cost = op.video, op.cost_usd
+            elif op.failure:
+                log.info(
+                    "reel_opener_unavailable", event_id=event_id, reel_id=reel_id, reason=op.failure
+                )
+
         rendered = render_mod.run(
             event_id,
             reel_id,
@@ -243,9 +255,10 @@ async def run(event_id: str, reel_id: str) -> Report:
             candidates=candidates,
             audio=score.audio,
             fitted=fitted,
+            opener_video=opener_video,
         )
         report.duration = rendered.duration
-        report.cost_usd = round(score.cost_usd + REEL_RENDER_COST_USD, 4)
+        report.cost_usd = round(score.cost_usd + REEL_RENDER_COST_USD + opener_cost, 4)
 
         store.patch(
             event_id,

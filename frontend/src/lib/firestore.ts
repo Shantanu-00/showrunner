@@ -4,12 +4,15 @@
 
 import {
   collection,
+  deleteDoc,
   doc,
   getCountFromServer,
   limit,
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
+  setDoc,
   Timestamp,
   where,
   type Unsubscribe,
@@ -334,6 +337,50 @@ export function listenReel(
     (snap) => onData(snap.exists() ? (snap.data() as ReelDoc) : null),
     onError
   );
+}
+
+/** `people/{personId}/reactions` (spec 07 §1) — the one client write in the whole system
+ * (`firestore.rules:159`). A heart on the private-album grid is this build's cheap path onto the
+ * full swipe deck spec 07 §1 describes: same document shape (`{verdict, at}`), so nothing here
+ * would need to change if the card-stack UI is ever built. Loved/hidden captions feed the
+ * deterministic tag-affinity vector and, every 15 new reactions, a Gemma taste memo (spec 07 §2) —
+ * both computed server-side by `directors/story/taste.py` from this collection. */
+export type Reaction = "love" | "hide";
+
+export function listenReactions(
+  eventId: string,
+  personId: string,
+  onData: (verdictByMediaId: Record<string, Reaction>) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(db, "events", eventId, "people", personId, "reactions"),
+    (snap) => {
+      const map: Record<string, Reaction> = {};
+      snap.docs.forEach((d) => {
+        const verdict = d.data().verdict as Reaction | undefined;
+        if (verdict) map[d.id] = verdict;
+      });
+      onData(map);
+    },
+    () => onData({})
+  );
+}
+
+/** Set or clear a reaction. `verdict: null` deletes the document — un-loving a photo is the same
+ * right as loving it (`firestore.rules:164`'s own comment), and a delete carries no
+ * `request.resource` so the rule needed its own branch rather than riding the shape check. */
+export async function setReaction(
+  eventId: string,
+  personId: string,
+  mediaId: string,
+  verdict: Reaction | null
+): Promise<void> {
+  const ref = doc(db, "events", eventId, "people", personId, "reactions", mediaId);
+  if (verdict === null) {
+    await deleteDoc(ref);
+    return;
+  }
+  await setDoc(ref, { verdict, at: serverTimestamp() });
 }
 
 /** Leaderboard slot (spec 04 §3 tree's `guests/{uid}`, spec 12 §6): top-N by points. */

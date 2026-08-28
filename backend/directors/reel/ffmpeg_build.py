@@ -348,3 +348,58 @@ def build_command(
     ]
     return Plan(args=args, ass=build_ass(shots, origin=origin), duration=total,
                 input_durations=inputs, offsets=offsets)
+
+
+def build_opener_concat_command(
+    opener_path: str,
+    main_path: str,
+    output_path: str,
+    *,
+    opener_duration: float,
+    main_has_audio: bool,
+) -> list[str]:
+    """Prepend the Veo opener to the finished reel (spec 06 §5). Pure — returns argv only.
+
+    Both clips are re-encoded to the reel's own canvas, frame rate and pixel format before
+    `concat`: Veo returns 720p and this render is 1080×1920, and `concat`'s stream-copy path
+    requires identical parameters the two clips never have for free. The opener itself carries no
+    audio (`opener.py` requests `generate_audio=False` — the reel's own Lyria track owns the sound),
+    so when the main render *does* have music, a silent `anullsrc` track of exactly the opener's
+    length is spliced in ahead of it — otherwise `concat`'s `a=1` mode would refuse two inputs with
+    different stream counts. When the main render is itself silent (a Lyria outage, `music.py`'s
+    fallback), the concat carries no audio stream at all, matching the video-only reel it inherits.
+    """
+    args = [
+        "ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "warning",
+        "-i", opener_path, "-i", main_path,
+    ]
+    if main_has_audio:
+        args += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
+
+    filt = (
+        f"[0:v]scale={REEL_WIDTH}:{REEL_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={REEL_WIDTH}:{REEL_HEIGHT},fps={REEL_FPS},format=yuv420p,setsar=1[v0];"
+        f"[1:v]fps={REEL_FPS},format=yuv420p,setsar=1[v1];"
+    )
+    if main_has_audio:
+        filt += (
+            f"[2:a]atrim=duration={opener_duration:.3f},asetpts=PTS-STARTPTS[a0];"
+            "[1:a]aformat=sample_rates=44100:channel_layouts=stereo[a1];"
+            "[v0][a0][v1][a1]concat=n=2:v=1:a=1[vout][aout]"
+        )
+    else:
+        filt += "[v0][v1]concat=n=2:v=1:a=0[vout]"
+
+    args += ["-filter_complex", filt, "-map", "[vout]"]
+    if main_has_audio:
+        args += ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k"]
+    args += [
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "20",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        "-r", str(REEL_FPS),
+        output_path,
+    ]
+    return args

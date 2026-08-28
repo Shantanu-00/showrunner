@@ -114,6 +114,16 @@ class Event(BaseModel):
     publicFloor: float = 0.45  # spec 04 §2 quality gate
     publicFrozen: bool = False  # PANIC: freeze public (spec 08 §5)
 
+    #: Spec 06 §5's couple-reel opener, cached here because it is generated **once per event**, not
+    #: once per reel version: every later `couple` commission reuses this clip instead of paying Veo's
+    #: $0.80 again (`directors/reel/opener.py::ensure`). `openerFailed` remembers a permanent failure
+    #: (no eligible portrait, a blocked generation) so a persistently-failing event does not retry the
+    #: spend on every single commission.
+    openerUri: str | None = None
+    openerModel: str | None = None
+    openerCostUsd: float = 0.0
+    openerFailed: str | None = None
+
     createdAt: dt.datetime | None = None
     liveAt: dt.datetime | None = None
     wrappedAt: dt.datetime | None = None

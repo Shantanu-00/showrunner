@@ -214,6 +214,9 @@ REEL_RENDER_COST_USD = 0.10
 #: persona is allowed to start. Spec 06 §3 serialises per persona ("one active render each"); this is
 #: the crash backstop, because the process holding the commission is a Cloud Run Job that can die.
 REEL_STALE_MINUTES = 20
+#: Spec 06 §5 verbatim: "Veo 3.1 Fast image-to-video 8 s opener from the top couple portrait".
+REEL_OPENER_SECONDS = 8
+REEL_OPENER_COST_PER_SECOND_USD = 0.10  # veo-3.1-fast, measured in the B1 risk probe
 
 EXT_BY_CONTENT_TYPE = {
     "image/jpeg": "jpg",
@@ -282,6 +285,15 @@ class Settings:
         #: `interactions.create(stream=True)`, not `generate_content`, and only from `global`; see
         #: `directors/reel/music.py` for the rest of the undocumented call shape.
         self.model_music: str = _env("MODEL_MUSIC", "lyria-3-clip-preview")
+        #: Veo 3.1 Fast's *Vertex* publisher ID (spec 06 §5's couple-reel opener, bonus +0.2) —
+        #: deliberately a second key rather than an edit to `MODEL_VIDEO_GEN` (HANDOFF §9): that value
+        #: is the AI Studio / Gemini API ID and 404s on the enterprise path this project always calls
+        #: on. `directors/reel/opener.py` reads this one.
+        self.model_video_gen_vertex: str = _env("MODEL_VIDEO_GEN_VERTEX", "veo-3.1-fast-generate-001")
+        #: Gemma 4 — the private per-person taste memo (spec 07 §2, bonus +0.2). Free tier, off the
+        #: critical path by design: a malformed or refused memo skips that cycle and nothing downstream
+        #: gates on it (`directors/story/taste.py`).
+        self.model_taste_memo: str = _env("MODEL_TASTE_MEMO", "gemma-4-26b-a4b-it")
 
         self.raw_bucket: str = _env("RAW_MEDIA_BUCKET")
         self.derived_bucket: str = _env("DERIVED_MEDIA_BUCKET")

@@ -63,7 +63,14 @@ class Person(BaseModel):
     hostEnrolled: bool = False  # host-enrolled persons require host approval to be claimed
     featured: bool = False  # audited ranking override only, never a visibility override
     consent: PersonConsent = Field(default_factory=PersonConsent)
-    tasteProfile: dict[str, float] = Field(default_factory=dict)  # spec 07
+    tasteProfile: dict[str, float] = Field(default_factory=dict)  # spec 07 §2.1, deterministic
+    #: Spec 07 §2.2 — Gemma's 3-sentence memo, recomputed every 15 new reactions. Off the critical
+    #: path: nothing reads this to gate anything, only to explain a ranking or steer a personal reel.
+    tasteMemo: str | None = None
+    tasteMemoAt: dt.datetime | None = None
+    #: `reactionCount` at the memo's last write — the threshold `directors/story/taste.py::pending`
+    #: compares the live count against, so a memo fires again only after 15 *more* reactions.
+    lastMemoReactionCount: int = 0
     createdAt: dt.datetime | None = None
 
 

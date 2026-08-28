@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { MediaDoc } from "@/lib/types";
-import { listenPrivateAlbum } from "@/lib/firestore";
+import { listenPrivateAlbum, listenReactions, setReaction, type Reaction } from "@/lib/firestore";
 import { ApiError, authedFetch, mediaRenderPath, setSubjectVeto } from "@/lib/api";
 import { useAuthedImage } from "@/lib/useAuthedImage";
 import { Lightbox } from "@/components/gallery/Lightbox";
@@ -33,10 +33,28 @@ export function AlbumGrid({ eventId, personId }: { eventId: string; personId: st
   const [selected, setSelected] = useState<MediaDoc | null>(null);
   const [vetoing, setVetoing] = useState(false);
   const [vetoError, setVetoError] = useState<string | null>(null);
+  const [reactions, setReactions] = useState<Record<string, Reaction>>({});
 
   useEffect(() => {
     return listenPrivateAlbum(eventId, personId, setItems, () => setItems([]));
   }, [eventId, personId]);
+
+  useEffect(() => {
+    return listenReactions(eventId, personId, setReactions);
+  }, [eventId, personId]);
+
+  function onLove(mediaId: string) {
+    // Optimistic and idempotent: a second tap un-loves. The Story Director never reads this — it
+    // only shapes this person's own album ordering and, every 15 reactions, a taste memo (spec 07).
+    const next: Reaction | null = reactions[mediaId] === "love" ? null : "love";
+    setReactions((prev) => {
+      const copy = { ...prev };
+      if (next) copy[mediaId] = next;
+      else delete copy[mediaId];
+      return copy;
+    });
+    void setReaction(eventId, personId, mediaId, next);
+  }
 
   async function onVeto(media: MediaDoc, hide: boolean) {
     setVetoing(true);
@@ -67,7 +85,14 @@ export function AlbumGrid({ eventId, personId }: { eventId: string; personId: st
     <>
       <div className="grid grid-cols-3 gap-1.5 px-3 mt-2">
         {items.map((media) => (
-          <AlbumThumb key={media.mediaId} eventId={eventId} media={media} onSelect={setSelected} />
+          <AlbumThumb
+            key={media.mediaId}
+            eventId={eventId}
+            media={media}
+            loved={reactions[media.mediaId] === "love"}
+            onSelect={setSelected}
+            onLove={onLove}
+          />
         ))}
       </div>
 
@@ -111,26 +136,39 @@ export function AlbumGrid({ eventId, personId }: { eventId: string; personId: st
 function AlbumThumb({
   eventId,
   media,
+  loved,
   onSelect,
+  onLove,
 }: {
   eventId: string;
   media: MediaDoc;
+  loved: boolean;
   onSelect: (media: MediaDoc) => void;
+  onLove: (mediaId: string) => void;
 }) {
   const src = useAuthedImage(eventId, media.thumbUri ? media.mediaId : null, "thumb");
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(media)}
-      className="aspect-square rounded-[var(--radius-card)] overflow-hidden"
-      style={{ border: "var(--hairline)" }}
-    >
-      {src ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt="" className="w-full h-full object-cover" />
-      ) : (
-        <div className="w-full h-full skeleton-shimmer" />
-      )}
-    </button>
+    <div className="relative aspect-square rounded-[var(--radius-card)] overflow-hidden" style={{ border: "var(--hairline)" }}>
+      <button type="button" onClick={() => onSelect(media)} className="absolute inset-0">
+        {src ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={src} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full skeleton-shimmer" />
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onLove(media.mediaId);
+        }}
+        aria-label={loved ? "Un-love this photo" : "Love this photo"}
+        className="absolute bottom-1 right-1 text-lg leading-none rounded-full w-7 h-7 flex items-center justify-center"
+        style={{ background: "rgba(10,10,10,0.55)" }}
+      >
+        {loved ? "❤️" : "🤍"}
+      </button>
+    </div>
   );
 }

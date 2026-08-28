@@ -84,6 +84,14 @@ def enrollment_ref(event_id: str, person_id: str) -> firestore.DocumentReference
     return enrollments_col(event_id).document(person_id)
 
 
+def reactions_col(event_id: str, person_id: str) -> firestore.CollectionReference:
+    """`people/{personId}/reactions/{mediaId}` — spec 07 §1, the one client write in the entire
+    system (`firestore.rules:159`). Read server-side only by `directors/story/taste.py`, which folds
+    it into the deterministic tag-affinity vector and, every 15 new reactions, a Gemma taste memo.
+    """
+    return person_ref(event_id, person_id).collection("reactions")
+
+
 def notices_col(event_id: str, person_id: str) -> firestore.CollectionReference:
     """Person-scoped notices — the "new device joined" card in a private album (spec 02 §3.2).
 

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 
 from schemas.reel import ReelStatus, ShotDoc
 from shared import gcs, log
-from shared.settings import REEL_FPS, settings
+from shared.settings import REEL_FPS, REEL_OPENER_SECONDS, settings
 
 from . import ffmpeg_build, store
 from .select import Candidate
@@ -39,6 +39,8 @@ from .select import Candidate
 #: The render is bounded so a pathological filtergraph cannot hold an 8-vCPU job open indefinitely.
 #: Spec 06 §3 puts a render at 2–5 minutes; 15 covers a cold job, 24 shots and a slow bucket.
 RENDER_TIMEOUT_SEC = 900
+#: The opener concat is two short, already-encoded clips — nowhere near the main render's budget.
+OPENER_CONCAT_TIMEOUT_SEC = 120
 
 #: Progress band this step owns. SELECT/DIRECT/CRITIC/SCORE report up to 45; publish takes it to 100.
 PROGRESS_FLOOR = 45
@@ -50,6 +52,7 @@ class Rendered:
     gcs_uri: str
     size_bytes: int
     duration: float
+    opener_prepended: bool = False
 
 
 def _download(workdir: str, candidates: list[Candidate], shots: list[ShotDoc]) -> list[str]:
@@ -106,6 +109,7 @@ def run(
     candidates: list[Candidate],
     audio: bytes | None,
     fitted: list[bool],
+    opener_video: bytes | None = None,
 ) -> Rendered:
     """Build the file and upload it. Raises on failure; the caller turns that into `ops/` + `failed`."""
     if shutil.which("ffmpeg") is None:
@@ -180,8 +184,43 @@ def run(
         if not os.path.exists(output) or os.path.getsize(output) == 0:
             raise RuntimeError("ffmpeg exited cleanly but produced no file")
 
-        size = os.path.getsize(output)
-        with open(output, "rb") as handle:
+        final_output, final_duration, opener_prepended = output, plan.duration, False
+        if opener_video:
+            opener_path = os.path.join(workdir, "opener.mp4")
+            with open(opener_path, "wb") as handle:
+                handle.write(opener_video)
+            candidate_output = os.path.join(workdir, f"{reel_id}_final.mp4")
+            concat_args = ffmpeg_build.build_opener_concat_command(
+                opener_path,
+                output,
+                candidate_output,
+                opener_duration=float(REEL_OPENER_SECONDS),
+                main_has_audio=audio_path is not None,
+            )
+            concat = subprocess.run(
+                concat_args,
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=OPENER_CONCAT_TIMEOUT_SEC,
+            )
+            if concat.returncode == 0 and os.path.getsize(candidate_output) > 0:
+                final_output = candidate_output
+                final_duration = plan.duration + REEL_OPENER_SECONDS
+                opener_prepended = True
+                log.info("opener_prepended", event_id=event_id, reel_id=reel_id)
+            else:
+                # Degrade to the reel without its opener rather than fail a commission that already
+                # has a perfectly good cut — the same posture a Lyria outage takes in `music.py`.
+                log.warn(
+                    "opener_concat_failed",
+                    event_id=event_id,
+                    reel_id=reel_id,
+                    stderr=(concat.stderr or "")[-2000:],
+                )
+
+        size = os.path.getsize(final_output)
+        with open(final_output, "rb") as handle:
             data = handle.read()
 
         cfg = settings()
@@ -200,10 +239,13 @@ def run(
             event_id=event_id,
             reel_id=reel_id,
             bytes=size,
-            duration=plan.duration,
+            duration=final_duration,
+            opener=opener_prepended or None,
         )
         store.progress(event_id, reel_id, PROGRESS_CEILING, status=ReelStatus.RENDERING)
-        return Rendered(gcs_uri=uri, size_bytes=size, duration=plan.duration)
+        return Rendered(
+            gcs_uri=uri, size_bytes=size, duration=final_duration, opener_prepended=opener_prepended
+        )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

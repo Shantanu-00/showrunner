@@ -44,6 +44,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from directors.story import director
+from directors.story import taste as taste_mod
 from schemas.event import EventClass, EventStatus
 from shared import errors, fs, internal, leases, log, oidc, tasks
 from shared.auth import Principal, verify_bearer
@@ -153,8 +154,14 @@ async def _do_work(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
     a kiosk takeover, an announcement or an auto-advanced stage is on the screen at the end of the same
     tick that decided it, rather than up to two minutes later.
 
+    **Then taste memos** (spec 07 §2, bonus +0.2) — whichever guests just crossed another multiple of
+    15 reactions get a fresh Gemma memo. Last on purpose: it is the one step here that is genuinely
+    off the critical path (nothing downstream gates on it, unlike the wall), so it runs after the two
+    steps that are.
+
     A director failure is reported and does not stop the wall refresh; a publisher failure is reported
-    and does not undo a bounty. Neither fails the tick (see this module's fourth design note).
+    and does not undo a bounty; a taste-memo failure does neither. None fails the tick (see this
+    module's fourth design note).
     """
     report: dict[str, Any] = {"eventId": event_id, "tickId": tick_id}
 
@@ -180,6 +187,13 @@ async def _do_work(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
         # that has already been issued.
         log.warn("tick_publisher_nudge_failed", event_id=event_id, err=str(exc))
         report["publisher"] = {"status": "unreachable", "error": str(exc)[:200]}
+
+    try:
+        memos = await taste_mod.run_pending(event_id)
+        report["taste"] = {"memosWritten": len(memos)}
+    except Exception as exc:  # noqa: BLE001 - a taste-memo cycle failing must not affect the director or the wall
+        log.warn("tick_taste_memo_failed", event_id=event_id, tick_id=tick_id, err=str(exc))
+        report["taste"] = {"status": "failed", "error": str(exc)[:200]}
     return report
 
 

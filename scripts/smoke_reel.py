@@ -399,6 +399,36 @@ def check_prompt_shape(pool: list[Candidate]) -> None:
     ok(f"prompt is {len(block)} chars of stored evidence: no pixels, no URIs, mandate present")
 
 
+def check_opener(pool: list[Candidate]) -> None:
+    """Spec 06 §5's bonus opener: picking a portrait and building the concat argv, both pure."""
+    from directors.reel import opener as opener_mod
+
+    portrait = opener_mod.top_couple_portrait(pool)
+    if portrait is None:
+        fail("top_couple_portrait found nobody to animate in a fixture with two principals")
+    elif portrait.top_tier != 0:
+        fail(f"top_couple_portrait picked a tier-{portrait.top_tier} candidate over a principal")
+
+    with_audio = ffmpeg_build.build_opener_concat_command(
+        "/tmp/opener.mp4", "/tmp/main.mp4", "/tmp/out.mp4",
+        opener_duration=8.0, main_has_audio=True,
+    )
+    silent = ffmpeg_build.build_opener_concat_command(
+        "/tmp/opener.mp4", "/tmp/main.mp4", "/tmp/out.mp4",
+        opener_duration=8.0, main_has_audio=False,
+    )
+    argv_with_audio, argv_silent = " ".join(with_audio), " ".join(silent)
+    for token in ("concat=n=2:v=1:a=1", "anullsrc", "atrim=duration=8.000", "libx264"):
+        if token not in argv_with_audio:
+            fail(f"opener concat (music) is missing {token!r}")
+    if "concat=n=2:v=1:a=0" not in argv_silent or "-map [aout]" in argv_silent:
+        fail("opener concat (silent reel) still asked ffmpeg for an audio stream")
+    ok(
+        f"opener: top_couple_portrait picked a tier-{portrait.top_tier} candidate "
+        f"(aesthetic {portrait.aesthetic:.2f}); concat argv correct with and without a music track"
+    )
+
+
 def run_offline() -> int:
     print("── spec 06 §8, offline: no network, no Firestore, no ffmpeg, no spend\n")
     pool = _fixture_candidates()
@@ -410,6 +440,7 @@ def run_offline() -> int:
     check_filtergraph(pool, cut)
     check_style_seed()
     check_prompt_shape(pool)
+    check_opener(pool)
     print()
     print("PASS  every deterministic claim in spec 06 §8 holds, checkable without a cloud account")
     return 0

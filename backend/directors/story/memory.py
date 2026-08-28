@@ -41,8 +41,9 @@ def scope(event_id: str) -> str:
 def person_scope(event_id: str, person_id: str) -> str:
     """The per-person scope: `{eventId}:{personId}` (spec 11 §4, verbatim).
 
-    Unused by this session — spec 07's taste memos are B4-S13's — and defined here anyway so that
-    when they land there is exactly one place that knows how a Memory Bank key is spelled.
+    Used by `directors/story/taste.py::write_memo_for` — the only writer of a per-person scope
+    anywhere in the fleet, which is what keeps this one function the single place that knows how a
+    Memory Bank key is spelled.
     """
     return f"{event_id}:{person_id}"
 
@@ -90,3 +91,35 @@ async def _from_memory_bank(engine: str, event_id: str) -> str:
     except Exception as exc:  # noqa: BLE001 - see docstring
         log.warn("memory_bank_recall_failed", event_id=event_id, err=str(exc))
         return ""
+
+
+async def remember_taste_memo(event_id: str, person_id: str, memo: str) -> None:
+    """Write a taste memo into Memory Bank at `{eventId}:{personId}` (spec 07 §2/§4.1).
+
+    Firestore (`people/{personId}.tasteMemo`) is the system of record — `directors/reel/select.py`
+    and every ranking formula in spec 07 §3 read it there, never here. This call is soft and
+    best-effort for the same reason `_from_memory_bank` degrades silently: an unreachable or
+    unprovisioned Memory Bank must never undo a memo cycle that already computed a real analysis and
+    already persisted it. `add_memory` (not `add_session_to_memory`) is used because there is no
+    conversation to replay into a session — the memo already *is* the distilled memory.
+    """
+    engine = settings().agent_engine_id
+    if not engine or not memo:
+        return
+    try:
+        from google.adk.memory.memory_entry import MemoryEntry
+        from google.adk.memory.vertex_ai_memory_bank_service import VertexAiMemoryBankService
+        from google.genai import types as genai_types
+
+        cfg = settings()
+        service = VertexAiMemoryBankService(
+            project=cfg.project, location=cfg.location, agent_engine_id=engine
+        )
+        entry = MemoryEntry(
+            content=genai_types.Content(role="user", parts=[genai_types.Part(text=memo)])
+        )
+        await service.add_memory(
+            app_name="showrunner", user_id=person_scope(event_id, person_id), memories=[entry]
+        )
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        log.warn("memory_bank_taste_write_failed", event_id=event_id, person_id=person_id, err=str(exc))

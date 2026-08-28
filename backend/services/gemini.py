@@ -243,6 +243,29 @@ async def run_structured(
     raise PermanentModelError(f"schema-invalid after 1 retry: {last}", total)
 
 
+async def run_text(
+    agent: LlmAgent,
+    parts: list[types.Part],
+    *,
+    stage: str,
+    plugins: list[BasePlugin] | None = None,
+) -> tuple[str, ModelUsage]:
+    """Run `agent` and return its raw prose.
+
+    For a call whose whole point *is* unstructured explanatory text (spec 07 §2's taste memo) —
+    putting it through `run_structured`'s
+    `output_schema` would add JSON-schema pressure to a call that is deliberately not making a
+    structured judgment, and `.model_taste_memo` never gates anything a schema violation could
+    corrupt. A refusal still raises `PermanentModelError`, so a caller's existing conservative
+    degrade-and-log path (`music.py`'s silent-reel shape) handles it without a second code path.
+    """
+    raw, usage, finish = await _invoke(agent, parts, plugins)
+    if finish not in _CLEAN_FINISH:
+        log.warn("model_refused", stage=stage, finish=finish)
+        raise PermanentModelError(f"model stopped with finish_reason={finish}", usage)
+    return raw.strip(), usage
+
+
 def _strip_fence(raw: str) -> str:
     """Tolerate a ```json fence. Cheaper than a retry, and costs nothing when absent."""
     text = raw.strip()
