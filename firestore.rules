@@ -32,8 +32,9 @@ rules_version = '2';
 //     need to read person documents. See `backend/shared/fs.py::enrollments_col`.
 //
 // Anything without an explicit `allow` is denied: that is the default, and it covers `hashes/`
-// (dedupe register), `claimLinks/` (magic-link hashes), `publisherLease/`, `platform/` and every
-// collection a future session adds before it thinks about rules.
+// (dedupe register), `claimLinks/` (magic-link hashes), `publisherLease/` and `ticks/` (the two
+// control-plane leases), `platform/` (caps, kill switch, tick heartbeat) and every collection a
+// future session adds before it thinks about rules.
 //
 // Verified by `rules-tests/run_matrix.py` (`make rules-test`) against the Firestore emulator.
 
@@ -243,7 +244,9 @@ service cloud.firestore {
     //
     // `claimLinks/{hash}` holds album-recovery link hashes — readable, it would turn a database dump
     // into working links; redemption goes through `POST /v1/claim`. `platform/*` holds the live-event
-    // counter and the public-creation kill switch (spec 11 §1). `publisherLease/*` is leader election
-    // (spec 04 §4). None of them has a client use case, so none of them gets a rule.
+    // counter, the public-creation kill switch (spec 11 §1) and the director-tick heartbeat.
+    // `publisherLease/*` is the kiosk's leader election (spec 04 §4) and `ticks/*` the director's tick
+    // lease (spec 05 §1). None of them has a client use case, so none of them gets a rule — a lease a
+    // client could write is not a lease.
   }
 }

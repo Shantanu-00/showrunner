@@ -169,6 +169,8 @@ def _register_batch(
                 # Already processed: hand back the path, don't reopen the doc.
                 instructions.append((media_id, kind, content_type, path))
                 continue
+            # No `batchLead` here on purpose: the doc already carries whatever the batch decided the
+            # first time, and a retrying outbox must not move the fast lane to a different photo.
             transaction.update(
                 media_refs[idx],
                 {
@@ -186,6 +188,15 @@ def _register_batch(
                     "mediaId": media_id,
                     "uploaderUid": principal.uid,
                     "batchId": req.batchId,
+                    # The first file of each selection takes the priority classify lane at intake
+                    # (spec 09 §2's `priority-queue`, EXECUTION-PLAN §7d). Under a burst, FIFO would
+                    # put a guest who uploads at t=120s behind a thousand photos from t=0 — the
+                    # person most likely to be watching the wall gets the worst latency. One photo
+                    # per uploader jumping the queue is what makes "phone → wall in ~2 s" true
+                    # during a burst rather than only on a quiet system. Chosen at intent time
+                    # rather than by arrival order because it costs no read and the effect is the
+                    # same: exactly one photo per batch, whichever the client sent first.
+                    "batchLead": idx == 0,
                     "kind": kind.value,
                     "contentType": content_type,
                     "size": f.size,

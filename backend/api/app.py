@@ -23,6 +23,7 @@ from shared.auth import Principal, caller
 from shared.settings import settings
 
 from .identity import claim_router, router as identity_router
+from .internal import router as internal_router
 from .moderation import router as moderation_router
 from .uploads import router as uploads_router
 
@@ -46,6 +47,9 @@ app.include_router(uploads_router)
 app.include_router(identity_router)
 app.include_router(claim_router)
 app.include_router(moderation_router)
+# Cloud Scheduler's target (spec 09 §2). Not under /v1: it is infrastructure calling infrastructure,
+# and it authenticates its caller itself because `api` is the one service deployed public.
+app.include_router(internal_router)
 
 
 @app.get("/livez")

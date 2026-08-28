@@ -1,4 +1,4 @@
-.PHONY: up down dev-event smoke smoke-faces smoke-safety seed eval demo-reset rules-test \
+.PHONY: up down dev-event smoke smoke-faces smoke-safety smoke-autonomy seed eval demo-reset rules-test \
         deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
         deploy-video-prep deploy-render deploy-publisher deploy-hosting
 
@@ -31,6 +31,12 @@ smoke-safety:
 
 # Wipes the demo event's people/media/ops, then re-generates the AI cast (cached) and re-uploads
 # the ~25 golden fixtures through the real pipeline. Re-runnable: always starts from a clean event.
+# The autonomy spine: Cloud Scheduler fires unprompted, the tick takes and releases its lease, the
+# publisher puts a just-uploaded photo on the wall. `--program-only` runs the hero-score and
+# diversity table with no network and no spend.
+smoke-autonomy:
+	$(PY) scripts/smoke_autonomy.py
+
 seed:
 	$(PY) backend/seed.py --event demo
 

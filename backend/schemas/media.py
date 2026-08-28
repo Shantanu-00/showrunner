@@ -91,6 +91,10 @@ class MediaDoc(BaseModel):
     contentType: str
     size: int
     bountyId: str | None = None
+    #: The first file of a selection. Its classify hop takes the priority queue so every uploader
+    #: gets one photo on the wall fast even while a large batch drains behind it (spec 09 §2's
+    #: `priority-queue`; the reasoning is in `intake/app.py::_dispatch`).
+    batchLead: bool = False
 
     consent: Consent = Field(default_factory=Consent)
     subjectVetoes: list[str] = Field(default_factory=list)  # personIds who opted out of public

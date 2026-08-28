@@ -123,9 +123,47 @@ def ops_col(event_id: str) -> firestore.CollectionReference:
     return event_ref(event_id).collection("ops")
 
 
+def kiosk_playlist_ref(event_id: str) -> firestore.DocumentReference:
+    """`kiosk/playlist` — the publisher's program (spec 04 §4).
+
+    The one document in the system with `allow read: if true`: a kiosk is a TV in a venue, and
+    making the wall depend on an auth session would be a way for it to go dark, not a control. It
+    therefore holds only mediaIds that are already `public` plus the publisher's own ranking
+    factors — never a uid, a display name or an unpublished item.
+    """
+    return event_ref(event_id).collection("kiosk").document("playlist")
+
+
+def ledger_ref(event_id: str, doc: str) -> firestore.DocumentReference:
+    """`ledger/{doc}` — the Story Director's aggregate state (spec 05 §1)."""
+    return event_ref(event_id).collection("ledger").document(doc)
+
+
 def platform_doc(name: str) -> firestore.DocumentReference:
     """Platform-wide singletons (spec 11 §1.2/§1.5): liveEventCount, publicCreationEnabled."""
     return db().collection("platform").document(name)
+
+
+def tick_ref(event_id: str) -> firestore.DocumentReference:
+    """`ticks/{eventId}` — the director tick lease (spec 05 §1), a *root* collection.
+
+    Root rather than event-scoped because it is infrastructure about an event rather than content
+    within one, and because the thing it protects is the Scheduler's fan-out: one global job walks
+    every live event, and the lease is what stops a slow tick and the next schedule from running two
+    directors against the same event and double-issuing bounties. No client rule grants it.
+    """
+    return db().collection("ticks").document(event_id)
+
+
+def publisher_lease_ref(event_id: str) -> firestore.DocumentReference:
+    """`publisherLease/{eventId}` — per-event leader election for the kiosk playlist (spec 04 §4).
+
+    Not a global singleton: `max-instances=1` on the publisher would serialise every concurrent
+    event's playlist through one process, which is a correctness bottleneck disguised as a scale
+    limit. The invariant that actually matters is "no two writers touch one event's playlist", and
+    that is what this document enforces.
+    """
+    return db().collection("publisherLease").document(event_id)
 
 
 # ---------------------------------------------------------------- helpers

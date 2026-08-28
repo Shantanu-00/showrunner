@@ -70,8 +70,13 @@ SA_DLQ="sa-dlq"
 SA_CURATE="sa-curate"
 SA_FACE="sa-face"
 SA_SAFETY="sa-safety"
+SA_PUBLISHER="sa-publisher"
 SA_TASKS="sa-tasks"
 SA_EVENTARC="sa-eventarc"
+# The identity Cloud Scheduler presents to `api`'s /internal/tick over OIDC. It holds no project
+# roles at all — `api` is public, so nothing needs to be granted for the call to land, and the
+# allowlist inside the handler (shared/oidc.py) is what makes the identity meaningful.
+SA_SCHEDULER="sa-scheduler"
 
 DLQ_TOPIC="eventarc-dlq"
 

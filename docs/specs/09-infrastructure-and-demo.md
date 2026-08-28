@@ -32,7 +32,15 @@ Eventarc: storage.object.v1.finalized on {raw} → intake
   underlying subscription: DLQ topic `eventarc-dlq` (max 5 delivery attempts)
   → dlq-consumer (tiny service): mark quarantined + ops/ alert
 
-Cloud Scheduler: `director-tick` — every 2 min → POST {api}/internal/tick (OIDC service account)
+Cloud Scheduler: `director-tick`      — every 2 min  → POST {api}/internal/tick (OIDC service account)
+                 `director-tick-demo` — `* * * * *`  → POST {api}/internal/tick?demo (OIDC), scoped to
+                                        `class=='protected_demo'` events only; paused by scale-down.sh.
+                                        Each invocation ALSO enqueues one Cloud Task on
+                                        `priority-queue` with schedule_time = now + 30 s hitting the
+                                        same endpoint ⇒ **effective demo cadence 30 s** (Scheduler's
+                                        cron floor is 1 min). Scheduler is the heartbeat and the
+                                        watchdog: a dropped interleave self-heals on the next minute,
+                                        and the tick lease (spec 05 §1) makes a double-fire a no-op.
                  `orphan-sweep` — hourly → POST {api}/internal/sweep. Four jobs in one pass:
                                   orphaned uploads · cluster-merge reconciliation (spec 03 §5.2) ·
                                   public-class TTL auto-wrap + hard-purge of events wrapped since the
@@ -92,7 +100,7 @@ Real weddings span days; a demo has 4 minutes. `event.demoConfig` (host console,
 - **`autoPromoteEnrollees: bool`** (spec 11 §3.4) — when true, a fresh selfie-enrollment auto-tiers the enrollee to 1 (Inner Circle) so the judge-tour visitor sees `vipWeight` effects live. The enrollment handler honors this flag **only** when `event.class == 'protected_demo'`; it is a no-op on every other event regardless of the flag's value, so this can never become a way for a real guest to self-promote.
 - **`publicFloor: 0.0`** (protected_demo only; real events default 0.45, spec 04 §2) — a judge's test photo (their desk, their badge) would fail the aesthetic floor, never turn `public`, and read as "it's broken." With the floor at 0 in the demo event, consent + Guardian alone decide `public`, so any consented safe upload hits the kiosk `just_in` strip < 5 s; quality still governs hero curation via the aesthetic score term. Disclosed in the README next to `autoPromoteEnrollees` — a demo convenience, not a hidden thumb.
 - **Seeded dataset:** 40–50 curated photos with **synthetic EXIF `DateTimeOriginal` values aligned to the compressed windows** (the temporal prior must fire correctly on stage) + 2 short videos + 3 pre-enrolled people. A `seed.py` script uploads them through the real pipeline (never direct Firestore writes — judges may check); its judge-mode variant (`scripts/seed_judge_event.py`, spec 11 §1.1) is what actually assigns `class: 'protected_demo'`, since that class can never come from the public API.
-- **Director cadence:** tick every 30 s in demo mode (scheduler stays at 2 min; `/internal/tick?demo` loop from the console) + the **Run director now** button (spec 05 §1).
+- **Director cadence: 30 s in demo mode, and it must be server-side.** The cadence is delivered by the `director-tick-demo` Cloud Scheduler job plus its +30 s Cloud Task interleave (§2); production `director-tick` stays at 2 min. **A console-driven `/internal/tick?demo` loop is explicitly rejected**: on camera it is indistinguishable from pressing a button, and the highest-weighted thing this project has to prove is *"intercept and complete a multi-step background workflow without human intervention."* The loop and spec 05 §1's **Run director now** button both remain in the codebase as dead-air fallbacks, but neither is on the demo's happy path, and the Cloud Scheduler job-detail page (`Schedule: * * * * *` · `Last run: 18 seconds ago` · `Result: Success`) is the autonomy evidence. **Truthfulness constraint for the video:** the console shows a 1-minute cron, so never say "every thirty seconds" over that page without naming the interleave in the same breath.
 - **Warm-up runbook (execute 10 min before recording):** `deploy/up.sh` → min-instances take effect → upload 1 throwaway photo (warms intake/curate/face paths + confirms E2E) → kiosk "Start show" tap (audio unlock + wake lock) → verify Observability tab shows traces → phones on venue Wi-Fi + hotspot fallback → OBS/screen-record the GCP console tabs (Cloud Run, Firestore, Traces) *before* the acted demo.
 - **Chaos rehearsal (once, Day 6):** kill `worker-curate` mid-burst → verify queue drains on restart with zero loss; replay a DLQ'd item from the console.
 

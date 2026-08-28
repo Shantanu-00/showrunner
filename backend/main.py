@@ -26,10 +26,12 @@ elif SERVICE == "worker-face":
     from workers.face.app import app
 elif SERVICE == "worker-safety":
     from workers.safety.app import app
+elif SERVICE == "publisher":
+    from publisher.app import app
 else:  # fail loudly at startup — a mis-set SERVICE must not silently serve the wrong surface
     raise RuntimeError(
         f"unknown SERVICE={SERVICE!r} (expected one of: api, intake, dlq, worker-curate, "
-        "worker-face, worker-safety)"
+        "worker-face, worker-safety, publisher)"
     )
 
 __all__ = ["app"]

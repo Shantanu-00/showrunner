@@ -145,6 +145,32 @@ grant_run_invoker worker-safety "serviceAccount:${TASKS_SA_EMAIL}"
 upsert_env WORKER_SAFETY_URL "${SAFETY_URL}"
 COMMON_ENV="${COMMON_ENV};WORKER_SAFETY_URL=${SAFETY_URL}"
 
+# The publisher goes up before `api`, because the director tick nudges it by URL (spec 04 §4's
+# fallback recompute trigger) and an unset PUBLISHER_URL would make that a silently skipped call.
+step "Deploy publisher (kiosk playlist writer, private — spec 09 §1: 1/512Mi, min 1/max 5)"
+# `--no-cpu-throttling` is not a performance dial here, it is a correctness requirement. This service
+# holds Firestore *listeners* on a background thread; with CPU allocated only during requests, that
+# thread is frozen between requests and the wall silently stops updating — no error, no log, just a
+# stale kiosk. `min-instances=1` (spec 09 §1) is the other half of the same requirement: scale-to-zero
+# kills the listener outright. Both are why the tick can also nudge it over HTTP.
+gcloud run deploy publisher \
+  --image "${IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
+  --service-account "$(sa_email "${SA_PUBLISHER}")" \
+  --cpu 1 --memory 512Mi --min-instances 1 --max-instances 5 --concurrency 20 \
+  --no-cpu-throttling --timeout 120 --no-allow-unauthenticated \
+  --set-env-vars "^;^SERVICE=publisher;${COMMON_ENV}" \
+  --quiet >/dev/null
+PUBLISHER_URL="$(run_url publisher)"
+note "publisher → ${PUBLISHER_URL}"
+
+# Only `api` may nudge it, and only on /recompute. Nothing else in the fleet calls the publisher:
+# every other trigger arrives as a Firestore change on a document some worker already wrote.
+grant_run_invoker publisher "serviceAccount:$(sa_email "${SA_API}")"
+
+upsert_env PUBLISHER_URL "${PUBLISHER_URL}"
+COMMON_ENV="${COMMON_ENV};PUBLISHER_URL=${PUBLISHER_URL}"
+COMMON_ENV="${COMMON_ENV};SCHEDULER_SA_EMAIL=${SCHEDULER_SA_EMAIL}"
+
 step "Deploy api (guest-facing, public — auth is enforced in-app via Firebase ID tokens)"
 gcloud run deploy api \
   --image "${IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
@@ -180,8 +206,11 @@ note "dlq → $(run_url dlq)"
 API_URL="$(run_url api)"
 upsert_env NEXT_PUBLIC_API_URL "${API_URL}"
 
+# Last, because both jobs POST to the api URL that only exists once the deploy above finished.
+"${REPO_ROOT}/deploy/scheduler.sh" "${API_URL}"
+
 step "Health"
-for svc in api intake dlq worker-curate worker-face worker-safety; do
+for svc in api intake dlq worker-curate worker-face worker-safety publisher; do
   url="$(run_url "${svc}")"
   if [[ "${svc}" == "api" ]]; then
     code="$(curl -s -o /dev/null -w '%{http_code}' "${url}/livez")"
@@ -196,5 +225,7 @@ cat <<SUMMARY
 
 Up. Buckets: ${RAW_BUCKET} · ${DERIVED_BUCKET} · ${CURATED_BUCKET}
 API: ${API_URL}
-Next: make dev-event  →  make smoke
+Publisher: ${PUBLISHER_URL}   (kiosk playlist writer, min-instances 1)
+Scheduler: director-tick (2 min) · director-tick-demo (1 min + 30 s interleave)
+Next: make dev-event  →  make smoke  →  make smoke-autonomy
 SUMMARY

@@ -14,6 +14,7 @@ now and becomes live the moment a URL lands in the environment.
 
 from __future__ import annotations
 
+import datetime as dt
 import functools
 import json
 from typing import Any
@@ -37,8 +38,17 @@ def enqueue(
     stage: str | None = None,
     event_id: str | None = None,
     media_id: str | None = None,
+    schedule_in_seconds: float | None = None,
+    audience: str | None = None,
 ) -> str | None:
-    """Queue one unnamed HTTP task carrying a JSON body, authenticated with an OIDC token."""
+    """Queue one unnamed HTTP task carrying a JSON body, authenticated with an OIDC token.
+
+    `schedule_in_seconds` delays first delivery — Cloud Tasks is the only sub-minute timer available
+    (Cloud Scheduler's cron floor is 1 minute), which is exactly how spec 09 §2 gets a 30-second
+    demo cadence out of a `* * * * *` job. `audience` overrides the OIDC audience: it defaults to
+    the target URL, which is right for a worker but wrong when the target carries a query string,
+    since the receiving service verifies the audience against its own host.
+    """
     cfg = settings()
     if not target_url:
         log.info(
@@ -62,8 +72,12 @@ def enqueue(
     if cfg.tasks_sa_email:
         request["http_request"]["oidc_token"] = {
             "service_account_email": cfg.tasks_sa_email,
-            "audience": target_url,
+            "audience": audience or target_url,
         }
+    if schedule_in_seconds is not None:
+        request["schedule_time"] = dt.datetime.now(dt.timezone.utc) + dt.timedelta(
+            seconds=schedule_in_seconds
+        )
 
     task = client().create_task(parent=cfg.queue_path(queue), task=request)
     log.info(
@@ -72,6 +86,7 @@ def enqueue(
         stage=stage,
         event_id=event_id,
         media_id=media_id,
+        delay_s=schedule_in_seconds,
         task=task.name.rsplit("/", 1)[-1],
     )
     return task.name

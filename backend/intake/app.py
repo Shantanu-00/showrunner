@@ -194,11 +194,24 @@ def _reject(event_id: str, media_id: str, bucket: str, path: str, reason: str) -
     return {"ok": True, "action": "rejected", "reason": reason}
 
 
-def _dispatch(event_id: str, media_id: str, kind: MediaKind, bounty_id: str | None) -> list[str]:
+def _dispatch(
+    event_id: str,
+    media_id: str,
+    kind: MediaKind,
+    bounty_id: str | None,
+    batch_lead: bool = False,
+) -> list[str]:
     """Fan out to the perception queues. Videos go through `video-prep`, which then fans out.
 
-    A bounty upload's classify hop jumps to the priority queue: the guest is standing there
-    waiting to know whether their shot counted (spec 05 §3).
+    Two kinds of upload take the priority classify lane (spec 09 §2's `priority-queue`, provisioned
+    at 20/s against classify's 8/s — same worker, faster dispatch):
+
+    - a **bounty submission**, because the guest is standing there waiting to know whether their shot
+      counted (spec 05 §3);
+    - the **lead photo of each batch**, because FIFO under a burst gives the worst latency to the
+      person most likely to be watching the wall (EXECUTION-PLAN §7d). One photo per uploader is
+      enough for the kiosk's `just_in` guarantee — the tail drains behind it at the configured rate,
+      which is the honest SLA spec 09 §2 publishes ("the show needs fresh content, not complete").
     """
     cfg = settings()
     payload = {"eventId": event_id, "mediaId": media_id}
@@ -207,7 +220,8 @@ def _dispatch(event_id: str, media_id: str, kind: MediaKind, bounty_id: str | No
     if kind is MediaKind.VIDEO:
         plan = [(Stage.VIDEO_PREP, cfg.video_prep_queue, cfg.video_prep_url)]
     else:
-        classify_queue = cfg.priority_queue if bounty_id else cfg.classify_queue
+        expedite = bool(bounty_id) or batch_lead
+        classify_queue = cfg.priority_queue if expedite else cfg.classify_queue
         plan = [
             (Stage.CURATE, classify_queue, cfg.curate_url),
             (Stage.FACES, cfg.face_queue, cfg.face_url),
@@ -412,7 +426,13 @@ def process(data: dict[str, Any]) -> dict[str, Any]:
 
     # After the flip, never before: a crash here leaves stages `pending` for the sweeper to
     # requeue, whereas enqueueing first and crashing would pay Gemini twice.
-    dispatched = _dispatch(event_id, media_id, kind, bounty_id if isinstance(bounty_id, str) else None)
+    dispatched = _dispatch(
+        event_id,
+        media_id,
+        kind,
+        bounty_id if isinstance(bounty_id, str) else None,
+        batch_lead=bool(doc.get("batchLead")),
+    )
 
     log.info(
         "intake_done",

@@ -67,6 +67,18 @@ def stage(outcome: str, **fields: Any) -> None:
     _emit(severity, " ".join([f"{outcome}:", *parts]), **fields)
 
 
+def line(kind: str, *, severity: str = "INFO", **fields: Any) -> None:
+    """`log.stage`'s shape for things that are not pipeline stages — ticks, playlist revisions.
+
+    Same reason it exists: these entries are read off a screen during the demo, so the numbers
+    belong in the collapsed summary (`tick: event=dev_demo lease=acquired ms=812`) while staying
+    individually queryable. Field order is the caller's kwarg order, which is the natural reading
+    order of whatever they are reporting.
+    """
+    parts = [f"{key}={value}" for key, value in fields.items() if value is not None]
+    _emit(severity, " ".join([f"{kind}:", *parts]), **fields)
+
+
 def debug(message: str, **fields: Any) -> None:
     _emit("DEBUG", message, **fields)
 

@@ -11,7 +11,9 @@ DLQ_SA="$(sa_email "${SA_DLQ}")"
 CURATE_SA="$(sa_email "${SA_CURATE}")"
 FACE_SA="$(sa_email "${SA_FACE}")"
 SAFETY_SA="$(sa_email "${SA_SAFETY}")"
+PUBLISHER_SA="$(sa_email "${SA_PUBLISHER}")"
 TASKS_SA="$(sa_email "${SA_TASKS}")"
+SCHEDULER_SA="$(sa_email "${SA_SCHEDULER}")"
 EVENTARC_SA="$(sa_email "${SA_EVENTARC}")"
 
 step "Creating service accounts"
@@ -21,7 +23,9 @@ ensure_sa "${SA_DLQ}" "Showrunner dlq (dead-letter consumer)"
 ensure_sa "${SA_CURATE}" "Showrunner worker-curate (Curator agent)"
 ensure_sa "${SA_FACE}" "Showrunner worker-face (Face Indexer)"
 ensure_sa "${SA_SAFETY}" "Showrunner worker-safety (Guardian)"
+ensure_sa "${SA_PUBLISHER}" "Showrunner publisher (kiosk playlist)"
 ensure_sa "${SA_TASKS}" "Showrunner Cloud Tasks OIDC identity"
+ensure_sa "${SA_SCHEDULER}" "Showrunner Cloud Scheduler OIDC identity"
 ensure_sa "${SA_EVENTARC}" "Showrunner Eventarc / Pub-Sub delivery identity"
 
 step "api: Firestore, Tasks, custom claims"
@@ -69,6 +73,21 @@ grant_project_role "serviceAccount:${SAFETY_SA}" "roles/aiplatform.user"
 # granted by being able to consume the project's Vision quota, which is what this role is.
 grant_project_role "serviceAccount:${SAFETY_SA}" "roles/serviceusage.serviceUsageConsumer"
 
+step "publisher: Firestore only — no LLM, no Vertex, no GCS, no Tasks"
+# The playlist writer reads media/people/bounties/reels and writes one document. It has no reason to
+# reach a model or a bucket, and spec 04 §1's "judgment by agents, enforcement by policy" is easier to
+# believe about the most visible surface in the product when the service that owns it *cannot* call a
+# model even if a future session wanted it to.
+grant_project_role "serviceAccount:${PUBLISHER_SA}" "roles/datastore.user"
+
+step "scheduler: OIDC token minting for the director tick"
+# Cloud Scheduler impersonates this identity to mint the OIDC token it presents to `api`. Its own
+# service agent needs tokenCreator to do that — usually auto-granted with the API, granted explicitly
+# here so a clean project works on the first run rather than the second (same shape as Pub/Sub below).
+grant_sa_role "${SCHEDULER_SA}" \
+  "serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com" \
+  "roles/iam.serviceAccountTokenCreator"
+
 step "api: Model Armor on text surfaces (spec 09 §4.5)"
 # The itinerary paste, bounty briefs and captions are sanitized before they reach a prompt
 # (services/armor.py). `modelarmor.user` is the sanitize-only role — it cannot create or edit the
@@ -96,8 +115,12 @@ grant_project_role "serviceAccount:${GCS_AGENT}" "roles/pubsub.publisher"
 step "Recording identities in .env"
 upsert_env SIGNER_SA_EMAIL "${API_SA}"
 upsert_env TASKS_SA_EMAIL "${TASKS_SA}"
+# `api` allowlists these two emails on /internal/tick (shared/oidc.py). It is the access control on
+# the one public endpoint that makes the fleet act, so the deploy writes it rather than a human.
+upsert_env SCHEDULER_SA_EMAIL "${SCHEDULER_SA}"
 note "SIGNER_SA_EMAIL=${API_SA}"
 note "TASKS_SA_EMAIL=${TASKS_SA}"
+note "SCHEDULER_SA_EMAIL=${SCHEDULER_SA}"
 
 echo
 echo "Service accounts ready. IAM propagation can lag ~60 s on first use."

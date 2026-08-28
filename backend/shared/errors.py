@@ -22,6 +22,11 @@ def bad_request(code: str, message: str, **extra: Any) -> ApiError:
     return ApiError(status.HTTP_400_BAD_REQUEST, code, message, **extra)
 
 
+def unauthorized(code: str, message: str, **extra: Any) -> ApiError:
+    """No usable credential at all — distinct from `forbidden`, which means "we know who you are"."""
+    return ApiError(status.HTTP_401_UNAUTHORIZED, code, message, **extra)
+
+
 def forbidden(code: str, message: str, **extra: Any) -> ApiError:
     return ApiError(status.HTTP_403_FORBIDDEN, code, message, **extra)
 

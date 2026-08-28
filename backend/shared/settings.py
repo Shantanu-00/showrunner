@@ -67,6 +67,58 @@ STAGE_PRIOR_FLAT = 0.5
 # which attempt is its last, because that is the one that must quarantine instead of retrying.
 MAX_STAGE_ATTEMPTS = 5
 
+# --- the autonomy spine (spec 05 §1, spec 04 §4, spec 09 §2/§5) -------------------------------
+#
+# Two leases, two different jobs, and the difference is worth stating once. The **tick lease** is
+# mutual exclusion for an *action* — it is taken, the tick runs, it is released, and the TTL only
+# matters if the holder dies mid-tick. Holding it for the full TTL would throttle the cadence
+# instead of protecting it (a 5-minute hold against a 2-minute schedule would drop every other
+# tick). The **publisher lease** is leadership over a *resource* for as long as an instance lives:
+# it is renewed on a timer and expires if the holder stops renewing, which is what lets another
+# instance take over an event whose publisher was scaled away.
+TICK_LEASE_MINUTES = 5  # spec 05 §1, crash backstop only
+PUBLISHER_LEASE_SECONDS = 120  # spec 04 §4 — "TTL 2 min, same pattern as the director tick lease"
+PUBLISHER_RENEW_SECONDS = 45  # comfortably inside the TTL: two renewals may fail before failover
+#: Spec 09 §2/§5: Scheduler's cron floor is 1 minute, so the demo tick fires at `* * * * *` and
+#: each invocation enqueues one Cloud Task at +30 s hitting the same endpoint. The effective demo
+#: cadence is 30 s and it is delivered server-side — a console loop reads as a button press.
+DEMO_INTERLEAVE_SECONDS = 30
+
+# --- kiosk program rails (spec 04 §4) ---------------------------------------------------------
+KIOSK_PROGRAM_SECONDS = 300  # "~5 min program, recomputed on triggers"
+KIOSK_HERO_HOLD_SEC = 6  # spec 04 §4's slot sketch, verbatim
+KIOSK_HERO_SHARE = 0.60  # "~60% — fresh highlights of the active stage"
+KIOSK_LEADERBOARD_EVERY_SEC = 90  # "every ~90s"
+KIOSK_JUST_IN_WINDOW_SEC = 120  # spec 04 §4's `liveWindowSec: 120`
+KIOSK_RECENCY_HALF_LIFE_MIN = 20  # "recencyDecay(capturedAt, half-life 20 min)"
+KIOSK_DIVERSITY_WINDOW = 5  # "don't show the same face-cluster or momentTag twice within 5 slots"
+KIOSK_CANDIDATE_LIMIT = 60  # spec 04 §3's `limit(60)`, reused for the publisher's own query
+#: Recompute even with no trigger, so a missed listener event cannot freeze the wall (spec 04 §4's
+#: "every 5 min as fallback").
+KIOSK_FALLBACK_SECONDS = 300
+#: Coalesce a burst of listener callbacks into one recompute. A 20-photo batch lands as up to 20
+#: snapshot events; rebuilding the program 20 times would write 20 revisions and reset the show on
+#: each one.
+KIOSK_DEBOUNCE_SECONDS = 1.5
+#: Stage match multipliers. Active ×1.0 and previous ×0.4 are spec 04 §4 verbatim; the value for
+#: every *other* stage is not pinned anywhere, so 0.2 is this build's choice — low enough that the
+#: wall follows the event, high enough that an early-morning Haldi photo is still eligible during a
+#: thinly-covered Pheras rather than the wall going empty. Recorded in HANDOFF §9 rather than
+#: silently chosen. `None` (no stage) is treated as "other".
+KIOSK_STAGE_MATCH_ACTIVE = 1.0
+KIOSK_STAGE_MATCH_PREVIOUS = 0.4
+KIOSK_STAGE_MATCH_OTHER = 0.2
+#: Applied when a candidate repeats a face cluster or moment tag already used inside the diversity
+#: window. Also not spec-pinned: the spec names `diversityPenalty` as a factor without a value. 0.35
+#: is chosen so it re-orders aggressively (a second groom photo loses to almost anything else) while
+#: still letting a repeat win when the event genuinely has nothing else — a hard exclusion would
+#: empty the wall at a five-guest party.
+KIOSK_DIVERSITY_PENALTY = 0.35
+#: Spec 11 §3.3, verbatim: tier → kiosk hero-score multiplier, taken as the max across faces in
+#: frame. Deterministic metadata, never a model's opinion — VIP is policy, not memory (spec 11 §4).
+VIP_WEIGHT_BY_TIER = {0: 3.0, 1: 1.8, 2: 1.3, 3: 1.0}
+DEFAULT_TIER = 3
+
 EXT_BY_CONTENT_TYPE = {
     "image/jpeg": "jpg",
     "image/png": "png",
@@ -149,10 +201,17 @@ class Settings:
         self.face_url: str = _env("WORKER_FACE_URL")
         self.safety_url: str = _env("WORKER_SAFETY_URL")
         self.video_prep_url: str = _env("WORKER_VIDEO_PREP_URL")
+        #: The publisher is not a Cloud Tasks target — it is a listener service (spec 04 §4). `api`
+        #: calls it directly so a Scheduler tick can nudge the playlist even on a judge-month
+        #: deployment where `min-instances` is 0 and the listener is not running.
+        self.publisher_url: str = _env("PUBLISHER_URL")
 
         # OIDC identity Cloud Tasks uses when calling a worker; also the signBlob identity.
         self.tasks_sa_email: str = _env("TASKS_SA_EMAIL")
         self.signer_sa_email: str = _env("SIGNER_SA_EMAIL")
+        #: The identity Cloud Scheduler presents to `/internal/tick` (deploy/sa.sh writes it).
+        #: `api` is the one public service, so this allowlist is the tick's real access control.
+        self.scheduler_sa_email: str = _env("SCHEDULER_SA_EMAIL")
 
         #: Where `buffalo_l` was baked (backend/docker/Dockerfile.face). insightface ignores
         #: INSIGHTFACE_HOME and resolves models from its `root=` kwarg only, so this value must
