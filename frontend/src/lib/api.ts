@@ -13,6 +13,22 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
+/** Every derived bucket has `--public-access-prevention`, so `MediaDoc.thumbUri`/`displayUri`
+ * (raw `gs://` values, kept that way because backend consumers read the bytes directly) can never
+ * be an `<img src>`. This path is the one that can — `api/media.py` re-checks visibility on every
+ * request and 302s to a short-lived signed URL, so a subject veto revokes the bytes immediately
+ * instead of leaving a public object fetchable by anyone who already has the link. */
+export function mediaRenderPath(eventId: string, mediaId: string, variant: "thumb" | "display"): string {
+  return `/v1/events/${eventId}/media/${mediaId}/render?variant=${variant}`;
+}
+
+/** For the public-only surfaces (kiosk, public gallery): the render endpoint's public branch is
+ * deliberately unauthenticated (same reasoning as the reel video), so these can go straight into
+ * `<img src>` with no token. Pool/self-tier surfaces need `useAuthedImage` instead. */
+export function mediaRenderUrl(eventId: string, mediaId: string, variant: "thumb" | "display"): string {
+  return `${API_URL}${mediaRenderPath(eventId, mediaId, variant)}`;
+}
+
 /** Exported for `lib/hostApi.ts` — the host console is a separate surface (spec 12 §8) with its
  * own file, but there is exactly one way any client here talks to `api`, and it shouldn't be
  * reinvented per surface. */

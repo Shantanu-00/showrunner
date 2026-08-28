@@ -25,6 +25,7 @@ from shared.settings import settings
 from .host import create_router as host_create_router, router as host_router
 from .identity import claim_router, router as identity_router
 from .internal import router as internal_router
+from .media import router as media_router
 from .moderation import router as moderation_router
 from .reels import router as reels_router
 from .uploads import router as uploads_router
@@ -50,6 +51,7 @@ app.include_router(host_create_router)
 app.include_router(host_router)
 app.include_router(identity_router)
 app.include_router(claim_router)
+app.include_router(media_router)
 app.include_router(moderation_router)
 app.include_router(reels_router)
 # Cloud Scheduler's target (spec 09 §2). Not under /v1: it is infrastructure calling infrastructure,

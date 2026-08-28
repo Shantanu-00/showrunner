@@ -2,19 +2,28 @@
 
 import type { ReactNode } from "react";
 import type { MediaDoc } from "@/lib/types";
+import { mediaRenderUrl } from "@/lib/api";
+import { useAuthedImage } from "@/lib/useAuthedImage";
 
 /** Full-screen `display_1600` viewer (spec 04 §3) shared by the public gallery and the private
- * album — the two surfaces attach different action rows (Why this photo? vs share/save/veto). */
+ * album — the two surfaces attach different action rows (Why this photo? vs share/save/veto).
+ * Public-tier media renders straight from the unauthenticated render URL; pool/self-tier media
+ * (the private album) needs a bearer token, so it goes through `useAuthedImage` instead. */
 export function Lightbox({
+  eventId,
   media,
   onClose,
   actions,
 }: {
+  eventId: string;
   media: MediaDoc;
   onClose: () => void;
   actions?: ReactNode;
 }) {
-  const src = media.displayUri ?? media.thumbUri ?? "";
+  const variant = media.displayUri ? "display" : media.thumbUri ? "thumb" : null;
+  const isPublic = media.visibility === "public";
+  const authedSrc = useAuthedImage(eventId, !isPublic ? media.mediaId : null, variant ?? "display");
+  const src = variant ? (isPublic ? mediaRenderUrl(eventId, media.mediaId, variant) : authedSrc) : null;
   return (
     <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "rgba(0,0,0,0.92)" }}>
       <div className="flex justify-end p-4">

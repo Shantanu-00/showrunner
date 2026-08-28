@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { MediaDoc } from "@/lib/types";
 import { listenHighlights, listenPeopleTiers, listenPublicGallery } from "@/lib/firestore";
 import { rankHighlights, whyFactorsForGallery } from "@/lib/scoring";
+import { mediaRenderUrl } from "@/lib/api";
 import { StageChips } from "./StageChips";
 import { Lightbox } from "./Lightbox";
 import { WhyThisPhoto } from "./WhyThisPhoto";
@@ -110,7 +111,11 @@ export function PublicGallery({
             >
               {media.thumbUri ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={media.thumbUri} alt={media.curator?.caption ?? ""} className="w-full h-auto block" />
+                <img
+                  src={mediaRenderUrl(eventId, media.mediaId, "thumb")}
+                  alt={media.curator?.caption ?? ""}
+                  className="w-full h-auto block"
+                />
               ) : (
                 <div className="w-full aspect-square skeleton-shimmer" />
               )}
@@ -121,6 +126,7 @@ export function PublicGallery({
 
       {selected && (
         <Lightbox
+          eventId={eventId}
           media={selected}
           onClose={() => {
             setSelected(null);

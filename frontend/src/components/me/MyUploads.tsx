@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { ConsentRing, MediaDoc } from "@/lib/types";
 import { listenMyUploads } from "@/lib/firestore";
 import { PadlockSheet } from "@/components/consent/PadlockSheet";
+import { useAuthedImage } from "@/lib/useAuthedImage";
 
 const PENDING_LABEL: Record<string, string> = {
   awaiting_upload: "Sending to the director…",
@@ -63,14 +64,7 @@ export function MyUploads({ eventId, uid }: { eventId: string; uid: string }) {
               className="flex items-center gap-3 p-2 rounded-[var(--radius-card)]"
               style={{ border: "var(--hairline)", background: "var(--bg-1)" }}
             >
-              <div className="w-12 h-12 rounded-[var(--radius-card)] overflow-hidden shrink-0" style={{ background: "var(--bg-0)" }}>
-                {media.thumbUri ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={media.thumbUri} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full skeleton-shimmer" />
-                )}
-              </div>
+              <UploadThumb eventId={eventId} media={media} />
               <span className="flex-1 text-sm" style={{ color: "var(--ink-muted)" }}>
                 {label}
               </span>
@@ -97,5 +91,19 @@ export function MyUploads({ eventId, uid }: { eventId: string; uid: string }) {
         />
       )}
     </>
+  );
+}
+
+function UploadThumb({ eventId, media }: { eventId: string; media: MediaDoc }) {
+  const src = useAuthedImage(eventId, media.thumbUri ? media.mediaId : null, "thumb");
+  return (
+    <div className="w-12 h-12 rounded-[var(--radius-card)] overflow-hidden shrink-0" style={{ background: "var(--bg-0)" }}>
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full skeleton-shimmer" />
+      )}
+    </div>
   );
 }

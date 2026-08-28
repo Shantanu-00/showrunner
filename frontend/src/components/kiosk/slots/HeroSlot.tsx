@@ -3,6 +3,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import type { HeroSlot as HeroSlotType, MediaDoc } from "@/lib/types";
 import { listenMedia, listenUploaderCredit } from "@/lib/firestore";
+import { mediaRenderUrl } from "@/lib/api";
 
 function primaryFaceOrigin(media: MediaDoc | null): string {
   if (!media || media.faces.length === 0) return "50% 50%";
@@ -30,7 +31,11 @@ export function HeroSlot({ eventId, slot }: { eventId: string; slot: HeroSlotTyp
     return listenUploaderCredit(eventId, media.uploaderUid, setCreditName);
   }, [eventId, media?.uploaderUid]);
 
-  const src = media?.displayUri ?? media?.thumbUri;
+  const src = media?.displayUri
+    ? mediaRenderUrl(eventId, slot.mediaId, "display")
+    : media?.thumbUri
+      ? mediaRenderUrl(eventId, slot.mediaId, "thumb")
+      : null;
 
   return (
     <div className="absolute inset-0 overflow-hidden" style={{ background: "var(--bg-0)" }}>

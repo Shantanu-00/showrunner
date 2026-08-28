@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { JustInSlot as JustInSlotType, MediaDoc } from "@/lib/types";
 import { listenJustIn } from "@/lib/firestore";
+import { mediaRenderUrl } from "@/lib/api";
 
 /** `just_in` — the "your photo is on the wall" guarantee (spec 04 §4): recency-only, no score
  * term, no curation. A 96px filmstrip of whatever just went public. */
@@ -20,7 +21,7 @@ export function JustInSlot({ eventId, slot }: { eventId: string; slot: JustInSlo
       {hero?.displayUri || hero?.thumbUri ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={hero.displayUri ?? hero.thumbUri ?? undefined}
+          src={mediaRenderUrl(eventId, hero.mediaId, hero.displayUri ? "display" : "thumb")}
           alt=""
           className="absolute inset-0 w-full h-full object-cover"
           style={{ filter: "blur(24px) brightness(0.5)" }}
@@ -50,7 +51,11 @@ export function JustInSlot({ eventId, slot }: { eventId: string; slot: JustInSlo
             >
               {media.thumbUri && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={media.thumbUri} alt="" className="w-full h-full object-cover" />
+                <img
+                  src={mediaRenderUrl(eventId, media.mediaId, "thumb")}
+                  alt=""
+                  className="w-full h-full object-cover"
+                />
               )}
               <span
                 className="absolute bottom-1 left-1 text-[10px] px-1.5 py-0.5 rounded-[var(--radius-pill)]"
