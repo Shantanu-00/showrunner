@@ -76,6 +76,13 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
         outcome.armed = await run_in_threadpool(
             act.arm_stage_moments, event_id, led, state, tick_id=tick_id
         )
+        # The arming step runs between LEDGER and REASON and spends from the same per-tick budget
+        # (spec 05 §1's "≤ 2 new bounties/tick" is read as a cap on issuance, not per mechanism), so
+        # the model is told what it has left. Without this it proposes what the timetable already
+        # fired, every proposal is correctly rejected, and its assessment takes credit anyway.
+        led.armed_this_tick = [str(a["targetLabel"]) for a in outcome.armed]
+        led.bounty_budget = max(0, act.DIRECTOR_MAX_NEW_BOUNTIES_PER_TICK - len(outcome.armed))
+        led.open_bounty_count += len(outcome.armed)
 
         plan, plan_usage, error = await _reason(event_id, led)
         usage = usage + plan_usage
@@ -95,9 +102,9 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
             "validation": settled.as_report(),
             **outcome.as_report(),
             "gapsFound": len(led.gaps),
-            # Post-arming, because the ledger was built before this tick armed anything and a report
-            # that said "0 open" next to two freshly issued bounties would be read as a bug.
-            "openBounties": led.open_bounty_count + len(outcome.armed) + len(outcome.issued),
+            # `open_bounty_count` already had the armed ones added above; the reasoned ones land here,
+            # because a report that said "0 open" next to two freshly issued bounties reads as a bug.
+            "openBounties": led.open_bounty_count + len(outcome.issued),
             "activeStage": led.active_stage_id,
             "drift": led.drift.as_line(),
             "tokensIn": usage.tokensIn,

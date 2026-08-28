@@ -278,7 +278,11 @@ async def _judge(
         verdict = SubmissionVerdict.PARTIAL
     else:
         verdict = SubmissionVerdict.REJECTED
-    return verdict, float(check.confidence), check.reason[:200], usage
+    # `score` is the *match* score, so a rejection scores zero however sure the validator was of it.
+    # The model returns confidence in its own judgment, and storing 0.95 next to `rejected` on the
+    # submission record reads — to a host, and to anyone auditing an award — as the opposite verdict.
+    score = float(check.confidence) if check.matchesMoment else 0.0
+    return verdict, score, check.reason[:200], usage
 
 
 def _prompt(media: dict[str, Any], bounty: dict[str, Any]) -> str:

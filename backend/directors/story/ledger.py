@@ -195,6 +195,12 @@ class Ledger:
     glossary: list[str] = field(default_factory=list)
     host_preferences: str = ""
     narrative: str = "(this is the first tick of this event)"
+    #: Filled in after the build, by the deterministic arming step that runs between LEDGER and REASON.
+    #: The model has to be told, because otherwise it spends its whole plan proposing bounties the
+    #: timetable already fired and the guardrails then reject every one — measured live on the first
+    #: real tick, where it also produced an assessment claiming credit for them.
+    armed_this_tick: list[str] = field(default_factory=list)
+    bounty_budget: int = 0
 
     # ------------------------------------------------------------------ prompt
 
@@ -250,11 +256,20 @@ class Ledger:
             lines.append("- none: every started stage has its required moments and named people covered")
 
         lines.append("")
-        lines.append(f"--- BOUNTIES --- {self.open_bounty_count} open of a maximum permitted")
+        lines.append(f"--- BOUNTIES --- {self.open_bounty_count} open")
         for bounty in self.bounties:
             lines.append(bounty.as_line())
         if not self.bounties:
             lines.append("- none")
+        if self.armed_this_tick:
+            lines.append(
+                f"Already fired this tick from the timetable, before you were asked: "
+                f"{', '.join(self.armed_this_tick)}. Do not ask for these again."
+            )
+        lines.append(
+            f"You may issue at most {self.bounty_budget} new bounties on this tick."
+            + (" Issue none; use NO_OP." if self.bounty_budget <= 0 else "")
+        )
 
         if self.host_preferences:
             lines.append("")

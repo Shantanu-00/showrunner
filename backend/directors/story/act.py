@@ -545,8 +545,12 @@ def apply(
     decisions = decide(
         led,
         plan,
+        # Both counts are read from the ledger rather than reconstructed here. `expire_bounties` runs
+        # *before* the ledger is built, so its closures are already absent from `open_bounty_count`;
+        # `arm_stage_moments` runs after, so `director.py` folds its result in — adjusting for either
+        # again here is how an off-by-two guardrail happens (it did, before this comment existed).
         open_keys=open_dedupe_keys(event_id),
-        open_count=max(0, led.open_bounty_count + len(outcome.armed) - len(outcome.expired)),
+        open_count=max(0, led.open_bounty_count),
         budget=max(0, DIRECTOR_MAX_NEW_BOUNTIES_PER_TICK - len(outcome.armed)),
         commissions=state.commissions,
         now=moment,
