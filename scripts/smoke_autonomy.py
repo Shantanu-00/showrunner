@@ -20,8 +20,11 @@ intervention" — so every assertion below is written to be falsifiable rather t
      path; the lead photo takes the priority lane; the publisher's listener notices and writes
      `kiosk/playlist`. The measured phone→wall latency is printed, not asserted into a slogan.
   5. **One writer, and no pointless revisions.** The playlist names the lease holder that wrote it,
-     and a second tick over unchanged inputs reports `unchanged` without bumping `revision` — which
-     matters because the kiosk client restarts the show on every revision it sees.
+     and a second *rebuild* over unchanged inputs reports `unchanged` without bumping `revision` —
+     which matters because the kiosk client restarts the show on every revision it sees. Asserted by
+     nudging the publisher twice rather than by ticking twice: since S8b a tick is not read-only, and
+     a director that escalates a bounty onto the wall between two ticks has changed the program on
+     purpose (see `check_fingerprint_guard`).
 
     python scripts/smoke_autonomy.py --program-only              # no network, no spend
     python scripts/smoke_autonomy.py --event-id dev_...          # the full ~4 minute run
@@ -47,10 +50,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import requests  # noqa: E402
 
 from publisher import program  # noqa: E402
-from shared import fs  # noqa: E402
+from shared import fs, internal as face_internal  # noqa: E402
 from shared.settings import (  # noqa: E402
     DEMO_INTERLEAVE_SECONDS,
     KIOSK_DIVERSITY_WINDOW,
+    KIOSK_JUST_IN_WINDOW_SEC,
     settings,
 )
 from shared.ulid import new_ulid  # noqa: E402
@@ -567,34 +571,73 @@ def check_stage_retheme(event_id: str, event: dict[str, Any], timeout: float = 3
         print(f"      restored: stageOverride cleared, wall back on {current}")
 
 
-def check_idempotent_tick(api: str, host_token: str, event_id: str) -> None:
-    """Spec 05 §1's host fallback button, and the guard that stops the wall restarting for nothing."""
-    before = int(playlist(event_id).get("revision") or 0)
-    outcomes = []
-    for attempt in (1, 2):
-        resp = requests.post(
-            f"{api}/internal/tick",
-            headers={"Authorization": f"Bearer {host_token}"},
-            params={"eventId": event_id},
-            timeout=90,
-        )
-        if resp.status_code != 200:
-            fail(f"host-triggered tick #{attempt} failed ({resp.status_code}): {resp.text[:300]}")
-        body = resp.json()
-        ticked = body.get("ticked") or []
-        if len(ticked) != 1:
-            fail(f"host tick #{attempt} ticked {len(ticked)} events, expected exactly 1: {body}")
-        outcomes.append((ticked[0].get("publisher") or {}).get("status"))
-        time.sleep(1.0)
+def _one_tick(api: str, host_token: str, event_id: str, label: str) -> str | None:
+    resp = requests.post(
+        f"{api}/internal/tick",
+        headers={"Authorization": f"Bearer {host_token}"},
+        params={"eventId": event_id},
+        timeout=180,
+    )
+    if resp.status_code != 200:
+        fail(f"host-triggered tick ({label}) failed ({resp.status_code}): {resp.text[:300]}")
+    ticked = resp.json().get("ticked") or []
+    if len(ticked) != 1:
+        fail(f"host tick ({label}) ticked {len(ticked)} events, expected exactly 1: {resp.json()}")
+    return (ticked[0].get("publisher") or {}).get("status")
 
-    after = int(playlist(event_id).get("revision") or 0)
+
+def check_host_tick(api: str, host_token: str, event_id: str) -> None:
+    """Spec 05 §1's host fallback button: it works, and it ticks exactly the one event it named."""
+    outcomes = [_one_tick(api, host_token, event_id, f"host #{n}") for n in (1, 2)]
     ok(f"host fallback tick works and is event-scoped: publisher said {outcomes}")
-    if after != before:
-        fail(
-            f"two ticks over unchanged inputs bumped revision {before} → {after}; the kiosk restarts "
-            "its program on every revision, so this would visibly reset the show"
+
+
+def check_fingerprint_guard(event_id: str, uploaded_at: float) -> None:
+    """The publisher writes a revision only when the *program* changed (S8a's change-detection).
+
+    This is asserted by nudging the publisher twice directly rather than by ticking twice, and the
+    distinction is the whole point: **since S8b a tick is not a read-only operation.** It can issue a
+    bounty, escalate one onto the wall as a `bounty_call` takeover, expire one, post an announcement or
+    advance a stage — every one of which is an input to the program, so two consecutive ticks *should*
+    sometimes produce two revisions. Measured live the first time this ran after the director landed:
+    the director escalated a bounty between the two ticks, `bounty_call` correctly took the lead slot,
+    and the old assertion reported the fingerprint guard as broken when the guard had worked perfectly.
+
+    The property that actually matters — "a rebuild over unchanged inputs must be *absent*, not merely
+    idempotent, because the kiosk client restarts the show on every revision it sees" — belongs to the
+    publisher and is tested here with nothing else in the loop.
+
+    The wait is not padding either: `just_in` leads only while something was uploaded inside the last
+    `KIOSK_JUST_IN_WINDOW_SEC` (spec 04 §4), so for two minutes after this script's own upload the
+    program legitimately changes on its own and "unchanged inputs" is not yet a true statement.
+    """
+    remaining = KIOSK_JUST_IN_WINDOW_SEC + 10 - (time.time() - uploaded_at)
+    if remaining > 0:
+        print(
+            f"      waiting {remaining:.0f}s for the just_in window to close: until it does the "
+            "program changes on its own, and 'unchanged inputs' is not yet true"
         )
-    ok(f"unchanged inputs → no new revision (still {after}) — the fingerprint guard holds")
+        time.sleep(remaining)
+
+    first = face_internal.nudge_publisher(event_id, reason="smoke:settle")
+    time.sleep(2.0)
+    before = int(playlist(event_id).get("revision") or 0)
+    second = face_internal.nudge_publisher(event_id, reason="smoke:measure")
+    time.sleep(2.0)
+    after = int(playlist(event_id).get("revision") or 0)
+
+    if second.get("status") != "unchanged" or after != before:
+        current = playlist(event_id)
+        fail(
+            f"a rebuild over unchanged inputs reported {second.get('status')!r} and moved revision "
+            f"{before} → {after} (trigger={current.get('trigger')!r}, "
+            f"slots={[s.get('type') for s in current.get('slots') or []][:3]}); the kiosk restarts its "
+            "program on every revision, so an unchanged rebuild has to write nothing at all"
+        )
+    ok(
+        f"two rebuilds, one revision: the second reported {second.get('status')!r} and left revision "
+        f"at {after} (first said {first.get('status')!r}) — the fingerprint guard holds"
+    )
 
 
 def check_tick_lease(event_id: str) -> None:
@@ -684,7 +727,8 @@ def main() -> int:
 
     print("\n── the levers: the host fallback, the fingerprint guard, the tick lease")
     host_token = mint_host_token(args.event_id, api_key)
-    check_idempotent_tick(api, host_token, args.event_id)
+    check_host_tick(api, host_token, args.event_id)
+    check_fingerprint_guard(args.event_id, uploaded_at)
     check_tick_lease(args.event_id)
 
     print()
