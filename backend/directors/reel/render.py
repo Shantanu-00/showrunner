@@ -170,7 +170,11 @@ def run(
         pump.join(timeout=5)
 
         if process.returncode != 0:
-            # ffmpeg's useful message is the last few lines, not the first.
+            # ffmpeg's useful message is the last few lines, not the first — except when the
+            # last lines are a downstream "encoder never opened" cascade and the actual filter or
+            # option error is earlier, which the tail then hides. Log the whole thing once so that
+            # case is diagnosable without guessing at how many lines are enough.
+            log.warn("ffmpeg_full_stderr", event_id=event_id, reel_id=reel_id, stderr=(stderr or "")[-4000:])
             tail = "\n".join((stderr or "").strip().splitlines()[-8:])
             raise RuntimeError(f"ffmpeg exited {process.returncode}: {tail[:800]}")
         if not os.path.exists(output) or os.path.getsize(output) == 0:
