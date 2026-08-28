@@ -88,6 +88,16 @@ grant_sa_role "${SCHEDULER_SA}" \
   "serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com" \
   "roles/iam.serviceAccountTokenCreator"
 
+step "api: Vertex AI — the Story Director's one model call (spec 05 §1)"
+# `api` hosts the director: the tick handler already holds the per-event lease, and spec 05 §1's
+# guardrail set is deterministic code that has to run inside it (HANDOFF §4.20). So the service that
+# serves guests now also calls `gemini-3.7-flash` once per event per tick, plus `flash-lite` per bounty
+# submission. `aiplatform.user` is the same narrowest role sa-curate and sa-safety carry — it permits
+# generateContent on a publisher model and nothing else. Note what is deliberately *not* granted:
+# no bucket access. The director reasons over the Curator's stored description of a photograph, never
+# over the photograph, so the service running the fleet's planner cannot read a guest's media.
+grant_project_role "serviceAccount:${API_SA}" "roles/aiplatform.user"
+
 step "api: Model Armor on text surfaces (spec 09 §4.5)"
 # The itinerary paste, bounty briefs and captions are sanitized before they reach a prompt
 # (services/armor.py). `modelarmor.user` is the sanitize-only role — it cannot create or edit the

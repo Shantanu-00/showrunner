@@ -54,6 +54,14 @@
       ]
     },
     {
+      "collectionGroup": "media",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "uploadedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "bounties",
       "queryScope": "COLLECTION",
       "fields": [

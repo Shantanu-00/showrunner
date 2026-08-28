@@ -67,6 +67,13 @@ ensure_index "media uploaderUid+createdAt" media \
 ensure_index "media guardian.verdict+uploadedAt" media \
   --field-config=field-path=guardian.verdict,order=ascending \
   --field-config=field-path=uploadedAt,order=descending
+# The Story Director's evidence sample (spec 05 §2's drift signal) and its pending bounty
+# submissions: the most recent indexed items, whatever their visibility. Deliberately *not* the
+# `visibility+status+uploadedAt` composite above — a drift signal computed only from photos that
+# happened to clear the public gate would measure consent, not what the event looks like.
+ensure_index "media status+uploadedAt" media \
+  --field-config=field-path=status,order=ascending \
+  --field-config=field-path=uploadedAt,order=descending
 ensure_index "bounties status+expiresAt" bounties \
   --field-config=field-path=status,order=ascending \
   --field-config=field-path=expiresAt,order=ascending

@@ -230,8 +230,14 @@ service cloud.firestore {
         allow write: if false;
       }
 
-      // Coverage ledger (spec 05) — the Story Director's aggregate state.
-      match /ledger/{document} {
+      // The Story Director's aggregate state (spec 05 §1): `ledger/directorState` (the rolling 10-tick
+      // window, the permanent coverage gaps, the deferred reel commissions) and
+      // `ledger/coverageShards/stages/{stageId}` (the incremental counters). Recursive because the
+      // shards are a subcollection — a single-segment match would grant the parent document and deny
+      // the counters under it, which is how a host console ends up showing an empty coverage grid
+      // against a working ledger. Host-only either way: this is the director's reasoning surfaced, and
+      // a guest has no use for how thin the coverage of a stage is.
+      match /ledger/{document=**} {
         allow read: if isHost(eventId) || isAdmin();
         allow write: if false;
       }

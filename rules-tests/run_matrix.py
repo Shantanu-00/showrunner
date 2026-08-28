@@ -265,6 +265,11 @@ def seed_all() -> None:
     seed(f"events/{EVENT}/ops/pulse_shards/workers/curate", {"count": 4})
     seed(f"events/{EVENT}/claimAudits/c1", {"claimId": "c1", "faceCount": 9})
     seed(f"events/{EVENT}/ledger/coverage", {"moments": {}})
+    # The Story Director's real paths (spec 05 §1): its rolling tick window, and the incremental
+    # coverage counters, which are a *subcollection* under a ledger document — hence the recursive
+    # wildcard on that rule rather than a single-segment match.
+    seed(f"events/{EVENT}/ledger/directorState", {"tickCount": 3, "lastStageId": "sangeet"})
+    seed(f"events/{EVENT}/ledger/coverageShards/stages/sangeet", {"photoCount": 12})
     seed(f"events/{EVENT}/hashes/abc123", {"mediaId": "public_indexed"})
     seed("claimLinks/deadbeef", {"eventId": EVENT, "personId": SUBJECT_PERSON})
     seed("platform/liveEventCount", {"count": 1})
@@ -456,6 +461,18 @@ def build_rows(who: dict[str, Persona]) -> list[Row]:
         R("host-only", "stranger", "read", "ledger/coverage", False,
           "coverage state is the Story Director's working memory",
           lambda p: read_doc(p, f"events/{EVENT}/ledger/coverage")),
+        R("host-only", "stranger", "read", "ledger/directorState", False,
+          "what the director decided on the last ten ticks is not a guest surface",
+          lambda p: read_doc(p, f"events/{EVENT}/ledger/directorState")),
+        R("host-only", "host", "read", "ledger/directorState", True,
+          "…and the host reads it: the wrap report's honest gap list comes from here (spec 05 §3)",
+          lambda p: read_doc(p, f"events/{EVENT}/ledger/directorState")),
+        R("host-only", "stranger", "read", "ledger/coverageShards/… (nested)", False,
+          "how thin a stage's coverage is would tell a guest exactly where to point a camera",
+          lambda p: read_doc(p, f"events/{EVENT}/ledger/coverageShards/stages/sangeet")),
+        R("host-only", "host", "read", "ledger/coverageShards/… (nested)", True,
+          "the counters are a subcollection, so the ledger rule has to be a recursive wildcard",
+          lambda p: read_doc(p, f"events/{EVENT}/ledger/coverageShards/stages/sangeet")),
         R("root", "stranger", "read", "hashes/abc123", False,
           "readable, the dedupe register would answer 'was this photo uploaded here?'",
           lambda p: read_doc(p, f"events/{EVENT}/hashes/abc123")),

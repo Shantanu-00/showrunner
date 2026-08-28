@@ -172,11 +172,16 @@ COMMON_ENV="${COMMON_ENV};PUBLISHER_URL=${PUBLISHER_URL}"
 COMMON_ENV="${COMMON_ENV};SCHEDULER_SA_EMAIL=${SCHEDULER_SA_EMAIL}"
 
 step "Deploy api (guest-facing, public — auth is enforced in-app via Firebase ID tokens)"
+# `--timeout 300`, up from 60: since S8b this service also runs the Story Director, and one invocation
+# of `/internal/tick` fans out over every live event, each costing a `gemini-3.7-flash` call plus a
+# publisher nudge. Guest requests are unaffected (they finish in milliseconds); what the old 60 s
+# ceiling would have truncated is the tick, silently, once a few events were live at once. Spec 09 §1
+# pins this service's CPU, memory, scaling and concurrency — not its request timeout.
 gcloud run deploy api \
   --image "${IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
   --service-account "$(sa_email "${SA_API}")" \
   --cpu 1 --memory 512Mi --min-instances 0 --max-instances 10 --concurrency 80 \
-  --timeout 60 --allow-unauthenticated \
+  --timeout 300 --allow-unauthenticated \
   --set-env-vars "^;^SERVICE=api;${COMMON_ENV};ALLOWED_ORIGINS=${APP_ORIGINS}" \
   --quiet >/dev/null
 note "api → $(run_url api)"
