@@ -212,6 +212,7 @@ def beat_grid(audio: bytes) -> tuple[float, list[float], float]:
     """
     try:
         import librosa
+        import numpy as np
     except ImportError:  # pragma: no cover - only the render image carries librosa
         log.warn("librosa_unavailable")
         return 0.0, [], 0.0
@@ -224,8 +225,13 @@ def beat_grid(audio: bytes) -> tuple[float, list[float], float]:
         y, sr = librosa.load(path, sr=22050, mono=True)
         duration = float(librosa.get_duration(y=y, sr=sr))
         tempo, frames = librosa.beat.beat_track(y=y, sr=sr)
+        # `librosa<1.0`'s beat_track returns tempo as a shape-(1,) ndarray, not a scalar — NumPy 2.x
+        # dropped the implicit array→float conversion `float(tempo)` relied on for that shape, which
+        # is exactly what turned a real Lyria render's tempo detection into a silent fallback the
+        # first time this path ran against real audio rather than the offline smoke fixture.
+        tempo_value = float(np.asarray(tempo).reshape(-1)[0])
         beats = [round(float(t), 4) for t in librosa.frames_to_time(frames, sr=sr)]
-        return float(tempo), beats, duration
+        return tempo_value, beats, duration
     except Exception as exc:  # noqa: BLE001 - a beat grid we cannot compute is a fallback, not a fault
         log.warn("beat_track_failed", err=str(exc)[:200])
         return 0.0, [], 0.0

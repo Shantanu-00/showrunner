@@ -289,7 +289,17 @@ def build_command(
     chain, inputs, offsets, total = _xfade_chain(shots)
     origin = shots[0].startSec
 
-    args: list[str] = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "warning"]
+    args: list[str] = [
+        "ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "warning",
+        # The render Job is 8 vCPU (spec 09 §1), and the Debian-packaged ffmpeg in
+        # Dockerfile.render's base image aborts an all-zoompan filtergraph under that many filter
+        # threads — "Terminating thread with return code -22 (Invalid argument)", both encoders
+        # never opening. Confirmed by reproducing dev_demo's exact failed argv: a newer upstream
+        # ffmpeg build renders it cleanly at any thread count, but this image's build only fails
+        # multi-threaded, so the filter graph — not the encoders, which stay multi-threaded — is
+        # pinned to one thread rather than betting on the packaged binary being safe here.
+        "-filter_complex_threads", "1",
+    ]
     for path, duration in zip(image_paths, inputs):
         args += ["-loop", "1", "-framerate", str(REEL_FPS), "-t", f"{duration:.4f}", "-i", path]
     if audio_path:

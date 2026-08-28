@@ -89,6 +89,13 @@ step "render: Firestore + Vertex AI (the Reel Director's own model calls and Lyr
 # `curated`, and deliberately **nothing** on `raw`.
 grant_project_role "serviceAccount:${RENDER_SA}" "roles/datastore.user"
 grant_project_role "serviceAccount:${RENDER_SA}" "roles/aiplatform.user"
+# `directors/reel/agent.py` guards its DIRECT prompt through the same Model Armor plugin as the
+# Story Director (§4.20) — missed the first time this grant list was written, since sa-api's own
+# modelarmor.user grant below reads as "Model Armor is covered" until you check which SA is
+# actually calling `guard()` on the reel's own storyboard prompt. Caught live: a real commission
+# 403'd on `modelarmor.templates.useToSanitizeUserPrompt`, not fatal (armor.py fails open) but not
+# the protection the docstring claims either.
+grant_project_role "serviceAccount:${RENDER_SA}" "roles/modelarmor.user"
 # Signed GET URLs for the finished file are minted by `api` as sa-api, not here — the renderer writes
 # the object and never hands anyone a link to it.
 
