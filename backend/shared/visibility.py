@@ -43,15 +43,23 @@ SideEffect = Callable[[firestore.Transaction, dict[str, Any]], None]
 def public_floor(event: dict[str, Any]) -> float:
     """The aesthetic bar for Ring 2 to actually reach a public surface (spec 04 §2).
 
-    `demoConfig.publicFloor: 0.0` exists so a judge's test photo of their desk reaches the kiosk
-    `just_in` strip instead of reading as breakage (spec 09 §5) — and it is honoured **only** on
-    the `protected_demo` event, so it can never become a quiet thumb on someone's wedding. Note
-    what a floor of 0.0 does not do: consent and the Guardian gates below still apply in full.
+    One field, read the same way for every event. There used to be a second path here — a
+    `demoConfig.publicFloor` override honoured only when `class == 'protected_demo'` — and removing
+    it (S14) is a trust decision rather than a tidy-up, so it is worth stating why.
+
+    The demo event still runs at a floor of 0.0, because a judge's test photo of their desk should
+    reach the kiosk `just_in` strip instead of reading as breakage (spec 09 §5). It gets there by
+    setting **this** field, the ordinary one any host can set, in `scripts/seed_judge_event.py`. The
+    class-conditional branch bought nothing that the plain field did not already provide, and what it
+    cost was the only piece of exposure logic in the system whose condition was "is this event being
+    looked at by a judge." The rule it failed, now binding on every later session (HANDOFF §9): *a
+    demo convenience is honest if it is a configuration value a real host could also set; it is a
+    thumb on the scale if it is a code branch keyed on whose event it is.*
+
+    So there is deliberately nothing to special-case in this function. Note also what a floor of 0.0
+    does not do: consent and the Guardian gates in `decide` below still apply in full, and the
+    aesthetic score remains a *ranking* term on every surface that ranks.
     """
-    demo = event.get("demoConfig") or {}
-    override = demo.get("publicFloor")
-    if override is not None and event.get("class") == "protected_demo":
-        return float(override)
     floor = event.get("publicFloor")
     return float(floor) if floor is not None else settings().default_public_floor
 
