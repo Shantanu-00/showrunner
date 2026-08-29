@@ -13,9 +13,10 @@ the moment they created a second one, because `set_custom_user_claims` overwrite
 appends. The same trap applies to membership: a guest at two events on one phone is ordinary.
 
 **Claims are capped at 1000 bytes total** by Firebase. A 26-character ULID plus JSON quoting and a
-comma costs ~29 bytes, so the two arrays together hold roughly 35 events before a grant starts
-failing — far beyond any real phone, and worth knowing rather than discovering. If it ever matters,
-the fix is a membership document plus a `get()`-free denormalisation, not a longer claim.
+comma costs ~29 bytes, so `MAX_CLAIM_EVENTS` (32, applied separately to `hosts` and `members`) is the
+honest ceiling with headroom — far beyond any real phone, and worth knowing rather than discovering.
+If it ever matters, the fix is a membership document plus a `get()`-free denormalisation, not a
+longer claim.
 """
 
 from __future__ import annotations
