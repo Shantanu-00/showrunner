@@ -54,6 +54,7 @@ kiosk/playlist: {
     {type: 'collage',     collageId},
     {type: 'leaderboard', topN: 5},                 # every ~90s
     {type: 'bounty_call', bountyId},                # Story Director escalations: full-screen mission
+                                                    # (escalated AND fresh — see the freshness note below)
     {type: 'just_in',     liveWindowSec: 120},      # rolling "just uploaded" strip
   ]
 }
@@ -65,9 +66,20 @@ kiosk/playlist: {
 - `stageMatch`: active stage ×1.0, previous ×0.4 — the wall follows the event.
 - `vipWeight`: deterministic multiplier from each pictured person's `tier` field (spec 11 §3.3: tier 0=3.0, 1=1.8, 2=1.3, 3=1.0 — take the max across faces in frame). Metadata, not memory: no LLM decides who's prominent, the host does at onboarding. Because it's the *max across faces*, a guest photographed **with** a Principal inherits the ×3.0 — a guest's best route to the big screen is being in frame with the couple, which is exactly the social dynamic the kiosk should reward; pure guest shots still rotate in via `diversityPenalty` and `just_in`.
 
-**`just_in` is the "your photo is on the wall" guarantee:** the strip shows public items ordered by upload recency only — no score term, no curation. Note the interplay with `publicFloor`: since the floor lives inside `recompute_visibility` (§2), a sub-floor upload never becomes `public` at a real event (the host's declared quality bar for their own wall — honest and intended). For the judge path this would read as breakage, so the `protected_demo` event sets `demoConfig.publicFloor: 0.0` (spec 09 §5): there, consent + Guardian alone decide `public`, any test shot reaches the strip within seconds, and quality still governs *hero* curation through the aesthetic term. Floor-free never means safety-free — Guardian and consent gates apply in full everywhere.
+**`just_in` is the "your photo is on the wall" guarantee:** the strip shows public items ordered by upload recency only — no score term, no curation. Note the interplay with `publicFloor`: since the floor lives inside `recompute_visibility` (§2), a sub-floor upload never becomes `public` at a real event (the host's declared quality bar for their own wall — honest and intended). For the judge path this would read as breakage, so the `protected_demo` event sets the ordinary `event.publicFloor` to `0.0` (spec 09 §5; the `demoConfig` override was deleted in S14): there, consent + Guardian alone decide `public`, any test shot reaches the strip within seconds, and quality still governs *hero* curation through the aesthetic term. Floor-free never means safety-free — Guardian and consent gates apply in full everywhere.
 
 **"Why this photo?" overlay (host/judge mode only — glass-box ranking):** the publisher stores the factor breakdown it computed for each slot (`{aesthetic, recency, diversity, stageMatch, vipWeight, rank}`) on the slot object; tapping a kiosk slot or gallery Highlight in host/judge mode renders those stored numbers plus the gates (`consent ✓ · Guardian ✓`) as a small card. Zero new computation, zero LLM — it displays what was already decided, which is the point: the same truthful-by-construction discipline as the Flight Deck (spec 10), applied to ranking. Never shown to regular guests (it would read as a leaderboard of faces).
+
+**A takeover expires even when the bounty does not (added S14).** An escalated bounty wins the lead
+slot, but only while its escalation is *fresh* — `KIOSK_TAKEOVER_FRESH_MINUTES` (12), enforced by the
+pure `publisher/program.py::pick_takeover`. Every clause of this spec and of spec 05 §3 was
+individually correct and the emergent product behaviour was not: a bounty reaches half-life
+unfulfilled, the director escalates it, it takes the whole screen, it expires, the coverage gap is
+still open so a fresh one is issued, and the cycle repeats. At a real event a submission breaks it.
+On a quiet event nothing does — measured on `dev_demo`, 12 of 16 bounties ended with
+`kioskTakeover: true`, i.e. a five-metre screen showing a wanted poster most of the time. Past the
+freshness window the bounty is still live and still a banner in every guest's pocket; it just stops
+owning the wall. The poster becomes punctuation rather than nagging.
 
 **Recompute triggers (push, not poll):** new `public` highlight; reel published (→ premiere slot inserted next); bounty escalated; stage change (theme + slot flush); every 5 min as fallback. Publisher runs as a small always-warm Cloud Run service with a Firestore listener — **`min-instances=1`** (scale-to-zero would silently kill the listener) **and `--no-cpu-throttling`**, because Cloud Run allocates CPU only during request processing by default and the listener lives on a background thread: an instance that exists without CPU between requests is the same outcome as no instance, with no error to find. A recompute is additionally reachable over HTTP (`POST /recompute`, private, called by the director tick), which is what keeps the wall fresh on a scaled-to-zero deployment where the listener is not running at all.
 
@@ -91,5 +103,5 @@ Published reels/collages are media-like docs with the same visibility machinery:
 - [ ] Stage change re-themes kiosk ≤ 5 s; reel publish interrupts with a premiere ≤ 5 s.
 - [ ] 500 simulated listeners + 5 uploads/s: kiosk p95 update latency < 3 s (fan-out test with the seeded dataset).
 - [ ] Two events live simultaneously, each with active kiosk traffic: each event's playlist is owned by exactly one publisher instance at a time (lease-verified); killing one instance mid-lease does not affect the other event's kiosk, and the orphaned lease is reclaimed within its TTL.
-- [ ] A deliberately low-aesthetic photo uploaded with public consent to the `protected_demo` event (publicFloor 0.0) appears in the `just_in` strip < 5 s; the identical upload to a default event (publicFloor 0.45) stays `pool` and never reaches any public surface.
+- [ ] A deliberately low-aesthetic photo uploaded with public consent to the `protected_demo` event (`event.publicFloor` 0.0) appears in the `just_in` strip < 5 s; the identical upload to a default event (publicFloor 0.45) stays `pool` and never reaches any public surface.
 - [ ] "Why this photo?" overlay shows only publisher-stored factors (code review: no recomputation path), and is unreachable from a regular guest session.
