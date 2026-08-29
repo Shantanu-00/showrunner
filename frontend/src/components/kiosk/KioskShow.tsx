@@ -44,14 +44,33 @@ export function KioskShow({
     void countPublicIndexed(eventId).then(setPublicCount, () => {});
   }, [eventId, playlist?.revision]);
 
+  // The dependency list here is load-bearing and used to be `[playlist, slotIndex]`, which froze the
+  // show completely.
+  //
+  // `playlist` is a fresh object on **every** Firestore snapshot, including one where nothing the
+  // viewer can see has changed: the publisher deliberately touches `checkedAt` on a rebuild whose
+  // program fingerprint is unchanged (spec 04 §4 / HANDOFF §4.21). Every such snapshot re-ran this
+  // effect, whose cleanup cancels the pending advance and starts a new full-length timer. On the demo
+  // event the director ticks every 30 s and nudges the publisher each time, so `checkedAt` moved more
+  // often than a slot's own hold (6 s for a hero, 10 s for a bounty takeover) — the timeout was
+  // cancelled before it could ever fire and the wall parked on slot 0 for ever. Observed live: 60 s on
+  // one bounty poster, zero hero photographs, zero `/render` requests.
+  //
+  // So depend on the *decisions* rather than the object: a new revision genuinely changes the program
+  // and should retime, a `checkedAt` touch must not. Same discipline as the publisher's own
+  // fingerprint — one side detects changes so the other need not re-render, and both halves have to
+  // agree on what counts as a change.
+  const revision = playlist?.revision;
+  const slotCount = playlist?.slots?.length ?? 0;
   useEffect(() => {
-    const slots = playlist?.slots ?? [];
-    if (slots.length === 0) return;
-    const slot = slots[slotIndex % slots.length];
+    if (slotCount === 0) return;
+    const slot = (playlist?.slots ?? [])[slotIndex % slotCount];
+    if (!slot) return;
     const holdMs = (slotHoldSec(slot) || 8) * 1000;
     const t = setTimeout(() => setSlotIndex((i) => i + 1), holdMs);
     return () => clearTimeout(t);
-  }, [playlist, slotIndex]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision, slotCount, slotIndex]);
 
   const shown = playlist ?? (!connected ? cachedPlaylist.current : null);
   const slots = shown?.slots ?? [];
