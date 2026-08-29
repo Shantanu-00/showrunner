@@ -106,7 +106,7 @@ POST /v1/claim                                      # {code} → custom token
 POST /v1/events/{eventId}/people/reclaim            # {selfie} → held claim | 403 (ambiguous / banned / no consent)
 POST /v1/events/{eventId}/media/{id}/consent        # {ring} (uploader only; rules-enforced)
 POST /v1/events/{eventId}/media/{id}/subject-veto   # (matched subjects only)
-GET  /v1/events/{eventId}/claims?status=            # host-authed: the review queue (held | granted | denied)
+GET  /v1/events/{eventId}/claims?status=            # host-authed: the review queue (held | approved | denied)
 GET  /v1/events/{eventId}/claims/{claimId}/selfie   # host-authed: 302 → signed URL of the review selfie
 POST /v1/events/{eventId}/claims/{claimId}/review   # host-authed: approve|deny a held claim (§3)
 POST /v1/events/{eventId}/claims/{claimId}/reverse  # host-authed: undo an approval granted by mistake (§3)
