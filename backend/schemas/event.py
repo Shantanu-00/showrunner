@@ -144,8 +144,13 @@ class EventAccess(BaseModel):
 
     mode: EventAccessMode = EventAccessMode.OPEN
     #: Seats, not people. Spec 02 §1 deliberately gives one human several uids (phone, laptop,
-    #: rescan), so this counts sessions. `None` = uncapped, which is the default: a refused
-    #: legitimate guest at a venue is a far worse failure than one admitted stranger.
+    #: rescan), so this counts sessions. `None` = uncapped, and that is what a freshly created
+    #: `Event` gets here: a refused legitimate guest at a venue is a far worse failure than one
+    #: admitted stranger. `api/host.py::set_access_mode` writes a different default,
+    #: `INVITE_DEFAULT_SEATS`, the first time a host flips `open → invite` and has never set a cap —
+    #: an *uncapped* invite-only event is the one combination nobody actually wants (the point of
+    #: going invite-only is to bound the guest list), so the model default and the first-flip default
+    #: intentionally disagree.
     maxGuests: int | None = None
     codeHash: str | None = None
     codeRotatedAt: dt.datetime | None = None
