@@ -28,24 +28,32 @@ from google.genai import types
 
 from schemas.event import (
     Event,
+    EventAccessMode,
     EventClass,
     EventStatus,
     EventTemplateId,
 )
 from schemas.host import (
+    AccessModeRequest,
+    AccessResponse,
     Contributor,
     ConsoleSummary,
     CreateEventRequest,
     CreateEventResponse,
     EVENT_TEMPLATE_DEFAULTS,
     FreezeRequest,
+    HostLinkListResponse,
     HostLinkResponse,
+    HostLinkSummary,
+    KioskPublicRequest,
     LifecycleResponse,
     ParseItineraryRequest,
     ProfileUpdateRequest,
+    RecoveryCodeResponse,
     RedeemHostRequest,
     RedeemHostResponse,
     SaveStagesRequest,
+    SeatsRequest,
     StageGap,
     StageOverrideRequest,
     StageReportRow,
@@ -55,8 +63,13 @@ from schemas.itinerary_out import ItineraryParseOut
 from schemas.wrap_out import WrapHeadlineOut
 from services import armor, gemini
 from shared import coverage, errors, fs, internal, log
-from shared.auth import Principal, caller, merge_custom_claims
-from shared.settings import settings
+from shared.auth import (
+    Principal,
+    TooManyEventClaims,
+    caller,
+    grant_event_claim,
+)
+from shared.settings import INVITE_DEFAULT_SEATS, settings
 from shared.ulid import new_ulid
 
 create_router = APIRouter(prefix="/v1", tags=["host"])
@@ -136,7 +149,31 @@ def _code_hash(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
-def _mint_host_link(event_id: str, *, ttl_days: int, recovery: bool) -> tuple[str, str, dt.datetime]:
+def _grant_host(uid: str, event_id: str) -> None:
+    """Append to the `hosts` array claim, or 409 at the claim ceiling (`shared/auth.py`)."""
+    try:
+        grant_event_claim(uid, "hosts", event_id)
+    except TooManyEventClaims as exc:
+        raise errors.conflict("TOO_MANY_EVENTS", str(exc)) from exc
+
+
+def _mint_host_link(
+    event_id: str,
+    *,
+    ttl_days: int,
+    recovery: bool,
+    grants: str = "host",
+    path: str = "host",
+    param: str = "hostCode",
+) -> tuple[str, str, dt.datetime]:
+    """One hashed, revocable, expiring link document, used for three different grants.
+
+    `grants` is what the redeemer gets: `'host'` for a co-host link or a recovery code, `'member'`
+    for a kiosk link (the venue TV needs event membership to render anything once `isMember(eventId)`
+    is real, and it is emphatically not a host). Only the sha256 is stored, exactly like
+    `claimLinks/{hash}` — a database dump does not yield working links — and the redeeming endpoint
+    checks `grants` before it grants anything, so a kiosk link can never be redeemed for a console.
+    """
     code = secrets.token_urlsafe(16)
     expires_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=ttl_days)
     fs.host_link_ref(_code_hash(code)).set(
@@ -145,11 +182,12 @@ def _mint_host_link(event_id: str, *, ttl_days: int, recovery: bool) -> tuple[st
             "expiresAt": expires_at,
             "revoked": False,
             "recovery": recovery,
+            "grants": grants,
             "createdAt": fs.SERVER_TIMESTAMP,
         }
     )
     origin = settings().app_origin or "http://localhost:3000"
-    url = f"{origin.rstrip('/')}/host/{event_id}?hostCode={code}"
+    url = f"{origin.rstrip('/')}/{path}/{event_id}?{param}={code}"
     return url, code, expires_at
 
 
@@ -187,10 +225,14 @@ async def create_event(
     fs.event_ref(event_id).set(payload)
 
     # The creator is already an authenticated principal, not a stranger following a link — granting
-    # `host` directly here is the same "identity on the caller's own uid" discipline spec 02 §1 uses
+    # `hosts` directly here is the same "identity on the caller's own uid" discipline spec 02 §1 uses
     # for enrollment, and it means the person who just filled in the wizard is never bounced through
     # their own magic link to reach the console they are already looking at.
-    merge_custom_claims(principal.uid, host=event_id)
+    #
+    # An *append*, never an assignment: `hosts` used to be a scalar `host` claim, so creating a
+    # second event silently revoked the console of the first one — the host was still the host in
+    # Firestore and locked out by their own token (`shared/auth.py`'s module docstring).
+    _grant_host(principal.uid, event_id)
 
     host_link, _code, _exp = _mint_host_link(event_id, ttl_days=_HOST_LINK_TTL_DAYS, recovery=False)
     _recovery_link, recovery_code, _rexp = _mint_host_link(
@@ -210,6 +252,136 @@ async def create_host_link(
     return HostLinkResponse(url=url, code=code, expiresAt=expires_at)
 
 
+@router.get("/host-links", response_model=HostLinkListResponse)
+async def list_host_links(
+    eventId: str = Path(min_length=1, max_length=128), principal: Principal = Depends(caller)
+) -> HostLinkListResponse:
+    """Every link ever minted for this event, so spec 08 §1's "all revocable" has a surface.
+
+    **No `url` and no `code`, for any link, ever.** Only the sha256 is stored (`_mint_host_link`), so
+    the plaintext genuinely cannot be reproduced here — which is the property that makes a database
+    dump worthless and is therefore not a gap to close. What a host gets is enough to *decide*: what
+    the link grants, when it was made, when it expires, and whether it still works. Losing a code
+    means rotating it, not recovering it.
+
+    `linkId` is the hash. Handing it to an authenticated host discloses nothing — sha256 is one-way,
+    and this endpoint already requires the `hosts` claim for this event — and it means revocation needs
+    no second identifier bolted onto documents that already exist in the wild.
+    """
+    _require_host(principal, eventId)
+    _event_or_404(eventId)
+    now = dt.datetime.now(dt.timezone.utc)
+    links: list[HostLinkSummary] = []
+    query = fs.db().collection("hostLinks").where(
+        filter=firestore.FieldFilter("eventId", "==", eventId)
+    )
+    for snap in query.stream():
+        doc = snap.to_dict() or {}
+        expires_at = doc.get("expiresAt")
+        expired = not isinstance(expires_at, dt.datetime) or now > expires_at
+        links.append(
+            HostLinkSummary(
+                linkId=snap.id,
+                grants=str(doc.get("grants") or "host"),
+                recovery=bool(doc.get("recovery")),
+                createdAt=doc.get("createdAt"),
+                expiresAt=expires_at if isinstance(expires_at, dt.datetime) else None,
+                revoked=bool(doc.get("revoked")),
+                revokedAt=doc.get("revokedAt") if isinstance(doc.get("revokedAt"), dt.datetime) else None,
+                active=not bool(doc.get("revoked")) and not expired,
+            )
+        )
+    # Newest first, and undated documents last rather than crashing the sort — `createdAt` is a server
+    # timestamp, so a document read in the same millisecond it was written can still carry None.
+    links.sort(key=lambda l: (l.createdAt is not None, l.createdAt), reverse=True)
+    return HostLinkListResponse(links=links)
+
+
+@router.post("/host-links/{linkId}/revoke", response_model=HostLinkSummary)
+async def revoke_host_link(
+    eventId: str = Path(min_length=1, max_length=128),
+    linkId: str = Path(min_length=16, max_length=128),
+    principal: Principal = Depends(caller),
+) -> HostLinkSummary:
+    """Kill one link. Idempotent, and scoped: a host can only revoke links for their own event.
+
+    The `eventId` check is not decoration. `hostLinks` is a root collection keyed by hash, so without
+    it any host could revoke any other event's links by guessing nothing at all — they would only need
+    a hash, and the listing endpoint above hands hashes out.
+
+    Revocation does not touch anyone who already redeemed the link: their `hosts` claim is minted on
+    their own uid and outlives the link, which is spec 08 §1's model (links are revocable, granted
+    access is revoked by removing the claim). Worth stating because "revoke" reads like it should
+    eject people, and it does not.
+    """
+    _require_host(principal, eventId)
+    ref = fs.host_link_ref(linkId)
+    snap = ref.get()
+    if not snap.exists:
+        raise errors.not_found("NO_LINK", "no such link")
+    doc = snap.to_dict() or {}
+    if str(doc.get("eventId") or "") != eventId:
+        raise errors.not_found("NO_LINK", "no such link")
+    ref.update({"revoked": True, "revokedAt": fs.SERVER_TIMESTAMP})
+    log.info("host_link_revoked", event_id=eventId, link=linkId[:12], host=principal.uid)
+    expires_at = doc.get("expiresAt")
+    return HostLinkSummary(
+        linkId=linkId,
+        grants=str(doc.get("grants") or "host"),
+        recovery=bool(doc.get("recovery")),
+        createdAt=doc.get("createdAt"),
+        expiresAt=expires_at if isinstance(expires_at, dt.datetime) else None,
+        revoked=True,
+        revokedAt=dt.datetime.now(dt.timezone.utc),
+        active=False,
+    )
+
+
+@router.post("/recovery-code", response_model=RecoveryCodeResponse)
+async def regenerate_recovery_code(
+    eventId: str = Path(min_length=1, max_length=128), principal: Principal = Depends(caller)
+) -> RecoveryCodeResponse:
+    """Mint a fresh 365-day recovery code, revoking the previous one.
+
+    The old code cannot be shown again — only its hash was ever stored — so "show me my recovery code"
+    is not a request this system can honour, and the console says so. Replacing it is the honest
+    equivalent, and it closes the failure spec 08 §1 admits to in its own comment: the code is
+    displayed exactly once, at creation, and a host who closed that tab had no way back in.
+
+    The previous recovery code is revoked in the same call rather than left alive. Two valid recovery
+    codes for one event is a strictly worse security posture than one, and a host who regenerates has
+    by definition lost the old one.
+    """
+    _require_host(principal, eventId)
+    _event_or_404(eventId)
+
+    # One equality filter, then `recovery` sifted in Python. Two equality filters would be the natural
+    # query and it is deliberately not written that way: Firestore's need for a composite index across
+    # two fields is version- and shape-dependent, and a query that starts failing with
+    # FAILED_PRECONDITION the first time a host presses this button is not a thing to discover on demo
+    # day. There are a handful of links per event, so the filter is free.
+    superseded = 0
+    query = fs.db().collection("hostLinks").where(
+        filter=firestore.FieldFilter("eventId", "==", eventId)
+    )
+    for snap in query.stream():
+        doc = snap.to_dict() or {}
+        if not doc.get("recovery") or doc.get("revoked"):
+            continue
+        snap.reference.update({"revoked": True, "revokedAt": fs.SERVER_TIMESTAMP})
+        superseded += 1
+
+    _url, code, expires_at = _mint_host_link(
+        eventId, ttl_days=_RECOVERY_CODE_TTL_DAYS, recovery=True
+    )
+    log.info(
+        "recovery_code_regenerated", event_id=eventId, host=principal.uid, superseded=superseded
+    )
+    return RecoveryCodeResponse(
+        recoveryCode=code, expiresAt=expires_at, supersededCount=superseded
+    )
+
+
 @create_router.post("/host-claim", response_model=RedeemHostResponse)
 async def redeem_host_link(
     req: RedeemHostRequest, principal: Principal = Depends(caller)
@@ -226,11 +398,238 @@ async def redeem_host_link(
     ):
         raise errors.forbidden("EXPIRED_CODE", "this link has expired or was revoked")
 
+    # A kiosk link lives in the same collection and is redeemed by `POST /join`, not here: it grants
+    # `members`, and a link that hangs on a venue TV for a weekend must never be a route to a console.
+    if str(link.get("grants") or "host") != "host":
+        raise errors.forbidden("BAD_CODE", "this link is invalid")
+
     event_id = str(link.get("eventId") or "")
-    merge_custom_claims(principal.uid, host=event_id)
+    _grant_host(principal.uid, event_id)
     event = fs.get_event(event_id) or {}
     log.info("host_link_redeemed", event_id=event_id, uid=principal.uid)
     return RedeemHostResponse(eventId=event_id, eventName=event.get("name"))
+
+
+@router.post("/kiosk-links", response_model=HostLinkResponse)
+async def create_kiosk_link(
+    eventId: str = Path(min_length=1, max_length=128), principal: Principal = Depends(caller)
+) -> HostLinkResponse:
+    """A link that gives the venue TV event **membership** — not a host claim.
+
+    Once `isMember(eventId)` is a real boundary, an invite-only event's kiosk renders nothing without
+    it: `media`, `people`, `guests`, `bounties` and `reels` are all member-gated. The playlist
+    document itself stays world-readable (spec 09 §3, verbatim `allow read: if true`) and that
+    residual is stated out loud in `firestore.rules`'s header rather than papered over — it carries
+    mediaIds, stage ids and score factors, no names and no bytes.
+
+    Same hashed-code machinery as a co-host link, one field different (`grants: 'member'`), so it is
+    revocable and expiring for free and `POST /v1/host-claim` refuses it.
+    """
+    _require_host(principal, eventId)
+    _event_or_404(eventId)
+    url, code, expires_at = _mint_host_link(
+        eventId,
+        ttl_days=_HOST_LINK_TTL_DAYS,
+        recovery=False,
+        grants="member",
+        path="kiosk",
+        param="joinCode",
+    )
+    log.info("kiosk_link_minted", event_id=eventId, by=principal.uid)
+    return HostLinkResponse(url=url, code=code, expiresAt=expires_at)
+
+
+# ==================================================== the door: access mode, invite code, seats
+#
+# Spec 02 §1 gives the event a membership boundary; nothing pins how a host operates it, so these
+# three endpoints are this session's flagged-not-pinned surface. All of them are host-only and none
+# of their values is ever accepted from a guest path — the same discipline `class` carries in
+# `schemas/event.py`. The invite code is the *third* instance of the sha256-hashed-code machinery in
+# this file (`_code_hash` + `_mint_host_link`, already used by co-host links and recovery codes, and
+# by `POST /v1/claim` for album links), deliberately not a fourth mechanism.
+
+
+#: Shown to the host, verbatim, before an `invite → open` flip is accepted, and repeated in the 409
+#: when `confirm` is missing so the client cannot show a softer sentence than the server requires.
+#: The flip widens who may be *admitted* to read photographs guests have **already** shared, which is
+#: an exposure change made by someone other than the uploader — so it is confirmed, audited to `ops/`,
+#: and reversible, and the per-photo padlock (spec 02 §4) remains each guest's own remedy. It does
+#: *not* rewrite any stored `visibility`: `recompute_visibility` keeps exactly its existing inputs and
+#: stays the single writer of that field.
+OPEN_FLIP_CONSEQUENCE = (
+    "Photos your guests already shared become reachable by anyone who joins this event's link. "
+    "Nothing already private becomes public, and each guest keeps their per-photo padlock — but "
+    "the door stops asking for a code. This change is recorded in your event's activity log."
+)
+
+
+def _join_url(event_id: str, code: str | None) -> str:
+    origin = (settings().app_origin or "http://localhost:3000").rstrip("/")
+    return f"{origin}/join/{event_id}" + (f"?joinCode={code}" if code else "")
+
+
+def _access_of(event: dict[str, Any]) -> dict[str, Any]:
+    """The event's `access` map, defaulted for every event created before this field existed."""
+    access = dict(event.get("access") or {})
+    if str(access.get("mode") or "") not in (EventAccessMode.OPEN.value, EventAccessMode.INVITE.value):
+        # Absent (every event created before this field existed) or unrecognised. Both read as `open`,
+        # because a value nobody wrote must not become an unexplained lockout.
+        access["mode"] = EventAccessMode.OPEN.value
+    access.setdefault("maxGuests", None)
+    access.setdefault("codeHash", None)
+    access.setdefault("kioskPublic", True)
+    return access
+
+
+def _access_response(event_id: str, access: dict[str, Any], event: dict[str, Any], *, code: str | None = None) -> AccessResponse:
+    return AccessResponse(
+        eventId=event_id,
+        mode=EventAccessMode(str(access.get("mode") or EventAccessMode.OPEN.value)),
+        maxGuests=access.get("maxGuests"),
+        guestCount=int(event.get("guestCount") or 0),
+        joinCode=code,
+        joinUrl=_join_url(event_id, code) if code else None,
+        codeRotatedAt=access.get("codeRotatedAt"),
+        kioskPublic=bool(access.get("kioskPublic", True)),
+    )
+
+
+def _new_invite_code() -> tuple[str, str]:
+    """A fresh join code and its hash. Only the hash is ever written; the plaintext is returned once
+    and cannot be re-read, which is why rotation is the only recovery from a lost code."""
+    code = secrets.token_urlsafe(9)
+    return code, _code_hash(code)
+
+
+@router.post("/access", response_model=AccessResponse)
+async def set_access_mode(
+    req: AccessModeRequest,
+    eventId: str = Path(min_length=1, max_length=128),
+    principal: Principal = Depends(caller),
+) -> AccessResponse:
+    """Flip the door. Both directions work; only one of them needs a confirmation.
+
+    `open → invite` is free — the door shuts, everyone who already joined keeps the `members` claim
+    they hold (revoking live claims would eject the guests standing in the room), and the freshly
+    minted code is what stops a previously-shared link from still admitting strangers.
+
+    `invite → open` requires `confirm: true` against `OPEN_FLIP_CONSEQUENCE`. Either direction writes
+    an `ops/` record, because "who could see this event" is exactly the kind of change a host needs
+    to be able to point at afterwards.
+    """
+    _require_host(principal, eventId)
+    event = _event_or_404(eventId)
+    access = _access_of(event)
+    was = str(access.get("mode"))
+    target = req.mode.value
+    code: str | None = None
+
+    if target == EventAccessMode.INVITE.value:
+        if was != EventAccessMode.INVITE.value or not access.get("codeHash"):
+            code, access["codeHash"] = _new_invite_code()
+            access["codeRotatedAt"] = dt.datetime.now(dt.timezone.utc)
+        access["mode"] = EventAccessMode.INVITE.value
+        if req.maxGuests is not None:
+            access["maxGuests"] = req.maxGuests
+        elif access.get("maxGuests") is None:
+            access["maxGuests"] = INVITE_DEFAULT_SEATS
+    else:
+        if was == EventAccessMode.INVITE.value and not req.confirm:
+            raise errors.conflict("CONFIRM_REQUIRED", OPEN_FLIP_CONSEQUENCE)
+        access["mode"] = EventAccessMode.OPEN.value
+        # The hash goes with the mode. Leaving a live code on an open event means a link the host
+        # believes they retired still admits people the moment they flip back.
+        access["codeHash"] = None
+        access["codeRotatedAt"] = dt.datetime.now(dt.timezone.utc)
+
+    fs.event_ref(eventId).update({"access": fs.to_firestore(access)})
+    if was != access["mode"]:
+        fs.ops_alert(
+            eventId,
+            "access_mode_changed",
+            f"host changed event access from {was} to {access['mode']}",
+            severity="info",
+            resolved=True,
+            by=principal.uid,
+            fromMode=was,
+            toMode=access["mode"],
+        )
+    log.info("access_mode_set", event_id=eventId, mode=access["mode"], was=was, by=principal.uid)
+    return _access_response(eventId, access, event, code=code)
+
+
+@router.post("/access/code", response_model=AccessResponse)
+async def rotate_invite_code(
+    eventId: str = Path(min_length=1, max_length=128), principal: Principal = Depends(caller)
+) -> AccessResponse:
+    """Rotate the invite code: a new hash plus `codeRotatedAt`, and every link built on the old code
+    stops working at that instant. Members who already joined are untouched — they hold a claim, not
+    a code, which is the whole reason the claim exists."""
+    _require_host(principal, eventId)
+    event = _event_or_404(eventId)
+    access = _access_of(event)
+    if str(access.get("mode")) != EventAccessMode.INVITE.value:
+        raise errors.conflict("NOT_INVITE_ONLY", "this event is open — there is no code to rotate")
+    code, access["codeHash"] = _new_invite_code()
+    access["codeRotatedAt"] = dt.datetime.now(dt.timezone.utc)
+    fs.event_ref(eventId).update({"access": fs.to_firestore(access)})
+    fs.ops_alert(
+        eventId,
+        "invite_code_rotated",
+        "host rotated this event's invite code — links built on the old code no longer work",
+        severity="info",
+        resolved=True,
+        by=principal.uid,
+    )
+    log.info("invite_code_rotated", event_id=eventId, by=principal.uid)
+    return _access_response(eventId, access, event, code=code)
+
+
+@router.post("/access/kiosk", response_model=AccessResponse)
+async def set_kiosk_public(
+    req: KioskPublicRequest,
+    eventId: str = Path(min_length=1, max_length=128),
+    principal: Principal = Depends(caller),
+) -> AccessResponse:
+    """"Don't put this event on a wall at all."
+
+    Honoured by the kiosk *client*, not by a security rule, and the console says so: the playlist
+    document is `allow read: if true` (spec 09 §3, verbatim) and a rule cannot consult this field
+    without a `get()`, which `firestore.rules` forbids for a reason property 1 of its header explains.
+    What actually keeps a private event off a screen is that every collection the kiosk renders from is
+    member-gated, so a non-member's kiosk shows an empty programme. This switch is the host's intent,
+    stated where the kiosk can read it — not the enforcement, which lives in the rules.
+    """
+    _require_host(principal, eventId)
+    event = _event_or_404(eventId)
+    access = _access_of(event)
+    access["kioskPublic"] = req.kioskPublic
+    fs.event_ref(eventId).update({"access": fs.to_firestore(access)})
+    log.info("kiosk_public_set", event_id=eventId, kiosk_public=req.kioskPublic, by=principal.uid)
+    return _access_response(eventId, access, event)
+
+
+@router.post("/access/seats", response_model=AccessResponse)
+async def set_seats(
+    req: SeatsRequest,
+    eventId: str = Path(min_length=1, max_length=128),
+    principal: Principal = Depends(caller),
+) -> AccessResponse:
+    """Raise, lower or remove the seat cap. **Seats, not people:** spec 02 §1 deliberately gives one
+    human several uids (phone, laptop, a rescan after clearing site data), so this counts sessions and
+    will always read higher than a guest list. `null` removes the cap.
+
+    Lowering below the current count is allowed and is deliberately *not* retroactive: nobody is
+    ejected, the door simply stops admitting new sessions. Ejecting a guest mid-event because a host
+    typed a smaller number is not a behaviour worth building.
+    """
+    _require_host(principal, eventId)
+    event = _event_or_404(eventId)
+    access = _access_of(event)
+    access["maxGuests"] = req.maxGuests
+    fs.event_ref(eventId).update({"access": fs.to_firestore(access)})
+    log.info("seats_set", event_id=eventId, seats=req.maxGuests, by=principal.uid)
+    return _access_response(eventId, access, event)
 
 
 # ==================================================================================== wizard (spec 08 §3)

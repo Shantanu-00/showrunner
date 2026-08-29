@@ -8,9 +8,19 @@ object would stay fetchable by anyone holding the URL after a subject veto or a 
 The exposure check is the same one `firestore.rules`'s `media/{mediaId}` match already runs
 (host/admin, the uploader, `isPubliclyVisible()`, `isSubject()`), re-implemented here rather than
 imported because rules and Python cannot share code — and re-checked on every request rather than
-once, so a retraction between two page loads actually revokes the bytes. The public branch is
-deliberately unauthenticated for the same reason the reel video is: an `<img src>` cannot carry an
-Authorization header, and a kiosk is a television in a venue.
+once, so a retraction between two page loads actually revokes the bytes.
+
+**The public branch is unauthenticated only on an *open* event.** That was once unconditional, for the
+same reason the reel video's is: an `<img src>` cannot carry an Authorization header and a kiosk is a
+television in a venue. But it also meant an eventId plus a mediaId returned photo bytes to anybody,
+which is what made "private event" a label over an open door — the rules boundary (`isMember(eventId)`)
+would have stopped the *document* read while this endpoint still handed over the image. So when
+`events/{eventId}.access.mode == 'invite'`, this endpoint requires event membership on every branch.
+
+Note what that did **not** need: no token scheme, no signed query parameter. The client already has an
+authed-fetch → blob-URL path for the pool/self tiers (`frontend/src/lib/useAuthedImage.ts`), and
+`frontend/src/lib/MediaImg.tsx` routes every image through it when the event is invite-only. An open
+event's kiosk is untouched and still costs no auth round trip.
 """
 
 from __future__ import annotations
@@ -23,6 +33,8 @@ from fastapi.responses import RedirectResponse
 from schemas.common import Visibility
 from shared import errors, fs, gcs, log
 from shared.auth import Principal, verify_bearer
+
+from .membership import is_invite_only
 
 router = APIRouter(prefix="/v1/events/{eventId}", tags=["media"])
 
@@ -64,7 +76,11 @@ async def media_render(
 
     doc = _media(eventId, mediaId)
 
-    if not _is_publicly_visible(doc):
+    # On an open event a public, fully-indexed photo needs no caller at all. On an invite-only one it
+    # does: the whole point of shutting the door is that an eventId and a mediaId stop being enough.
+    open_to_all = _is_publicly_visible(doc) and not is_invite_only(eventId)
+
+    if not open_to_all:
         # Every other ring needs a real caller — the public branch above costs no auth round trip,
         # exactly like the reel video's.
         try:
@@ -76,6 +92,10 @@ async def media_render(
             or principal.platform_admin
             or doc.get("uploaderUid") == principal.uid
             or _is_subject(doc, principal)
+            # An invite-only event's members get exactly what the rules give them and nothing more:
+            # the *same* public tier, gated on having come through `POST /join`. Membership never
+            # widens a ring — a `pool` or `self` item still needs the subject or the uploader.
+            or (_is_publicly_visible(doc) and principal.is_member_of(eventId))
         )
         if not allowed:
             raise errors.not_found("MEDIA_NOT_AVAILABLE", "this photo is not available")

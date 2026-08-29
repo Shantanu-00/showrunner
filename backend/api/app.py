@@ -28,6 +28,7 @@ from .host import create_router as host_create_router, router as host_router
 from .identity import claim_router, router as identity_router
 from .internal import demo_router, router as internal_router
 from .media import router as media_router
+from .membership import _join_code_router as join_code_router, router as membership_router
 from .moderation import router as moderation_router
 from .reels import router as reels_router
 from .uploads import router as uploads_router
@@ -54,6 +55,13 @@ app.include_router(host_router)
 app.include_router(identity_router)
 app.include_router(claim_router)
 app.include_router(media_router)
+# The door (spec 02 §1's event boundary). Registered before the rest of the guest surface reads as
+# the flow it is: join, then everything else — `firestore.rules`'s `isMember(eventId)` denies every
+# member-gated collection until this endpoint has minted the claim.
+app.include_router(membership_router)
+# `POST /v1/events/join-code` — resolving a bare invite code, so it cannot live under the
+# `/{eventId}` prefix the router above carries: not knowing the event is the whole point.
+app.include_router(join_code_router)
 app.include_router(moderation_router)
 app.include_router(reels_router)
 # Cloud Scheduler's target (spec 09 §2). Not under /v1: it is infrastructure calling infrastructure,
@@ -173,11 +181,19 @@ async def event_public(
         return {"exists": False}
     status = event.get("status", EventStatus.DRAFT.value)
     stages = event.get("stages") or []
+    access = event.get("access") or {}
     return {
         "director": await run_in_threadpool(_director_block, eventId, event),
         "exists": True,
         "eventId": eventId,
         "name": event.get("name"),
+        # The door, and only the door: whether a code is needed to join, never the code's hash, the
+        # seat cap or how full it is. A guest standing outside an invite-only event has to be told
+        # that much or the join screen cannot ask them for anything, and it is also what tells the
+        # client to route photo bytes through the authed-fetch path instead of a bare `<img src>`
+        # (`frontend/src/lib/MediaImg.tsx`) — `api/media.py` refuses the unauthenticated branch on an
+        # invite-only event, so a client that guessed wrong would render broken images.
+        "accessMode": str(access.get("mode") or "open"),
         "status": status,
         "timezone": event.get("timezone"),
         "activeStage": event.get("stageOverride") or event.get("activeStage"),

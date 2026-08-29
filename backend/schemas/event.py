@@ -33,6 +33,11 @@ class EventClass(str, Enum):
     PUBLIC = "public"  # everyone else: counted, TTL'd, cost-capped
 
 
+class EventAccessMode(str, Enum):
+    OPEN = "open"  # anyone with the join link becomes a member
+    INVITE = "invite"  # a code is required, and photo bytes stop being unauthenticated
+
+
 class EventTemplateId(str, Enum):
     WEDDING_GENERIC = "wedding_generic"
     WEDDING_HINDU = "wedding_hindu"
@@ -108,12 +113,58 @@ class DemoConfig(BaseModel):
     autoPromoteEnrollees: bool = False  # honoured only when class == protected_demo; off on judge_demo
 
 
+class EventAccess(BaseModel):
+    """The door: who may become a member of this event at all.
+
+    A different axis from the consent rings, and the rings need no change. Ring 2 means "this
+    event's shared surfaces"; `mode` means "how many people the event has". They compose, which is
+    why `shared/visibility.py::recompute_visibility` keeps exactly its existing inputs and stays the
+    single writer of `media.visibility` — there is no per-media audience field anywhere.
+
+    Every field here is **host-settable only**, through `POST /v1/events/{eventId}/access*`. None of
+    it is ever accepted from a guest path, for the same reason `Event.class` never is (module
+    docstring): a guest who could assert `mode: 'open'` would open someone else's event, and a guest
+    who could assert `maxGuests` would raise their own seat cap.
+
+    - `mode == 'open'` — anyone holding the join link joins. `POST /join` needs no code.
+    - `mode == 'invite'` — `POST /join` requires the code whose sha256 is `codeHash`, and
+      `api/media.py`/`api/reels.py` stop serving bytes to non-members (the two places where an
+      `<img src>`/`<video src>` would otherwise be unauthenticated by design).
+
+    `codeHash` stores only the hash, exactly like `claimLinks/{hash}` and `hostLinks/{hash}` — the
+    third instance of the same machinery, not a new mechanism. Rotating means a fresh hash plus
+    `codeRotatedAt`; the old code stops working the instant the hash is replaced.
+
+    `kioskPublic` is honoured by the kiosk *client*, not by a rule: `events/{id}/kiosk/{document}`
+    is `allow read: if true` (spec 09 §3, verbatim) and rules cannot consult this document without a
+    `get()`. What actually makes a private event's wall dark is that every collection the kiosk
+    renders from — `media`, `people`, `guests`, `bounties`, `reels` — is member-gated. See the
+    residual-exposure paragraph in `firestore.rules`'s header.
+    """
+
+    mode: EventAccessMode = EventAccessMode.OPEN
+    #: Seats, not people. Spec 02 §1 deliberately gives one human several uids (phone, laptop,
+    #: rescan), so this counts sessions. `None` = uncapped, which is the default: a refused
+    #: legitimate guest at a venue is a far worse failure than one admitted stranger.
+    maxGuests: int | None = None
+    codeHash: str | None = None
+    codeRotatedAt: dt.datetime | None = None
+    kioskPublic: bool = True
+
+
 class Event(BaseModel):
     eventId: str
     name: str
     timezone: str  # required — EXIF interpretation depends on it (spec 03 §5.1)
     status: EventStatus = EventStatus.DRAFT
     eventClass: EventClass = Field(default=EventClass.PUBLIC, alias="class")
+
+    #: The membership boundary (spec 02 §1's uid layer, made event-scoped). Server-assigned only,
+    #: like `class` above. `guestCount` is maintained transactionally by `POST /join` in the same
+    #: transaction that creates `guests/{uid}` — the pattern `host.py::_go_live_txn` already uses
+    #: for `platform/liveEventCount` — so the seat cap and the guest roster can never disagree.
+    access: EventAccess = Field(default_factory=EventAccess)
+    guestCount: int = 0
 
     stages: list[EventStage] = Field(default_factory=list)
     activeStage: str | None = None

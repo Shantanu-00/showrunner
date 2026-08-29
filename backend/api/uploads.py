@@ -38,6 +38,8 @@ from shared.settings import (
 )
 from shared.ulid import is_ulid
 
+from .membership import require_member_if_invite
+
 router = APIRouter(prefix="/v1/events/{eventId}", tags=["uploads"])
 
 #: How long after `wrapping` begins the outbox may still drain (spec 08 §2 grace period).
@@ -280,6 +282,9 @@ async def create_uploads(
     if not event:
         raise errors.not_found("NO_EVENT", "unknown event")
     _require_uploads_open(event)
+    # Costs no read — `event` is already in hand. Only bites on an invite-only event; see
+    # `api/membership.py::require_member_if_invite` for why reads and writes differ here.
+    require_member_if_invite(event, eventId, principal)
 
     bounty_id = _resolve_bounty(eventId, req.bountyId)
     instructions = _register_batch(
@@ -317,6 +322,7 @@ async def refresh_url(
     if not event:
         raise errors.not_found("NO_EVENT", "unknown event")
     _require_uploads_open(event)
+    require_member_if_invite(event, eventId, principal)
 
     snap = fs.media_ref(eventId, mediaId).get()
     if not snap.exists:

@@ -18,6 +18,7 @@ import datetime as dt
 from pydantic import BaseModel, Field
 
 from schemas.event import (
+    EventAccessMode,
     EventStage,
     EventTemplateId,
     EventTypeProfile,
@@ -114,6 +115,48 @@ class HostLinkResponse(BaseModel):
     expiresAt: dt.datetime
 
 
+class HostLinkSummary(BaseModel):
+    """One link, as much of it as can honestly be shown after the fact.
+
+    There is no `url` and no `code` here, and that is the design rather than an omission: only the
+    sha256 of a code is ever stored, so the plaintext cannot be reproduced — which is exactly the
+    property that makes a Firestore dump yield no working links. A lost code is rotated, not recovered.
+    `linkId` is that hash, which is safe to hand an authenticated host and saves bolting a second
+    identifier onto link documents that already exist in the wild.
+    """
+
+    linkId: str
+    grants: str  # 'host' (co-host link, recovery code) | 'member' (kiosk link)
+    recovery: bool = False
+    createdAt: dt.datetime | None = None
+    expiresAt: dt.datetime | None = None
+    revoked: bool = False
+    revokedAt: dt.datetime | None = None
+    #: Neither revoked nor past its expiry — the only field the console needs to decide "does this
+    #: still let someone in", computed server-side so two clocks cannot disagree about it. A client
+    #: filtering on `revoked`/`revokedAt` alone would show an expired link as live.
+    active: bool = True
+
+
+class HostLinkListResponse(BaseModel):
+    links: list[HostLinkSummary] = Field(default_factory=list)
+
+
+class RecoveryCodeResponse(BaseModel):
+    """The one and only time a freshly minted recovery code is ever readable.
+
+    A dedicated shape rather than `HostLinkResponse`, because a recovery code has no URL: it is typed
+    into `/host`, which resolves the event from the code itself. Returning an empty `url` field would
+    invite a client to render it.
+    """
+
+    recoveryCode: str
+    expiresAt: dt.datetime
+    #: How many previously-live recovery codes this call revoked. Surfaced so the console can say so
+    #: out loud — a host who regenerates should know the old code just stopped working.
+    supersededCount: int = 0
+
+
 class RedeemHostRequest(BaseModel):
     code: str
 
@@ -121,6 +164,54 @@ class RedeemHostRequest(BaseModel):
 class RedeemHostResponse(BaseModel):
     eventId: str
     eventName: str | None = None
+
+
+# ------------------------------------------------------- the door: access mode & seats (spec 02 §1)
+
+
+class AccessModeRequest(BaseModel):
+    """`POST /v1/events/{eventId}/access`.
+
+    `confirm` is required only for `invite → open`, and the endpoint refuses without it. That flip
+    widens who can be admitted to read photographs **guests already shared**, which is an exposure
+    change made by someone other than the uploader — so the host has to have seen a sentence naming
+    the consequence, and the flip is written to `ops/` either way. `open → invite` is free: the door
+    shuts, existing members keep the claim they already hold, and rotating the code kills old links.
+    """
+
+    mode: EventAccessMode
+    #: Only meaningful with `mode == 'invite'`; `None` leaves whatever the event already had (or the
+    #: generous default on the first flip). Explicitly settable to `null` via `/access/seats`.
+    maxGuests: int | None = Field(default=None, ge=1, le=100_000)
+    confirm: bool = False
+
+
+class SeatsRequest(BaseModel):
+    """`POST /v1/events/{eventId}/access/seats` — raising the cap must be one tap, because the
+    failure mode is the bride's mother locked out at the venue. `null` removes the cap entirely."""
+
+    maxGuests: int | None = Field(default=None, ge=1, le=100_000)
+
+
+class KioskPublicRequest(BaseModel):
+    """`POST /v1/events/{eventId}/access/kiosk` — the host's "keep this off the wall" switch. A client
+    contract, not a rule: `events/{id}/kiosk/{document}` is `allow read: if true` (spec 09 §3) and a
+    rule cannot read this field without a `get()`."""
+
+    kioskPublic: bool
+
+
+class AccessResponse(BaseModel):
+    eventId: str
+    mode: EventAccessMode
+    maxGuests: int | None = None
+    guestCount: int = 0
+    #: Present only in the response to a rotation or a first flip to `invite` — the plaintext code is
+    #: never stored (only its sha256, `host.py::_code_hash`) and therefore can never be re-read.
+    joinCode: str | None = None
+    joinUrl: str | None = None
+    codeRotatedAt: dt.datetime | None = None
+    kioskPublic: bool = True
 
 
 # ---------------------------------------------------------------- wizard (spec 08 §3, spec 11 §2)

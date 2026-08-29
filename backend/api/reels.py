@@ -15,12 +15,17 @@ single request:
   constituent and nothing has retracted since), **or** the caller must be the host;
 - then, and only then, a 60-minute signed GET is minted and returned as a 302.
 
-**It is deliberately unauthenticated for a published reel**, and that is the same decision `kiosk/playlist`
-already carries (`allow read: if true`, spec 09 §3): a `<video>` element cannot send an Authorization
-header, a kiosk is a television in a venue, and making the wall depend on an auth session would be a way
-for it to go dark rather than a control. What makes it safe is that "published" is a *derived* state —
-`recompute_visibility` and `store.publish` are the only writers — so this endpoint can only ever serve
-something the trust rail already decided was public.
+**It is unauthenticated for a published reel on an *open* event**, and that is the same decision
+`kiosk/playlist` already carries (`allow read: if true`, spec 09 §3): a `<video>` element cannot send an
+Authorization header, a kiosk is a television in a venue, and making the wall depend on an auth session
+would be a way for it to go dark rather than a control. What makes it safe is that "published" is a
+*derived* state — `recompute_visibility` and `store.publish` are the only writers — so this endpoint can
+only ever serve something the trust rail already decided was public.
+
+On an **invite-only** event (`access.mode == 'invite'`) that branch requires event membership instead, for
+the reason `api/media.py` records at length: a reel is a montage of the same guests' photographs, and an
+eventId plus a reelId must stop being enough the moment the host shuts the door. The venue TV gets there
+through a kiosk link (`POST /v1/events/{eventId}/kiosk-links`), which grants `members` and nothing else.
 """
 
 from __future__ import annotations
@@ -34,6 +39,8 @@ from schemas.common import Visibility
 from schemas.reel import ReelPersona, ReelStatus
 from shared import errors, gcs, log
 from shared.auth import Principal, caller, verify_bearer
+
+from .membership import is_invite_only
 
 router = APIRouter(prefix="/v1/events/{eventId}", tags=["reels"])
 
@@ -68,14 +75,19 @@ async def reel_video(
         doc.get("status") == ReelStatus.PUBLISHED.value
         and doc.get("visibility") == Visibility.PUBLIC.value
     )
-    if not published:
-        # A host may preview an unpublished or failed reel from the console; nobody else may. The token
-        # is only verified on this branch, so the public path costs no auth round trip.
+    if not published or is_invite_only(eventId):
+        # A host may preview an unpublished or failed reel from the console; nobody else may. On an
+        # invite-only event a *published* reel additionally needs a member. The token is only verified
+        # on this branch, so an open event's public path still costs no auth round trip.
         try:
             principal = verify_bearer(authorization)
         except Exception:  # noqa: BLE001 - an absent or bad token on a private reel is simply a 404
             raise errors.not_found("REEL_NOT_AVAILABLE", "this reel is not available") from None
-        _require_host(principal, eventId)
+        if published:
+            if not principal.is_member_of(eventId):
+                raise errors.not_found("REEL_NOT_AVAILABLE", "this reel is not available")
+        else:
+            _require_host(principal, eventId)
 
     parsed = gcs.parse_gs_uri(str(doc.get("gcsUri") or ""))
     if parsed is None:

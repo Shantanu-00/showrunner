@@ -9,12 +9,19 @@ rules_version = '2';
 // below serves strictly what that field already decided. No language model can widen exposure by
 // being wrong, because no rule here consults a model's output directly.
 //
-// Four properties are worth checking against the code before changing anything here:
+// Five properties are worth checking against the code before changing anything here:
 //
-//  1. **Identity is custom claims only** (`personId`, `host`, `platformAdmin`) — set server-side by
-//     `api` after enrollment / magic-link redemption / a CLI grant, never self-asserted. No rule
-//     performs a `get()`: rules allow only ten per request and each is billed, so a `get()`-based
-//     album check would cap a gallery grid at ten photos.
+//  1. **Identity is custom claims only** (`personId`, `hosts`, `members`, `platformAdmin`) — set
+//     server-side by `api` after enrollment / magic-link redemption / `POST /join` / a CLI grant,
+//     never self-asserted. No rule performs a `get()`: rules allow only ten per request and each is
+//     billed, so a `get()`-based album or membership check would cap a gallery grid at ten photos.
+//     `hosts` and `members` are **arrays** — a host runs more than one event over a season and a
+//     guest attends more than one event on one phone, and a scalar claim silently revoked the first
+//     of each (`backend/shared/auth.py`'s module docstring). Firebase caps custom claims at 1000
+//     bytes for the whole object, which puts a ceiling of roughly 32 events per array; the server
+//     refuses the 33rd rather than truncating, because truncating would revoke an event at random.
+//     The old scalar `host` claim is still honoured by `isHost()` so tokens already minted in the
+//     wild keep working until they expire.
 //  2. **Clients never write anything except reactions.** Uploads register through the API (which
 //     shape-validates and rate-limits), consent flips through the API, and every perception write is
 //     a service account outside these rules entirely. Spec 04 §2 permits client-written upload-intent
@@ -30,11 +37,37 @@ rules_version = '2';
 //     *not* hold the embedding, because a rule cannot grant one field of a document and withhold
 //     another, and the kiosk credit chip, the leaderboard's names and the Highlights tier ranking all
 //     need to read person documents. See `backend/shared/fs.py::enrollments_col`.
+//  5. **Membership is event-scoped, and it is a boundary, not a formality.** `isMember(eventId)` used
+//     to be `signedIn()` with no argument, which meant an anonymous session holding *any* eventId
+//     could read that event's public media, its `people` names and tiers, its `guests` leaderboard,
+//     its `bounties` and its published `reels`. Every event was a public event protected only by a
+//     128-bit link. Membership is now a claim minted by `POST /v1/events/{eventId}/join`, which on an
+//     invite-only event demands the host's hashed code and takes a seat under a transactional cap.
+//     Nothing about consent changed: `recompute_visibility` still has exactly its old inputs and is
+//     still the only writer of `media.visibility`. Membership decides *who is at the event*; the
+//     rings decide *what they may see*. The two compose and neither is expressed in the other.
+//
+// **Residual exposure, stated rather than papered over.** Two things stay readable more widely than
+// membership, and both are deliberate:
+//
+//  - `events/{id}/kiosk/{document}` is `allow read: if true`, spec 09 §3 verbatim, and it cannot be
+//    tightened here: deciding by access mode would need a `get()` on the event document. The playlist
+//    holds mediaIds, stage ids, a theme string and the publisher's own score factors — no names, no
+//    uids, no captions, no bytes. Reading it tells an outsider that photo `01J…` is currently on some
+//    wall and nothing else, because every collection it points *into* is member-gated by the rules
+//    below, and `api/media.py` refuses the unauthenticated byte path on an invite-only event. A
+//    private event's kiosk therefore renders an empty programme to a non-member.
+//  - A member reads whole `media` documents, which carry `albumOf` (which personIds are in the frame),
+//    `subjectVetoes`, the Guardian verdict and the per-item `usage` cost. Splitting the media document
+//    to hide those was considered and deliberately not done: it is a restructuring of the one document
+//    every worker in the fleet writes to, two days from a deadline, and the fields are event-internal
+//    rather than personal — `albumOf` holds opaque personIds, and the display names they map to are
+//    already on the wall. Written down here so it is a known shape and not a surprise.
 //
 // Anything without an explicit `allow` is denied: that is the default, and it covers `hashes/`
-// (dedupe register), `claimLinks/` (magic-link hashes), `publisherLease/` and `ticks/` (the two
-// control-plane leases), `platform/` (caps, kill switch, tick heartbeat) and every collection a
-// future session adds before it thinks about rules.
+// (dedupe register), `claimLinks/` and `hostLinks/` (magic-link and invite-code hashes),
+// `publisherLease/` and `ticks/` (the two control-plane leases), `platform/` (caps, kill switch, tick
+// heartbeat) and every collection a future session adds before it thinks about rules.
 //
 // Verified by `rules-tests/run_matrix.py` (`make rules-test`) against the Firestore emulator.
 
@@ -51,16 +84,33 @@ service cloud.firestore {
       return signedIn() ? request.auth.uid : '';
     }
 
-    // Guests sign in anonymously the moment they open a join link (spec 02 §1), so "signed in" is
-    // what event membership means here — there is no membership document to consult, and the
-    // eventId itself comes from the QR code. Nothing readable on that basis is sensitive: display
-    // names, points, bounty briefs and public photos are all things the kiosk shows on a wall.
-    function isMember() {
-      return signedIn();
+    // Membership in **this** event, from the `members` array claim that
+    // `POST /v1/events/{eventId}/join` mints on the caller's own uid (`backend/api/membership.py`).
+    //
+    // This used to be `signedIn()` with no argument, on the reasoning that anonymous sign-in *is* the
+    // act of arriving at an event (spec 02 §1) and that nothing granted on that basis was sensitive.
+    // The first half was true and the second half was the mistake: an eventId is not a secret — it is
+    // in a QR code, a URL and a kiosk address bar — so "signed in" let anyone who had ever seen one
+    // read that event's public wall, its guest list's points and every display name and VIP tier at
+    // it. An array claim rather than a membership document because no rule here may `get()` (see
+    // property 1); an array rather than a scalar because one phone attends more than one event.
+    //
+    // Hosting implies membership, and the platform operator is a member of every event (spec 11 §1.1
+    // is explicit that the operator exists to support events they do not host). Neither implies the
+    // other, and both are checked here rather than repeated at ~5 call sites below.
+    function isMember(eventId) {
+      return isHost(eventId)
+        || isAdmin()
+        || (signedIn() && eventId in request.auth.token.get('members', []));
     }
 
+    // `hosts` is the array; the bare `host` string is the claim shape this system minted before a
+    // second event proved a scalar wrong, honoured so a console open mid-event survives the change
+    // (an ID token lasts an hour). Every new grant writes the array and clears the scalar.
     function isHost(eventId) {
-      return signedIn() && request.auth.token.host == eventId;
+      return signedIn()
+        && (eventId in request.auth.token.get('hosts', [])
+            || request.auth.token.get('host', '') == eventId);
     }
 
     // Minted once via CLI for the deployment owner (spec 11 §1.1). Never granted to a guest, and
@@ -97,12 +147,14 @@ service cloud.firestore {
 
         // Ring 2 + Guardian + quality floor + no subject veto, all already collapsed into
         // `visibility` by `recompute_visibility`. `status=='indexed'` means every stage landed.
-        // `isMember()` is spec 04 §2's "any *authed* event member may read" — the one place spec 09
-        // §3's shorter skeleton and spec 04 §2 differ, and the more specific one wins. Anonymous
-        // sign-in happens before anything renders (spec 02 §1), including on the kiosk, so this costs
-        // no surface anything; it does mean a bare `curl` of a photo document gets nothing.
+        // `isMember(eventId)` is spec 04 §2's "any *authed* event member may read" — the one place
+        // spec 09 §3's shorter skeleton and spec 04 §2 differ, and the more specific one wins.
+        // Anonymous sign-in happens before anything renders (spec 02 §1), including on the kiosk, and
+        // `POST /join` runs on the same page load, so this costs an open event's surfaces nothing; it
+        // does mean a bare `curl` of a photo document gets nothing, and that an eventId scraped from
+        // someone else's QR code is now worth nothing on its own.
         function isPubliclyVisible() {
-          return isMember()
+          return isMember(eventId)
             && media().get('visibility', '') == 'public'
             && media().get('status', '') == 'indexed';
         }
@@ -132,16 +184,28 @@ service cloud.firestore {
       // ---------------------------------------------------------------- people
 
       match /people/{personId} {
-        // Display name and `tier` only, by construction: the selfie template lives in
-        // `enrollments/{personId}` (no rule, below) and anything else private about a person belongs
-        // in the `private/` subcollection. What a member can read here is what the kiosk already puts
-        // on a five-metre screen — the leaderboard's names and the deterministic tier→vipWeight
-        // multiplier behind Highlights ordering (spec 04 §4, spec 11 §3.3).
-        allow read: if isMember();
+        // Display name, `tier`, `featured`, enrollment state — by construction nothing else. The
+        // selfie template lives in `enrollments/{personId}` (no rule, below) and everything else
+        // private about a person lives in `private/profile` (deny-all, immediately below). What a
+        // member can read here is what the kiosk already puts on a five-metre screen: the
+        // leaderboard's names and the deterministic tier→vipWeight multiplier behind Highlights
+        // ordering (spec 04 §4, spec 11 §3.3).
+        allow read: if isMember(eventId);
         allow write: if false;
 
-        // Reserved, deny-all: the home for anything genuinely private on a person — spec 07's taste
-        // profile, notes, anything a future session is tempted to hang off the person document.
+        // Deny-all, and no longer merely reserved. Firestore cannot grant one field of a document and
+        // withhold another, and the parent document above has to stay member-readable, so anything
+        // genuinely private about a person has to physically live down here:
+        //   - `uidLinks` — the uid↔person join table (spec 02 §1). Readable, it maps every anonymous
+        //     session at the event to a named human, which is the exact correlation anonymous
+        //     sign-in exists to prevent.
+        //   - `tasteProfile` / `tasteMemo` / `tasteMemoAt` / `lastMemoReactionCount` — spec 07 §2's
+        //     affinity vector and the Gemma-written memo about what this guest likes. Prose about a
+        //     person's taste, on a document every member of their event could read, was the most
+        //     personal text exposed anywhere in this system.
+        // Written and read only with service credentials (`backend/shared/fs.py::person_private_ref`).
+        // Deny-all includes the host: a console has no use for either, and "the host can see it" is
+        // how something like this ends up in a screenshot.
         match /private/{document=**} {
           allow read, write: if false;
         }
@@ -184,15 +248,18 @@ service cloud.firestore {
       match /guests/{guestUid} {
         // Points and upload counts — the leaderboard slot on the kiosk (spec 04 §4) reads this
         // collection directly, ordered by points. No email, no phone, no token: a uid is not a
-        // credential, and the identity that matters is the one in the verified ID token.
-        allow read: if isMember();
+        // credential, and the identity that matters is the one in the verified ID token. Member-scoped
+        // because the guest list *is* the headcount: readable across events, it would let anyone
+        // holding an eventId enumerate how many sessions an event has and who is winning it.
+        allow read: if isMember(eventId);
         allow write: if false;
       }
 
       match /bounties/{bountyId} {
         // Spec 09 §3: readable by event members. A bounty is a public mission — it goes on the wall
-        // as a wanted poster and into every phone's banner, so there is nothing to withhold.
-        allow read: if isMember();
+        // as a wanted poster and into every phone's banner, so there is nothing to withhold from a
+        // member. From a non-member there is: a brief names a stage, a moment and sometimes a person.
+        allow read: if isMember(eventId);
         allow write: if false;
       }
 
@@ -200,9 +267,15 @@ service cloud.firestore {
         // Published reels are media-like (spec 04 §5): public only once every constituent asset is
         // still Ring-2-eligible, which `recompute_visibility` has already collapsed into the same
         // `visibility` field. Unpublished drafts and superseded versions stay with the host.
+        //
+        // The `visibility == 'public'` branch carried **no** signed-in term at all until the event
+        // boundary landed — the one member-readable collection in the tree that a wholly
+        // unauthenticated caller could read, which made it the cheapest way to confirm an event
+        // existed and enumerate its finished films. `isMember(eventId)` fixes that and matches the
+        // `media` rule above term for term; `api/reels.py` applies the same test to the video bytes.
         allow read: if isHost(eventId)
           || isAdmin()
-          || resource.data.get('visibility', '') == 'public';
+          || (isMember(eventId) && resource.data.get('visibility', '') == 'public');
         allow write: if false;
       }
 
@@ -210,6 +283,18 @@ service cloud.firestore {
         // Spec 09 §3, verbatim: `allow read: if true`. The kiosk is a TV in a venue and the playlist
         // holds only mediaIds that are already public plus the publisher's own ranking factors; making
         // the show depend on an auth session would be a way for the wall to go dark, not a control.
+        //
+        // It stays `true` even for an invite-only event, and this is the honest reason: tightening it
+        // would require reading `events/{eventId}.access.mode`, and that is a `get()` — the one thing
+        // property 1 forbids. What actually makes a private event's wall dark is that every collection
+        // this document points into (`media`, `people`, `guests`, `bounties`, `reels`) is member-gated
+        // above, and that `api/media.py` and `api/reels.py` refuse the unauthenticated byte path when
+        // the mode is `invite`. A non-member reading this document gets a programme of opaque ULIDs it
+        // cannot resolve into a name, a caption or a pixel. The venue TV becomes a member through a
+        // kiosk link (`POST /v1/events/{eventId}/kiosk-links`), which grants `members` and never
+        // `hosts`. `access.kioskPublic` is honoured by the kiosk client, not by this rule — it is a
+        // host's "don't put this event on a wall at all" switch, not a security boundary, and it is
+        // labelled as such in the console.
         allow read: if true;
         allow write: if false;
       }

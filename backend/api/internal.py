@@ -87,7 +87,7 @@ def _authorize(request: Request, authorization: str | None) -> tuple[str, Princi
         return str(claims.get("email") or "service"), None
 
     principal = verify_bearer(authorization)
-    if not (principal.host_event_id or principal.platform_admin):
+    if not (principal.host_event_ids or principal.platform_admin):
         raise errors.forbidden("HOST_ONLY", "only a host or the platform admin may run a tick")
     return "host", principal
 

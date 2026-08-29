@@ -35,6 +35,27 @@ SIGNED_URL_TTL_MINUTES = 15  # spec 01 §3
 CLAIM_EXEMPLARS = 4
 CLAIM_LINK_TTL_DAYS = 30
 
+#: NOT spec-pinned, and not env-overridable — same discipline as the Story Director rails below: a
+#: rate limit an operator can widen from a deploy flag is a rate limit in name only. Spec 01 §3 caps
+#: uploads per uid per hour and spec 02 §3 caps nothing at all on the enrollment path, which is how
+#: one anonymous session could submit selfie after selfie until one crossed τ_claim against somebody
+#: else's face — a brute-force search over the guest list, at InsightFace's expense. Six is generous
+#: for the honest case (a first enrollment, a couple of retries in bad light, a re-claim on each of
+#: two devices) and useless as a search budget. Held claims make each attempt visible to the host as
+#: well, so the limit bounds the noise rather than being the only defence.
+CLAIM_RATE_LIMIT_PER_HOUR = 6
+
+#: How long the host's review-card selfie URL is good for. Much shorter than `RENDER_URL_TTL_MINUTES`
+#: (60, `api/media.py`) on purpose: that one has to outlive a kiosk lingering on one photograph,
+#: while this is an unaltered biometric being shown for a five-second decision, so the grant should
+#: die with the review session rather than with the afternoon.
+CLAIM_REVIEW_URL_TTL_MINUTES = 10
+
+#: Page size for `GET /v1/events/{eventId}/claims`. A review queue is something a host empties, not
+#: something they scroll: 50 outstanding claims at one event already means something is wrong and the
+#: host needs to see *that*, not page 4 of it.
+CLAIM_LIST_LIMIT = 50
+
 #: A selfie arrives as base64 in a JSON body; anything larger than this is a mistake or an attack.
 SELFIE_MAX_BYTES = 8 * 1024 * 1024
 
@@ -420,3 +441,31 @@ class Settings:
 @functools.lru_cache(maxsize=1)
 def settings() -> Settings:
     return Settings()
+
+
+# ==================================================================== event membership (spec 02 §1)
+#
+# The seat cap on an invite-only event. NOT spec-pinned — no spec names a headcount — so it carries
+# the same flagged-not-pinned discipline as the constants above, and it is a module constant rather
+# than an env var for the same reason as the guardrails in this file: a limit an operator can widen
+# from a deploy flag is a limit in name only, and this one belongs to the *host*, who can raise it
+# per event from the console.
+#
+# **Seats, not people.** Spec 02 §1 deliberately gives one human several uids — phone, laptop, a
+# rescan after clearing site data — so this counts sessions, and a family of four on shared devices
+# can easily be a dozen. 300 is generous for the weddings this system is shaped around (a 200-guest
+# wedding will not produce 300 uploading sessions) and it exists only so "invite-only" has a number
+# at all: the failure it guards against is a link leaking onto a group chat, not a guest list being
+# one over. A refused legitimate guest standing at the venue is a far worse outcome than one admitted
+# stranger, which is why the default is high, `None` (uncapped) stays legal, and raising it is one
+# host tap rather than a redeploy.
+INVITE_DEFAULT_SEATS = 300
+
+#: How many invite-code lookups one uid may attempt per hour at `POST /v1/events/join-code`.
+#:
+#: The code itself is `secrets.token_urlsafe(16)` — 128 bits, so guessing one is not a threat model and
+#: this limit is not pretending to be the defence. What it bounds is the *cost* of somebody pointing a
+#: script at the endpoint: every attempt is a Firestore query, and the endpoint is unauthenticated
+#: beyond an anonymous token that anyone can mint. 20 is far more than a human mistyping a code off a
+#: printed card will ever need, and it makes enumeration pointless rather than merely slow.
+CODE_LOOKUP_RATE_LIMIT_PER_HOUR = 20

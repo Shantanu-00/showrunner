@@ -20,6 +20,14 @@ spec 07 §3's ranking reads `tasteProfile`/`tasteMemo` directly, and this module
 any time — so a slow memo cycle must never make the director's real guardrails (the bounty budget,
 the coverage ledger) wait on it. It runs after the director and the publisher nudge in
 `api/internal.py::_do_work`, and its own failures are caught there too.
+
+**Where it writes, and why that is not the person document.** `tasteProfile`, `tasteMemo`,
+`tasteMemoAt` and `lastMemoReactionCount` live in `people/{personId}/private/profile`, which is
+deny-all to every client in `firestore.rules`. `people/{personId}` itself has to stay readable by
+every event member — the kiosk leaderboard reads display names off it and the Highlights re-rank
+reads `tier` — and a rule cannot grant one field of a document while withholding another. A
+paragraph of prose about what a guest likes, sitting on a document the whole event can read, was the
+single most personal thing exposed anywhere in this system.
 """
 
 from __future__ import annotations
@@ -102,7 +110,15 @@ def _gather(event_id: str, person_id: str) -> tuple[str, dict[str, float], list[
 
 
 def _persist(event_id: str, person_id: str, *, affinity: dict[str, float], memo: str, reaction_count: int) -> None:
-    fs.person_ref(event_id, person_id).set(
+    """Writes to `people/{personId}/private/profile`, **not** to the person document.
+
+    A memo about what someone likes, and the vector behind it, is the most personal text this system
+    holds — and `people/{personId}` is readable by every member of the event, because the kiosk
+    leaderboard needs display names and the Highlights re-rank needs `tier`. Firestore cannot withhold
+    one field of a granted document, so the only way to keep this private is to put it somewhere no
+    client rule grants at all: the deny-all `private/` subcollection (`shared/fs.py::person_private_ref`).
+    """
+    fs.person_private_ref(event_id, person_id).set(
         {
             "tasteProfile": affinity,
             **({"tasteMemo": memo, "tasteMemoAt": fs.SERVER_TIMESTAMP} if memo else {}),
@@ -130,8 +146,11 @@ def _pending(event_id: str) -> list[tuple[str, int]]:
     """
     due: list[tuple[str, int]] = []
     for snap in fs.people_col(event_id).stream():
-        person = snap.to_dict() or {}
-        last = int(person.get("lastMemoReactionCount", 0) or 0)
+        # `lastMemoReactionCount` moved into `private/profile` along with the memo it watermarks, so
+        # this is one extra document read per person per tick. A person with no memo yet has no
+        # private document at all, which reads as 0 and is exactly right.
+        private = fs.person_private_ref(event_id, snap.id).get().to_dict() or {}
+        last = int(private.get("lastMemoReactionCount", 0) or 0)
         count = _count_reactions(event_id, snap.id)
         if count - last >= MEMO_EVERY_N_REACTIONS:
             due.append((snap.id, count))

@@ -96,7 +96,9 @@ async def _from_memory_bank(engine: str, event_id: str) -> str:
 async def remember_taste_memo(event_id: str, person_id: str, memo: str) -> None:
     """Write a taste memo into Memory Bank at `{eventId}:{personId}` (spec 07 §2/§4.1).
 
-    Firestore (`people/{personId}.tasteMemo`) is the system of record — `directors/reel/select.py`
+    Firestore (`people/{personId}/private/profile.tasteMemo` — the deny-all subcollection, because a
+    memo about what a guest likes must not sit on a document every event member can read) is the
+    system of record — `directors/reel/select.py`
     and every ranking formula in spec 07 §3 read it there, never here. This call is soft and
     best-effort for the same reason `_from_memory_bank` degrades silently: an unreachable or
     unprovisioned Memory Bank must never undo a memo cycle that already computed a real analysis and

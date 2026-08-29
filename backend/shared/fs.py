@@ -66,6 +66,27 @@ def person_ref(event_id: str, person_id: str) -> firestore.DocumentReference:
     return people_col(event_id).document(person_id)
 
 
+def person_private_ref(event_id: str, person_id: str) -> firestore.DocumentReference:
+    """`people/{personId}/private/profile` — the person fields no event member may read.
+
+    Firestore cannot grant one field of a document and withhold another, and `people/{personId}` has
+    to stay member-readable: the kiosk leaderboard needs display names and the Highlights re-rank
+    needs `tier` (spec 04 §4, spec 11 §3.3). So everything about a person that is *not* already on a
+    five-metre screen lives down here, under a `match /private/{document=**}` that is deny-all to
+    every client including the host:
+
+    - `uidLinks` — the uid↔person join table (spec 02 §1). Readable, it maps anonymous sessions to
+      named humans, which is precisely the correlation anonymous sign-in exists to avoid.
+    - `tasteProfile` / `tasteMemo` / `tasteMemoAt` / `lastMemoReactionCount` — spec 07 §2's
+      deterministic affinity vector and the Gemma-written memo about what this person likes. The most
+      personal prose the system holds, and it was previously readable by anyone signed in.
+
+    Written by `api/identity.py` and `directors/story/taste.py` with service credentials; read the
+    same way. The parent `people/{personId}` document keeps only what a wall already shows.
+    """
+    return person_ref(event_id, person_id).collection("private").document("profile")
+
+
 def enrollments_col(event_id: str) -> firestore.CollectionReference:
     """`enrollments/{personId}` — the selfie embedding, and *only* that (spec 02 §4).
 
@@ -143,6 +164,16 @@ def event_creation_limiter_ref(uid: str) -> firestore.DocumentReference:
     to scope it to.
     """
     return db().collection("eventCreationLimiter").document(uid)
+
+
+def code_lookup_limiter_ref(uid: str) -> firestore.DocumentReference:
+    """`codeLookupLimiter/{uid}` — the hourly budget for `POST /v1/events/join-code`.
+
+    Root-scoped by uid for the same reason as `event_creation_limiter_ref` above: the whole point of
+    resolving a bare invite code is that the caller does not yet know which event it belongs to, so
+    there is no event to scope the limiter to.
+    """
+    return db().collection("codeLookupLimiter").document(uid)
 
 
 def bounties_col(event_id: str) -> firestore.CollectionReference:
