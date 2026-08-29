@@ -313,8 +313,14 @@ export interface BountyDoc {
   targetVipName?: string | null;
   audience?: "all" | "nearStage" | "topContributors";
   kioskTakeover?: boolean;
+  /** As the backend serialises them. A **listener** never sees these as strings — Firestore returns
+   * `Timestamp` objects — so read the `*Ms` fields below instead, which `listenActiveBounties`
+   * normalises via `lib/firestore.ts::tsMillis`. Treating the raw field as a string is what took the
+   * `/join` page down on any event that had an active bounty. */
   createdAt?: string | null;
   expiresAt?: string | null;
+  createdAtMs?: number | null;
+  expiresAtMs?: number | null;
 }
 
 /** `events/{eventId}/reels/{reelId}` — spec 06 §1, mirroring `backend/schemas/reel.py::ReelDoc`.

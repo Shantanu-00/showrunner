@@ -280,6 +280,28 @@ export function listenPeopleDirectory(
 
 /** Every open bounty (spec 05 §3's `active`/`escalated`) — the missions sheet and the guest
  * banner (spec 12 §7) both read from this one listener rather than each running their own query. */
+/** Firestore hands back a `Timestamp` for every timestamp field, never a string — so the interfaces
+ * in `lib/types.ts` that declare `createdAt?: string | null` are describing the *backend's* JSON
+ * shape, not what a listener sees. A blind `d.data() as SomeDoc` cast hides that completely, and the
+ * two ways it goes wrong are both real: `.localeCompare` on a Timestamp **throws** (it took the whole
+ * `/join` page down as soon as an event had one active bounty), and `new Date(timestamp).getTime()`
+ * returns `NaN`, which is falsy, so a countdown silently sits full forever instead of counting.
+ *
+ * Normalising to epoch millis at this boundary is the fix: a number is unambiguous, comparable and
+ * cheap, and every consumer stops having to guess. Accepts the other shapes too, because seeded
+ * emulator fixtures carry ISO strings. */
+export function tsMillis(value: unknown): number | null {
+  if (value == null) return null;
+  if (value instanceof Timestamp) return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? null : ms;
+  }
+  return null;
+}
+
 export function listenActiveBounties(
   eventId: string,
   onData: (items: BountyDoc[]) => void,
@@ -291,7 +313,17 @@ export function listenActiveBounties(
   );
   return onSnapshot(
     q,
-    (snap) => onData(snap.docs.map((d) => d.data() as BountyDoc)),
+    (snap) =>
+      onData(
+        snap.docs.map((d) => {
+          const raw = d.data();
+          return {
+            ...(raw as BountyDoc),
+            createdAtMs: tsMillis(raw.createdAt),
+            expiresAtMs: tsMillis(raw.expiresAt),
+          };
+        })
+      ),
     onError
   );
 }

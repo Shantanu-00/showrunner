@@ -12,8 +12,11 @@ const SNOOZE_MS = 10 * 60 * 1000;
 /** Spec 12 §7: "quiet 240ms retreat" on expiry/dismiss — matches `--dur-standard` in tokens.css. */
 const RETREAT_MS = 240;
 
-function useCountdown(expiresAt: string | null | undefined): { fraction: number; expired: boolean } {
-  const endMs = useMemo(() => (expiresAt ? new Date(expiresAt).getTime() : null), [expiresAt]);
+function useCountdown(endMsIn: number | null | undefined): { fraction: number; expired: boolean } {
+  // Epoch millis, normalised by `listenActiveBounties`. This used to take the raw `expiresAt` and
+  // call `new Date(...)` on it, which for a Firestore `Timestamp` yields NaN -- and NaN is falsy, so
+  // the guard below silently returned a permanently-full ring instead of counting down.
+  const endMs = useMemo(() => (typeof endMsIn === "number" && Number.isFinite(endMsIn) ? endMsIn : null), [endMsIn]);
   const startRef = useRef<number>(Date.now());
   const [now, setNow] = useState(() => Date.now());
 
@@ -67,7 +70,7 @@ export function BountyBanner({
     if (Date.now() - lastShownAtRef.current < SNOOZE_MS) return;
     const candidate = [...bounties]
       .filter((b) => !seenRef.current.has(b.bountyId))
-      .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0];
+      .sort((a, b) => (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0))[0];
     if (!candidate) return;
     setShownId(candidate.bountyId);
     lastShownAtRef.current = Date.now();
@@ -76,7 +79,7 @@ export function BountyBanner({
   }, [bounties, shownId, leaving]);
 
   const bounty = bounties.find((b) => b.bountyId === shownId) ?? null;
-  const { fraction, expired } = useCountdown(bounty?.expiresAt);
+  const { fraction, expired } = useCountdown(bounty?.expiresAtMs);
 
   function retreat() {
     setLeaving(true);
@@ -111,7 +114,7 @@ export function BountyBanner({
               {escalated ? "THE DIRECTOR NEEDS THIS" : "THE DIRECTOR ASKS"}
             </p>
             <p
-              className="font-[var(--font-display)] text-xl mt-1"
+              className="font-[family-name:var(--font-display)] text-xl mt-1"
               style={{ color: "var(--ivory)" }}
             >
               {bounty.copy || bounty.title}
