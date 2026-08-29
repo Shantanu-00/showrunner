@@ -236,16 +236,36 @@ def enroll_self(api: str, api_key: str, event_id: str, selfie_b64: str, display_
     return resp.json().get("personId")
 
 
+#: Cast portraits come out of Nano Banana at 896×1200 and ~1.8 MB, which is ~2.4 MB once base64'd.
+#: A face embedding gains nothing from that: InsightFace detects, 5-point-aligns and resamples to
+#: 112×112 regardless. Sending the full file only mattered when the uplink was fast — from a home
+#: connection it reliably exceeded `embed_selfie`'s 20 s timeout mid-write, which is how the three
+#: host-declared VIPs silently failed to enrol on the first judge-event seed while the three guests
+#: (who post to `api`, on a 60 s timeout) succeeded. Downscaling here rather than widening that
+#: timeout keeps the fix in the seed path: `embed_selfie`'s timeout is `api`'s live enrollment path
+#: too, and HANDOFF §8 is explicit that the fix for it belongs there deliberately, not patched around
+#: from a seeding script.
+SELFIE_MAX_EDGE = 1000
+
+
+def selfie_b64(path: Path) -> str:
+    """A cast portrait as base64 JPEG, downscaled to `SELFIE_MAX_EDGE` (see the note above)."""
+    with Image.open(path) as opened:
+        rgb = opened.convert("RGB")
+        rgb.thumbnail((SELFIE_MAX_EDGE, SELFIE_MAX_EDGE), Image.LANCZOS)
+        buf = io.BytesIO()
+        rgb.save(buf, format="JPEG", quality=88, optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 def enroll_cast(api: str, api_key: str, event_id: str, members: list[cast_module.CastMember]) -> list[dict[str, Any]]:
     enrolled = []
     for member in members:
         if member.tier == "guest":
-            selfie_b64 = base64.b64encode(member.photo.read_bytes()).decode("ascii")
-            person_id = enroll_self(api, api_key, event_id, selfie_b64, member.displayName)
+            person_id = enroll_self(api, api_key, event_id, selfie_b64(member.photo), member.displayName)
         else:
-            selfie_b64 = base64.b64encode(member.photo.read_bytes()).decode("ascii")
             try:
-                body = face_internal.embed_selfie(selfie_b64, max_faces=1)
+                body = face_internal.embed_selfie(selfie_b64(member.photo), max_faces=1, timeout_s=90.0)
             except face_internal.FaceServiceError as exc:
                 log(f"WARN  embedding failed for {member.slug}: {exc}")
                 continue
