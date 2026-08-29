@@ -43,7 +43,7 @@ export function RingChoiceSheet({
         >
           <div className="flex items-center gap-2 mb-1">
             <span aria-hidden>🔒</span>
-            <span className="font-[var(--font-display)] text-lg">Keep in the pool</span>
+            <span className="font-[family-name:var(--font-display)] text-lg">Keep in the pool</span>
           </div>
           <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
             Visible to you and people in the photos.
@@ -61,7 +61,7 @@ export function RingChoiceSheet({
         >
           <div className="flex items-center gap-2 mb-1">
             <span aria-hidden>📺</span>
-            <span className="font-[var(--font-display)] text-lg">Share to the big screen</span>
+            <span className="font-[family-name:var(--font-display)] text-lg">Share to the big screen</span>
           </div>
           <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
             Eligible for the public gallery and kiosk after a dignity check.

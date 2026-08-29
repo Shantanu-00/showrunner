@@ -63,7 +63,7 @@ export function HeroSlot({ eventId, slot }: { eventId: string; slot: HeroSlotTyp
       >
         {media?.curator?.caption && (
           <p
-            className="font-[var(--font-display)] italic text-3xl mb-3 max-w-3xl"
+            className="font-[family-name:var(--font-display)] italic text-3xl mb-3 max-w-3xl"
             style={{ color: "var(--ivory)" }}
           >
             {media.curator.caption}

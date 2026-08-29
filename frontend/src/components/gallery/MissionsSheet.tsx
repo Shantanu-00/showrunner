@@ -32,7 +32,7 @@ export function MissionsSheet({
         style={{ background: "var(--bg-1)", border: "var(--hairline)", borderBottom: "none" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="font-[var(--font-display)] text-xl mb-4" style={{ color: "var(--ivory)" }}>
+        <p className="font-[family-name:var(--font-display)] text-xl mb-4" style={{ color: "var(--ivory)" }}>
           Missions
         </p>
 
@@ -49,7 +49,7 @@ export function MissionsSheet({
                 style={{ border: "var(--hairline)" }}
               >
                 <div className="flex items-center justify-between gap-3 mb-2">
-                  <p className="font-[var(--font-display)] text-lg" style={{ color: "var(--ivory)" }}>
+                  <p className="font-[family-name:var(--font-display)] text-lg" style={{ color: "var(--ivory)" }}>
                     {b.copy || b.title}
                   </p>
                   <span

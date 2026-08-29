@@ -101,7 +101,7 @@ export function JudgeTour() {
         >
           The Taskmaster · All Things Agentic
         </p>
-        <h1 className="font-[var(--font-display)] text-4xl leading-tight" style={{ color: "var(--ivory)" }}>
+        <h1 className="font-[family-name:var(--font-display)] text-4xl leading-tight" style={{ color: "var(--ivory)" }}>
           Judging Showrunner?
           <br />
           Here&rsquo;s the 60-second loop.
@@ -336,7 +336,7 @@ function Step({
         {n}
       </span>
       <div className="flex-1">
-        <h2 className="font-[var(--font-display)] text-lg" style={{ color: "var(--ivory)" }}>
+        <h2 className="font-[family-name:var(--font-display)] text-lg" style={{ color: "var(--ivory)" }}>
           {title}
         </h2>
         <div className="text-[13px] mt-1 leading-relaxed" style={{ color: "var(--ink-muted)" }}>

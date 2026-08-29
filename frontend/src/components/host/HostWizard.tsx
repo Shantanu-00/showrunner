@@ -59,7 +59,7 @@ export function HostWizard() {
   if (created) {
     return (
       <div className="max-w-xl mx-auto px-5 py-16">
-        <p className="font-[var(--font-display)] text-2xl mb-4" style={{ color: "var(--ivory)" }}>
+        <p className="font-[family-name:var(--font-display)] text-2xl mb-4" style={{ color: "var(--ivory)" }}>
           Your event is set up
         </p>
         <p className="text-sm mb-6" style={{ color: "var(--ink-muted)" }}>
@@ -101,7 +101,7 @@ export function HostWizard() {
 
   return (
     <div className="max-w-xl mx-auto px-5 py-16">
-      <p className="font-[var(--font-display)] text-2xl mb-1" style={{ color: "var(--ivory)" }}>
+      <p className="font-[family-name:var(--font-display)] text-2xl mb-1" style={{ color: "var(--ivory)" }}>
         Create your event
       </p>
       <p className="text-sm mb-8" style={{ color: "var(--ink-muted)" }}>

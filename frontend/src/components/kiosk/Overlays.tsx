@@ -21,7 +21,7 @@ export function MonogramAndQr({
     <div className="absolute bottom-[3%] left-[3%] z-30 flex items-end gap-4">
       <JoinQr url={joinUrl} sizePx={qrSizePx} />
       <div>
-        <p className="font-[var(--font-display)] text-2xl" style={{ color: "var(--ivory)" }}>
+        <p className="font-[family-name:var(--font-display)] text-2xl" style={{ color: "var(--ivory)" }}>
           {eventName}
         </p>
         {stageLabel && (

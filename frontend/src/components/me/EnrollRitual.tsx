@@ -69,7 +69,7 @@ export function EnrollRitual({
       <p className="text-5xl mb-4" aria-hidden>
         {icon}
       </p>
-      <h2 className="font-[var(--font-display)] text-2xl mb-3" style={{ color: "var(--ivory)" }}>
+      <h2 className="font-[family-name:var(--font-display)] text-2xl mb-3" style={{ color: "var(--ivory)" }}>
         {title}
       </h2>
       {message && (
@@ -143,7 +143,7 @@ export function EnrollRitual({
                         </div>
                       </div>
 
-                      <h2 className="font-[var(--font-display)] text-2xl mb-3" style={{ color: "var(--ivory)" }}>
+                      <h2 className="font-[family-name:var(--font-display)] text-2xl mb-3" style={{ color: "var(--ivory)" }}>
                         Unlock your album
                       </h2>
                       <p className="text-sm max-w-xs mb-6" style={{ color: "var(--ink-muted)" }}>

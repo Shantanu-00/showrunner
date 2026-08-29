@@ -29,7 +29,7 @@ export function LeaderboardSheet({ eventId, onClose }: { eventId: string; onClos
         style={{ background: "var(--bg-1)", border: "var(--hairline)", borderBottom: "none" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="font-[var(--font-display)] text-xl mb-4" style={{ color: "var(--ivory)" }}>
+        <p className="font-[family-name:var(--font-display)] text-xl mb-4" style={{ color: "var(--ivory)" }}>
           🏆 Leaderboard
         </p>
 
@@ -47,7 +47,7 @@ export function LeaderboardSheet({ eventId, onClose }: { eventId: string; onClos
                     {i + 1}
                   </span>
                   <span
-                    className="flex-1 font-[var(--font-display)] text-lg truncate"
+                    className="flex-1 font-[family-name:var(--font-display)] text-lg truncate"
                     style={{ color: "var(--ivory)" }}
                   >
                     {name ?? "Mystery guest 🎭"}

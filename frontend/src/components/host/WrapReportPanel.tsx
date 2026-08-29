@@ -8,14 +8,14 @@ import type { WrapReport } from "@/lib/hostTypes";
 export function WrapReportPanel({ report }: { report: WrapReport }) {
   return (
     <section className="mb-8">
-      <p className="font-[var(--font-display)] text-lg mb-3" style={{ color: "var(--ivory)" }}>
+      <p className="font-[family-name:var(--font-display)] text-lg mb-3" style={{ color: "var(--ivory)" }}>
         Wrap-up report
       </p>
       <div
         className="rounded-[var(--radius-card)] p-4 mb-4"
         style={{ background: "var(--bg-1)", border: "var(--hairline)" }}
       >
-        <p className="font-[var(--font-display)] text-xl mb-1" style={{ color: "var(--gold-300)" }}>
+        <p className="font-[family-name:var(--font-display)] text-xl mb-1" style={{ color: "var(--gold-300)" }}>
           {report.headline}
         </p>
         <p className="text-sm font-mono tabular-nums" style={{ color: "var(--ink-muted)" }}>

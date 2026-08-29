@@ -51,7 +51,7 @@ export function LifecyclePanel({
   return (
     <section className="mb-8">
       <div className="flex items-center justify-between mb-4">
-        <p className="font-[var(--font-display)] text-lg" style={{ color: "var(--ivory)" }}>
+        <p className="font-[family-name:var(--font-display)] text-lg" style={{ color: "var(--ivory)" }}>
           Controls
         </p>
         <button

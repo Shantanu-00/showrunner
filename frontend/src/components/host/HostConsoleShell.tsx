@@ -88,7 +88,7 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
   if (authState === "need-code") {
     return (
       <div className="max-w-md mx-auto px-5 py-24 text-center">
-        <p className="font-[var(--font-display)] text-xl mb-3" style={{ color: "var(--ivory)" }}>
+        <p className="font-[family-name:var(--font-display)] text-xl mb-3" style={{ color: "var(--ivory)" }}>
           Host access needed
         </p>
         <p className="text-sm mb-6" style={{ color: "var(--ink-muted)" }}>
@@ -130,7 +130,7 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
         style={{ background: "var(--bg-0)", borderBottom: "var(--hairline)" }}
       >
         <div className="min-w-0">
-          <p className="font-[var(--font-display)] text-lg truncate" style={{ color: "var(--ivory)" }}>
+          <p className="font-[family-name:var(--font-display)] text-lg truncate" style={{ color: "var(--ivory)" }}>
             {event.name}
           </p>
           <p className="text-xs font-mono" style={{ color: "var(--ink-muted)" }}>

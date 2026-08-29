@@ -32,7 +32,7 @@ export function EventTab({
   return (
     <section>
       <div className="flex items-center justify-between px-4 pb-3">
-        <p className="font-[var(--font-display)] text-lg truncate" style={{ color: "var(--ivory)" }}>
+        <p className="font-[family-name:var(--font-display)] text-lg truncate" style={{ color: "var(--ivory)" }}>
           {eventInfo?.name ?? ""}
         </p>
         <div className="flex items-center gap-2 shrink-0">

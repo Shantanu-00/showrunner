@@ -163,7 +163,7 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
       )}
 
       <header className="px-5 pt-8 pb-4">
-        <h1 className="font-[var(--font-display)] text-3xl" style={{ color: "var(--ivory)" }}>
+        <h1 className="font-[family-name:var(--font-display)] text-3xl" style={{ color: "var(--ivory)" }}>
           Showrunner
         </h1>
         <p className="text-sm mt-2" style={{ color: "var(--ink-muted)" }}>

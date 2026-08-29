@@ -51,7 +51,7 @@ export function MeTab({ eventId, uid }: { eventId: string; uid: string }) {
             <p className="text-5xl mb-4" aria-hidden>
               🤳
             </p>
-            <h3 className="font-[var(--font-display)] text-xl mb-2" style={{ color: "var(--ivory)" }}>
+            <h3 className="font-[family-name:var(--font-display)] text-xl mb-2" style={{ color: "var(--ivory)" }}>
               Unlock your album
             </h3>
             <p className="text-sm mb-6" style={{ color: "var(--ink-muted)" }}>

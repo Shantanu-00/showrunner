@@ -134,7 +134,7 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
 
   return (
     <section className="mb-8">
-      <p className="font-[var(--font-display)] text-lg mb-3" style={{ color: "var(--ivory)" }}>
+      <p className="font-[family-name:var(--font-display)] text-lg mb-3" style={{ color: "var(--ivory)" }}>
         Timeline
       </p>
 
@@ -176,7 +176,7 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
                 value={stage.label}
                 disabled={!canEdit}
                 onChange={(e) => updateStage(stage.key, { label: e.target.value })}
-                className="flex-1 font-[var(--font-display)] text-lg bg-transparent"
+                className="flex-1 font-[family-name:var(--font-display)] text-lg bg-transparent"
                 style={{ color: "var(--ivory)" }}
               />
               {stage.timeHint && (

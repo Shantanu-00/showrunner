@@ -48,7 +48,7 @@ export function ReelSlot({ eventId, slot }: { eventId: string; slot: ReelSlotTyp
           </p>
         )}
         <p
-          className="font-[var(--font-display)] mb-4"
+          className="font-[family-name:var(--font-display)] mb-4"
           style={{ color: "var(--ivory)", fontSize: "min(9vw, 61px)" }}
         >
           {reel?.title ?? "The Couple"}
@@ -69,7 +69,7 @@ export function ReelSlot({ eventId, slot }: { eventId: string; slot: ReelSlotTyp
         onEnded={() => setEnded(true)}
       />
       <div
-        className="absolute inset-x-0 bottom-[6%] text-center font-[var(--font-display)] italic"
+        className="absolute inset-x-0 bottom-[6%] text-center font-[family-name:var(--font-display)] italic"
         style={{ color: "var(--ivory)" }}
       >
         Directed by Showrunner · soundtrack composed by Lyria

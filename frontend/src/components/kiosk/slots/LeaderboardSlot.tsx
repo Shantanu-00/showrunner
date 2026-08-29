@@ -34,7 +34,7 @@ export function LeaderboardSlot({ eventId, slot }: { eventId: string; slot: Lead
                 <span className="font-mono text-lg w-8 text-right" style={{ color: "var(--ink-muted)" }}>
                   {i + 1}
                 </span>
-                <span className="font-[var(--font-display)] text-2xl" style={{ color: "var(--ivory)" }}>
+                <span className="font-[family-name:var(--font-display)] text-2xl" style={{ color: "var(--ivory)" }}>
                   {name ?? "Mystery guest 🎭"}
                 </span>
                 <span className="font-mono tabular-nums text-xl" style={{ color: "var(--accent)" }}>

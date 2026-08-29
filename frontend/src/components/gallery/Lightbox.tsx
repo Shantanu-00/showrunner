@@ -53,7 +53,7 @@ export function Lightbox({
 
       {media.curator?.caption && (
         <p
-          className="text-center px-6 pb-2 font-[var(--font-display)] italic text-lg"
+          className="text-center px-6 pb-2 font-[family-name:var(--font-display)] italic text-lg"
           style={{ color: "var(--ivory)" }}
         >
           {media.curator.caption}

@@ -30,7 +30,7 @@ export function JustInSlot({ eventId, slot }: { eventId: string; slot: JustInSlo
 
       <div className="absolute inset-0 flex items-center justify-center px-[8%]">
         <p
-          className="font-[var(--font-display)] text-5xl text-center"
+          className="font-[family-name:var(--font-display)] text-5xl text-center"
           style={{ color: "var(--ivory)" }}
         >
           Just in

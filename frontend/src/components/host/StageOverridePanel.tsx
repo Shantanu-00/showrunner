@@ -37,7 +37,7 @@ export function StageOverridePanel({
 
   return (
     <section className="mb-8">
-      <p className="font-[var(--font-display)] text-lg mb-3" style={{ color: "var(--ivory)" }}>
+      <p className="font-[family-name:var(--font-display)] text-lg mb-3" style={{ color: "var(--ivory)" }}>
         Now: ▶ stage
       </p>
       <div className="flex flex-wrap gap-2">

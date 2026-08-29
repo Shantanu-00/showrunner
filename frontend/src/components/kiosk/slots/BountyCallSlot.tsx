@@ -24,7 +24,7 @@ export function BountyCallSlot({ eventId, slot }: { eventId: string; slot: Bount
         THE DIRECTOR NEEDS
       </p>
       <p
-        className="font-[var(--font-display)] mb-6"
+        className="font-[family-name:var(--font-display)] mb-6"
         style={{ color: "var(--ivory)", fontSize: "min(8vw, 61px)" }}
       >
         {bounty?.title ?? "the next great shot"}

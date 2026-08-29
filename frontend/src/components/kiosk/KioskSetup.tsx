@@ -47,7 +47,7 @@ export function KioskSetup({
       className="fixed inset-0 flex flex-col items-center justify-center px-8 text-center"
       style={{ background: "var(--bg-0)" }}
     >
-      <p className="font-[var(--font-display)] text-4xl mb-2" style={{ color: "var(--ivory)" }}>
+      <p className="font-[family-name:var(--font-display)] text-4xl mb-2" style={{ color: "var(--ivory)" }}>
         {eventInfo?.name ?? "Showrunner"}
       </p>
       <p className="text-sm mb-10" style={{ color: eventInfo ? "var(--ok)" : "var(--warn)" }}>
