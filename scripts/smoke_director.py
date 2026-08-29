@@ -510,10 +510,15 @@ def seed_event(event_id: str) -> tuple[dict[str, Any], str]:
             "displayName": "Aarav (groom)",
             "tier": 0,
             "hostEnrolled": True,
-            "uidLinks": [],
+            # Host-declared people are approved by construction (S15) — the flag `workers/face` reads
+            # before it auto-links a face to anyone.
+            "claimApproved": True,
             "createdAt": now,
         }
     )
+    # `uidLinks` sits in the deny-all `private/` subcollection, not on the member-readable person
+    # document (schemas/person.py::PersonPrivate).
+    fs.person_private_ref(event_id, person_id).set({"uidLinks": []})
     return fs.get_event(event_id) or {}, person_id
 
 

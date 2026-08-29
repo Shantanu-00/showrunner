@@ -144,15 +144,18 @@ def seed_vip(event_id: str, embedding: list[float], display_name: str) -> str:
         {
             "personId": person_id,
             "displayName": display_name,
-            "uidLinks": [],
             "tier": int(Tier.NAMED_VIP),
             "hostEnrolled": False,
+            # A person the host put there is approved by construction — `workers/face` refuses to
+            # auto-link faces to an unapproved person, so a seeded VIP without this flag would never
+            # accrete an album at all (S15).
+            "claimApproved": True,
             "featured": False,
             "consent": {"selfieEnrolled": True, "enrolledAt": now, "retentionNoticeShown": True},
-            "tasteProfile": {},
             "createdAt": now,
         }
     )
+    fs.person_private_ref(event_id, person_id).set({"uidLinks": [], "tasteProfile": {}})
     return person_id
 
 
@@ -227,27 +230,77 @@ def main() -> int:
     ok(f"stages.faces=done, {len(faces)} face(s) indexed (unclaimed clusters: "
        f"{[f.get('clusterId') for f in faces]})")
 
-    # ---- 2. selfie enrollment on the same face — the ordinary path (spec 02 §3.1)
+    # ---- 2. selfie enrollment on the same face — held, then approved (spec 02 §3.1)
+    #
+    # No enrollment links anything on its own any more, whatever the face count: the host approves
+    # every album (S15, `api/identity.py`'s module docstring), because "this claim is small so it is
+    # probably honest" is exactly the assumption that let an anonymous visitor enroll with a photo of
+    # a tier-3 guest and receive her album. So the criterion this step proves is now two-legged:
+    # enrollment holds and grants nothing, and *approval* is what fills the album.
     enroll_token, enroll_uid = sign_in_anonymously(api_key)
     body = enroll(api, enroll_token, event_id, selfie_b64, "Smoke Guest")
-    if body["outcome"] != "linked":
-        fail(f"expected outcome=linked for a low face-count claim, got {body!r}")
+    if body["outcome"] != "held_for_review":
+        fail(f"expected outcome=held_for_review — no enrollment self-grants, got {body!r}")
     person_id = body["personId"]
-    ok(
-        f"enrolled personId={person_id} claimedFaces={body['claimedFaces']} "
-        f"topSimilarity={body['topSimilarity']:.3f}"
+    audit_id = body["claimId"]
+    ok(f"enrolled personId={person_id} held as claim {audit_id} "
+       f"topSimilarity={body['topSimilarity']:.3f}")
+
+    audit = fs.claim_audit_ref(event_id, audit_id).get().to_dict() or {}
+    if audit.get("status") != "held" or audit.get("method") != "enroll":
+        fail(f"claimAudits/{audit_id} = {audit} — expected status=held method=enroll")
+    if not audit.get("faceIds"):
+        fail(f"claimAudits/{audit_id} carries no faceIds — approval could not replay the link")
+    ok(f"claimAudits entry held with faceIds for {len(audit['faceIds'])} media")
+
+    pre = fs.media_ref(event_id, media_id).get().to_dict() or {}
+    if person_id in (pre.get("albumOf") or []):
+        fail(f"albumOf={pre.get('albumOf')} already contains {person_id} — a held claim linked faces")
+    ok("no face linked while the claim is held — the hold is real, not cosmetic")
+
+    # The review queue the host console reads, and the endpoint that makes a hold resolvable.
+    host_token = mint_host_token(event_id, api_key)
+    queue = requests.get(
+        f"{api}/v1/events/{event_id}/claims",
+        headers={"Authorization": f"Bearer {host_token}"},
+        timeout=30,
     )
+    if queue.status_code != 200:
+        fail(f"GET /claims failed ({queue.status_code}): {queue.text[:400]}")
+    cards = {c["claimId"]: c for c in queue.json().get("claims") or []}
+    if audit_id not in cards:
+        fail(f"held claim {audit_id} is not in the host's review queue: {list(cards)}")
+    card = cards[audit_id]
+    if not str(card.get("selfieUrl") or "").endswith(f"/claims/{audit_id}/selfie"):
+        fail(f"review card carries no fetchable selfie URL: {card!r}")
+    ok(f"review queue shows the claim: holdReason={card['holdReason']} "
+       f"exemplars={len(card['exemplars'])} selfieUrl set")
+
+    approved = requests.post(
+        f"{api}/v1/events/{event_id}/claims/{audit_id}/review",
+        headers={"Authorization": f"Bearer {host_token}"},
+        json={"decision": "approve"},
+        timeout=30,
+    )
+    if approved.status_code != 200:
+        fail(f"host review failed ({approved.status_code}): {approved.text[:400]}")
+    ok(f"host approved claim {audit_id}: linkedFaces={approved.json()['linkedFaces']}")
 
     refreshed = fs.media_ref(event_id, media_id).get().to_dict() or {}
     if person_id not in (refreshed.get("albumOf") or []):
         fail(f"albumOf={refreshed.get('albumOf')} does not contain {person_id} — album did not fill")
-    ok(f"albumOf={refreshed.get('albumOf')} — selfie enrollment filled the album")
+    ok(f"albumOf={refreshed.get('albumOf')} — host approval filled the album")
 
-    audit_id = body["claimId"]
-    audit = fs.claim_audit_ref(event_id, audit_id).get().to_dict() or {}
-    if audit.get("status") != "applied" or audit.get("method") != "enroll":
-        fail(f"claimAudits/{audit_id} = {audit} — expected status=applied method=enroll")
-    ok("claimAudits entry recorded for the applied claim")
+    person = fs.person_ref(event_id, person_id).get().to_dict() or {}
+    # `uidLinks` moved into the deny-all `private/` subcollection with the event boundary (S15) — the
+    # person document stayed member-readable, and a uid↔human map is not something a member may read.
+    private = fs.person_private_ref(event_id, person_id).get().to_dict() or {}
+    if not person.get("claimApproved") or enroll_uid not in (private.get("uidLinks") or []):
+        fail(
+            f"people/{person_id} = {person} private={private} — expected claimApproved=True "
+            "and the enrolling uid linked"
+        )
+    ok("person marked claimApproved — worker-face may now auto-link their later photos")
 
     # ---- 3. the same face, matched against a seeded VIP — held for host review (spec 02 §3)
     #
@@ -289,7 +342,7 @@ def main() -> int:
         fail(f"unexpected review result: {review}")
     ok(f"host approved claim {claim_id} -> personId={vip_id}")
 
-    vip_doc = fs.person_ref(vip_event_id, vip_id).get().to_dict() or {}
+    vip_doc = fs.person_private_ref(vip_event_id, vip_id).get().to_dict() or {}
     if vip_uid not in (vip_doc.get("uidLinks") or []):
         fail(f"uidLinks={vip_doc.get('uidLinks')} does not contain the approved uid {vip_uid}")
     ok("VIP person's uidLinks now includes the approved guest uid — approval path fully wired")

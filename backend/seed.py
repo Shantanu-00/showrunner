@@ -38,11 +38,13 @@ sys.path.insert(0, str(SCRIPTS))
 import piexif  # noqa: E402
 import requests  # noqa: E402
 from PIL import Image  # noqa: E402
+from google.cloud import firestore  # noqa: E402
 
 import cast as cast_module  # noqa: E402
 import fixtures as fixtures_module  # noqa: E402
 import dev_event  # noqa: E402
 from schemas.event import DemoConfig, Event, EventClass, EventStatus, EventTemplateId  # noqa: E402
+from schemas.identity import ClaimStatus  # noqa: E402
 from schemas.event import EventTypeProfile, SensitivityProfile, VipTopology  # noqa: E402
 from schemas.person import Tier  # noqa: E402
 from shared import coverage, fs, internal as face_internal  # noqa: E402
@@ -205,15 +207,21 @@ def seed_person(
         {
             "personId": person_id,
             "displayName": display_name,
-            "uidLinks": [],
             "tier": int(tier),
             "hostEnrolled": host_enrolled,
+            # The host declared this person, so the approval the self-enrollment path waits for has
+            # already happened. Without it `workers/face` would refuse to auto-link any face to the
+            # seeded cast (that gate is what stops a *pending* enrollment accreting an album), and the
+            # judge event would show a wall of unclaimed clusters.
+            "claimApproved": True,
             "featured": False,
             "consent": {"selfieEnrolled": True, "enrolledAt": now, "retentionNoticeShown": True},
-            "tasteProfile": {},
             "createdAt": now,
         }
     )
+    # `uidLinks` and `tasteProfile` live one level down, in the deny-all `private/` subcollection —
+    # the person document is member-readable and a uid↔human map is not (schemas/person.py).
+    fs.person_private_ref(event_id, person_id).set({"uidLinks": [], "tasteProfile": {}})
     return person_id
 
 
@@ -258,11 +266,38 @@ def selfie_b64(path: Path) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def approve_seeded_enrollment(event_id: str, person_id: str) -> None:
+    """Play the host for a cast member who enrolled through the real `/people` endpoint.
+
+    Enrollment holds every claim for host approval now (spec 02 §3, `api/identity.py`), which is the
+    point — but a seeded guest left pending would never get an album, because `worker-face` refuses to
+    auto-link faces to an unapproved person. The console's approve button performs exactly these two
+    writes, and the seeder *is* the host of the event it just created, so doing them here is the same
+    act rather than a bypass. No face links to replay either way: the cast enrols before a single
+    fixture has been uploaded, so the album fills the ordinary way, one indexed photo at a time.
+    """
+    fs.person_ref(event_id, person_id).update({"claimApproved": True})
+    query = fs.claim_audits_col(event_id).where(
+        filter=firestore.FieldFilter("personId", "==", person_id)
+    )
+    for snap in query.stream():
+        if (snap.to_dict() or {}).get("status") == ClaimStatus.HELD.value:
+            snap.reference.update(
+                {
+                    "status": ClaimStatus.APPROVED.value,
+                    "reviewedBy": "seed",
+                    "reviewedAt": fs.SERVER_TIMESTAMP,
+                }
+            )
+
+
 def enroll_cast(api: str, api_key: str, event_id: str, members: list[cast_module.CastMember]) -> list[dict[str, Any]]:
     enrolled = []
     for member in members:
         if member.tier == "guest":
             person_id = enroll_self(api, api_key, event_id, selfie_b64(member.photo), member.displayName)
+            if person_id:
+                approve_seeded_enrollment(event_id, person_id)
         else:
             try:
                 body = face_internal.embed_selfie(selfie_b64(member.photo), max_faces=1, timeout_s=90.0)

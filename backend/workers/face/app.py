@@ -157,7 +157,17 @@ def _fuse_and_commit(
     """
     kept = detections[:MAX_FACES_PER_MEDIA]
     cfg = settings()
-    enrolled = faces_lib.enrolled_people(event_id)
+    # Only people whose album the host has approved. This is the same claim-integrity gate as the one
+    # in `api/identity.py`, seen from the other side, and it has to exist here too: this path matches
+    # at τ_match (0.45) — looser than τ_claim by design, because a face across a dark reception hall
+    # is not a selfie — with no protection check and no idea whether a claim is sitting in the review
+    # queue. Without the filter a pending enrollment would quietly accrete an album while the host had
+    # not yet said yes, so by the time they looked at the review card the photographs it links would
+    # already be in a stranger's private album. Host-seeded people carry `claimApproved: True`
+    # (`backend/seed.py`), so the judge event's cast is unaffected.
+    enrolled = [
+        person for person in faces_lib.enrolled_people(event_id) if person.get("claimApproved")
+    ]
 
     face_refs: list[dict[str, Any]] = []
     album: set[str] = set()
