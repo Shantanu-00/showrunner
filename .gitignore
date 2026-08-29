@@ -98,3 +98,4 @@ scripts/risk_tests/artifacts/
 # Regenerable by `make seed`; the durable record is the printed table + eval/artifacts/eval_report.json
 # committed nowhere (re-run to see current results).
 eval/artifacts/
+frontend/shots/
