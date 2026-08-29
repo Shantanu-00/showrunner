@@ -55,6 +55,7 @@ from shared.settings import (  # noqa: E402
     DEMO_INTERLEAVE_SECONDS,
     KIOSK_DIVERSITY_WINDOW,
     KIOSK_JUST_IN_WINDOW_SEC,
+    KIOSK_TAKEOVER_FRESH_MINUTES,
     settings,
 )
 from shared.ulid import new_ulid  # noqa: E402
@@ -223,6 +224,43 @@ def check_program() -> None:
     if types[:4] != ["reel", "bounty_call", "just_in", "hero"]:
         fail(f"program: takeover order is {types[:4]}, expected reel → bounty_call → just_in → hero")
     ok("takeovers lead: a reel premiere, then an escalated bounty, then the just-in strip")
+
+    # --- which bounty earns the screen, and for how long (S14)
+    #
+    # The bug this pins down is a *product* one that every individual spec clause got right: spec 05 §3
+    # escalates an unfulfilled bounty at half-life, spec 04 §4 gives an escalated one the whole screen,
+    # and neither says when that claim lapses. On an event where nobody submits — a real wedding always
+    # has someone, the judge event hours apart has nobody — escalate → expire → reissue owns the wall
+    # forever. Observed on `dev_demo`: 12 of 16 bounties ended with `kioskTakeover: true`.
+    fresh_at = now - dt.timedelta(minutes=2)
+    stale_at = now - dt.timedelta(minutes=KIOSK_TAKEOVER_FRESH_MINUTES + 5)
+
+    if program.pick_takeover([{"bountyId": "B1", "status": "escalated", "escalatedAt": fresh_at}], now) != "B1":
+        fail("takeover: a bounty escalated two minutes ago did not win the screen")
+    if program.pick_takeover([{"bountyId": "B1", "status": "escalated", "escalatedAt": stale_at}], now) is not None:
+        fail(
+            f"takeover: a bounty escalated {KIOSK_TAKEOVER_FRESH_MINUTES + 5} minutes ago still owns "
+            "the wall — this is the permanently-nagging kiosk"
+        )
+    if program.pick_takeover([{"bountyId": "B1", "status": "active", "createdAt": fresh_at}], now) is not None:
+        fail("takeover: an ordinary active bounty took the screen — it is already a banner in every pocket")
+    if program.pick_takeover([{"bountyId": "B1", "kioskTakeover": True, "createdAt": fresh_at}], now) != "B1":
+        fail("takeover: an explicit kioskTakeover request was ignored")
+    if program.pick_takeover([{"bountyId": "B1", "status": "escalated"}], now) is not None:
+        fail("takeover: a bounty with no timestamp was treated as fresh — stale is the safe default")
+    newest = program.pick_takeover(
+        [
+            {"bountyId": "OLD", "status": "escalated", "escalatedAt": now - dt.timedelta(minutes=8)},
+            {"bountyId": "NEW", "status": "escalated", "escalatedAt": fresh_at},
+        ],
+        now,
+    )
+    if newest != "NEW":
+        fail(f"takeover: picked {newest}, expected the most recently escalated of two fresh bounties")
+    ok(
+        f"takeover: escalated-and-fresh wins, stale (>{KIOSK_TAKEOVER_FRESH_MINUTES}m) steps aside, "
+        "active never takes over, undated treated as stale"
+    )
 
     stale = program.build(
         [_candidate("a", aesthetic=0.9, age_min=30, keys={"face:a"}, now=now)], now=now

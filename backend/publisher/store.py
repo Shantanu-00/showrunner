@@ -180,24 +180,27 @@ def candidates(event_id: str) -> list[program.Candidate]:
     return [to_candidate(doc, tiers) for doc in docs.values()]
 
 
-def takeover_bounty(event_id: str) -> str | None:
+def takeover_bounty(event_id: str, *, now: dt.datetime | None = None) -> str | None:
     """The bounty that has earned the whole screen (spec 04 §4's `bounty_call`).
 
-    Only an *escalated* one: an ordinary active bounty is already a banner in every guest's pocket
-    and a line on the wall's ledger, and escalation is precisely the Story Director saying that was
-    not enough (spec 05 §3). `kioskTakeover` is accepted as an explicit alternative so S8b can
-    request the slot without overloading `status`.
+    Reads the documents; `program.pick_takeover` decides. The split is the same one the rest of this
+    pair keeps — `store.py` does I/O, `program.py` is pure and therefore checkable by
+    `scripts/smoke_autonomy.py --program-only` with no network. The freshness rule that lives there is
+    what stops an unfulfilled bounty from owning the wall indefinitely on a quiet event.
     """
-    best: tuple[dt.datetime, str] | None = None
+    rows: list[dict[str, Any]] = []
     for snap in bounty_query(event_id).stream():
         doc = snap.to_dict() or {}
-        if doc.get("status") != "escalated" and not doc.get("kioskTakeover"):
-            continue
-        at = _as_datetime(doc.get("escalatedAt")) or _as_datetime(doc.get("createdAt"))
-        stamp = at or dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-        if best is None or stamp > best[0]:
-            best = (stamp, snap.id)
-    return best[1] if best else None
+        rows.append(
+            {
+                "bountyId": snap.id,
+                "status": doc.get("status"),
+                "kioskTakeover": doc.get("kioskTakeover"),
+                "escalatedAt": _as_datetime(doc.get("escalatedAt")),
+                "createdAt": _as_datetime(doc.get("createdAt")),
+            }
+        )
+    return program.pick_takeover(rows, now or dt.datetime.now(dt.timezone.utc))
 
 
 def premiere_reel(event_id: str, already_premiered: Iterable[str]) -> str | None:

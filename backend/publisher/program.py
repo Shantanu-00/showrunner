@@ -42,6 +42,7 @@ from shared.settings import (
     KIOSK_STAGE_MATCH_ACTIVE,
     KIOSK_STAGE_MATCH_OTHER,
     KIOSK_STAGE_MATCH_PREVIOUS,
+    KIOSK_TAKEOVER_FRESH_MINUTES,
     VIP_WEIGHT_BY_TIER,
 )
 
@@ -299,6 +300,38 @@ def build(
         hero_count=len(heroes),
         fingerprint=fingerprint(slots, active_stage_id, theme),
     )
+
+
+def pick_takeover(bounties: list[dict[str, Any]], now: dt.datetime) -> str | None:
+    """Which bounty, if any, has earned the whole screen right now. Pure — `store.takeover_bounty`
+    fetches the documents and delegates here, so the rule is checkable with no Firestore.
+
+    Two conditions, and the second one is new (S14). A bounty must have *asked* for the screen —
+    `status == 'escalated'`, or an explicit `kioskTakeover`, never an ordinary `active` one, which is
+    already a banner in every guest's pocket. And its escalation must still be **fresh**: spec 05 §3
+    escalates at half-life and spec 04 §4 hands over the lead slot, but nothing said when that claim
+    lapses, so on an event where nobody submits the escalate → expire → reissue cycle owns the wall
+    forever. See `KIOSK_TAKEOVER_FRESH_MINUTES` for the measurement that prompted this.
+
+    A bounty with no timestamp at all is treated as stale rather than fresh: the only way to get here
+    is a hand-seeded document, and the failure that matters is a poster stuck on a five-metre screen,
+    not a poster that never appears.
+    """
+    best: tuple[dt.datetime, str] | None = None
+    for doc in bounties:
+        if doc.get("status") != "escalated" and not doc.get("kioskTakeover"):
+            continue
+        at = doc.get("escalatedAt") or doc.get("createdAt")
+        if not isinstance(at, dt.datetime):
+            continue
+        if (now - at).total_seconds() > KIOSK_TAKEOVER_FRESH_MINUTES * 60:
+            continue
+        bounty_id = doc.get("bountyId")
+        if not bounty_id:
+            continue
+        if best is None or at > best[0]:
+            best = (at, str(bounty_id))
+    return best[1] if best else None
 
 
 def _just_in() -> dict[str, Any]:
