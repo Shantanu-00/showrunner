@@ -337,6 +337,31 @@ async def revoke_host_link(
     )
 
 
+def _revoke_recovery_links(event_id: str) -> int:
+    """Revoke every still-active recovery link for this event; returns how many.
+
+    One equality filter, then `recovery` sifted in Python. Two equality filters would be the natural
+    query and it is deliberately not written that way: Firestore's need for a composite index across
+    two fields is version- and shape-dependent, and a query that starts failing with
+    FAILED_PRECONDITION the first time this runs is not a thing to discover on demo day. There are a
+    handful of links per event, so the filter is free.
+
+    Shared by the self-service and platform-admin regeneration endpoints below — both need the exact
+    same "kill every prior recovery code" step, and a link-revocation bug should have one home.
+    """
+    superseded = 0
+    query = fs.db().collection("hostLinks").where(
+        filter=firestore.FieldFilter("eventId", "==", event_id)
+    )
+    for snap in query.stream():
+        doc = snap.to_dict() or {}
+        if not doc.get("recovery") or doc.get("revoked"):
+            continue
+        snap.reference.update({"revoked": True, "revokedAt": fs.SERVER_TIMESTAMP})
+        superseded += 1
+    return superseded
+
+
 @router.post("/recovery-code", response_model=RecoveryCodeResponse)
 async def regenerate_recovery_code(
     eventId: str = Path(min_length=1, max_length=128), principal: Principal = Depends(caller)
@@ -351,31 +376,64 @@ async def regenerate_recovery_code(
     The previous recovery code is revoked in the same call rather than left alive. Two valid recovery
     codes for one event is a strictly worse security posture than one, and a host who regenerates has
     by definition lost the old one.
+
+    Requires a live `hosts` claim — a host who has lost every device that ever held one cannot reach
+    this endpoint at all, which is exactly the case `admin_regenerate_recovery_code` below exists for.
     """
     _require_host(principal, eventId)
     _event_or_404(eventId)
 
-    # One equality filter, then `recovery` sifted in Python. Two equality filters would be the natural
-    # query and it is deliberately not written that way: Firestore's need for a composite index across
-    # two fields is version- and shape-dependent, and a query that starts failing with
-    # FAILED_PRECONDITION the first time a host presses this button is not a thing to discover on demo
-    # day. There are a handful of links per event, so the filter is free.
-    superseded = 0
-    query = fs.db().collection("hostLinks").where(
-        filter=firestore.FieldFilter("eventId", "==", eventId)
-    )
-    for snap in query.stream():
-        doc = snap.to_dict() or {}
-        if not doc.get("recovery") or doc.get("revoked"):
-            continue
-        snap.reference.update({"revoked": True, "revokedAt": fs.SERVER_TIMESTAMP})
-        superseded += 1
-
+    superseded = _revoke_recovery_links(eventId)
     _url, code, expires_at = _mint_host_link(
         eventId, ttl_days=_RECOVERY_CODE_TTL_DAYS, recovery=True
     )
     log.info(
         "recovery_code_regenerated", event_id=eventId, host=principal.uid, superseded=superseded
+    )
+    return RecoveryCodeResponse(
+        recoveryCode=code, expiresAt=expires_at, supersededCount=superseded
+    )
+
+
+@router.post("/admin/recovery-code", response_model=RecoveryCodeResponse)
+async def admin_regenerate_recovery_code(
+    eventId: str = Path(min_length=1, max_length=128), principal: Principal = Depends(caller)
+) -> RecoveryCodeResponse:
+    """The escape hatch for a host who has lost every device, and the recovery code with it.
+
+    `regenerate_recovery_code` above needs a live `hosts` claim, which is precisely what such a host
+    no longer has — there is otherwise no way back into an event that a claim, not a password,
+    protects. `platformAdmin` only, and deliberately **not** `_require_host`: a co-host of the event
+    is not enough, because the whole point is minting a credential nobody at the event can currently
+    produce.
+
+    Same hashed-code machinery and the same supersede-then-mint shape as the self-service endpoint —
+    `_revoke_recovery_links` is the one difference-free step, so a link-revocation fix lands in both
+    places at once. The one thing this path adds is the `ops/` alert: an admin minting a host
+    credential for someone else's event is exactly the kind of action that must be on the record,
+    whether or not the host who eventually receives the code asked for it themselves.
+    """
+    if not principal.platform_admin:
+        raise errors.forbidden("PLATFORM_ADMIN_ONLY", "this action requires the platform operator")
+    _event_or_404(eventId)
+
+    superseded = _revoke_recovery_links(eventId)
+    _url, code, expires_at = _mint_host_link(
+        eventId, ttl_days=_RECOVERY_CODE_TTL_DAYS, recovery=True
+    )
+    log.info(
+        "recovery_code_admin_regenerated",
+        event_id=eventId,
+        admin=principal.uid,
+        superseded=superseded,
+    )
+    fs.ops_alert(
+        eventId,
+        "recovery_code_admin_regenerated",
+        f"platform admin {principal.uid} minted a new host recovery code for this event",
+        severity="warning",
+        by=principal.uid,
+        supersededCount=superseded,
     )
     return RecoveryCodeResponse(
         recoveryCode=code, expiresAt=expires_at, supersededCount=superseded
