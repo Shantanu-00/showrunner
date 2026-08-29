@@ -701,8 +701,8 @@
             <li><a href="#section-4-2" class="toc-link sub">Deliberately Not Used</a></li>
           </ul>
         </li>
-        <li><a href="#section-5" class="toc-link">5. Pipeline Demo (Flight Deck)</a></li>
-        <li><a href="#section-6" class="toc-link">6. Review checklist</a></li>
+        <li><a href="#section-5" class="toc-link">5. How the demo shows the pipeline</a></li>
+        <li><a href="#section-6" class="toc-link">6. Known limits and open questions</a></li>
       </ul>
     </aside>
 
@@ -1069,10 +1069,10 @@ sequenceDiagram
 
       <!-- Section 5 -->
       <section id="section-5">
-        <h2>5. How the demo <em>shows</em> the pipeline (not console-tab roulette)</h2>
+        <h2>5. How the demo <em>shows</em> the pipeline</h2>
         <div class="narrative-box flightdeck">
           <p style="margin-bottom: 0;">
-            The centerpiece is the <strong>Flight Deck</strong> (<code>/host/flightdeck</code>, spec 10): a live page that renders <strong>this architecture diagram with real traffic flowing through it</strong> — each uploaded photo animates as a thumbnail chip moving Phone → Cloud Storage → Eventarc → intake → the three worker lanes → Firestore → kiosk, with per-stage live latencies, queue depths, Gemini token/cost tickers, and a director activity feed. It is driven entirely by the same Firestore <code>stages</code>/<code>stageTimings</code> fields the pipeline already writes, so it is truthful, reliable on camera, and free of console-login friction. GCP console shots (Cloud Run list, Observability trace DAG, Firestore mutating) then serve as 15-second <em>corroboration</em>, which the rules require — not as the narrative.
+            Spec 10's Flight Deck — a live page rendering this architecture diagram with real traffic animating through it — is <strong>cut</strong>: the video plan had already demoted it to a few seconds of narrative, so building it earned less than the sessions it would have cost. What corroborates the pipeline on camera instead is direct evidence from the platform itself: the Cloud Run services list (six services, one revision tag, all healthy), the Cloud Scheduler job detail page (<code>director-tick</code> / <code>director-tick-demo</code>, <em>Last run: Success</em>), Firestore console documents mutating in real time as a photo clears each stage, and a saved, event-filtered Logs Explorer query streaming the one-line-per-stage logs every worker writes. The <code>/judge</code> page's live next-tick countdown is the same evidence surfaced without a console login. None of this is staged UI — it is the same Firestore fields and GCP consoles a judge could open themselves.
           </p>
         </div>
       </section>
@@ -1081,31 +1081,26 @@ sequenceDiagram
 
       <!-- Section 6 -->
       <section id="section-6">
-        <h2>6. Review checklist (what to sanity-check when you read this)</h2>
+        <h2>6. Known limits and open questions</h2>
         <div class="checklist-card" id="reviewChecklist">
+          <p style="margin-top: 0;"><strong>Settled design positions:</strong> every arrow in §2 is push except Scheduler→SD, a deliberate control loop; the only writer of <code>visibility</code> is <code>recompute_visibility</code>, and no LLM ever gates exposure; Cloud Tasks is the single throttle point, not Pub/Sub fan-out; face identity runs on our own ONNX model plus Firestore vector search, never Gemini; kill switches are the event-status master switch, the <code>publicFrozen</code> panic button, and per-item veto.</p>
           <label class="checklist-item">
-            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
-            <span class="checklist-text">Every arrow in §2 is push except Scheduler→SD (deliberate control loop) — agreed?</span>
+            <span class="checklist-text"><strong>Directors on Agent Runtime vs. Cloud Run — settled 2026-08-28, not revisited since.</strong> The Story Director runs on Cloud Run, inside the Scheduler tick, not on Agent Runtime — the guardrails belong in the same process and transaction scope as the lease that serialises them. Agent Runtime stays in the stack only as an optional Memory Bank for the host's free-text preferences; there is no Agent Identity, Registry, or Observability anywhere in this build.</span>
           </label>
           <label class="checklist-item">
-            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
-            <span class="checklist-text">The only writer of <code>visibility</code> is <code>recompute_visibility</code>; LLMs never gate exposure — agreed?</span>
+            <span class="checklist-text">The Flight Deck (spec 10) is cut entirely — no code, no claim. §5 above names what corroborates the pipeline on camera instead.</span>
           </label>
           <label class="checklist-item">
-            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
-            <span class="checklist-text">Cloud Tasks as the single throttle point (not Pub/Sub fan-out) — agreed?</span>
+            <span class="checklist-text">Reel v2 supersession, collages, and the <code>main_character</code> persona (spec 06 §4–§5) are specced but not built.</span>
           </label>
           <label class="checklist-item">
-            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
-            <span class="checklist-text">Directors on Agent Runtime (identity/registry/memory/observability for free) vs everything-on-Cloud-Run — agreed?</span>
+            <span class="checklist-text">Spec 11's public-event abuse hardening — the 60-minute auto-wrap TTL and the $3 cost ceiling — is configured as a constant but has no enforcing code path yet; only the concurrent-event cap and kill switch are live.</span>
           </label>
           <label class="checklist-item">
-            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
-            <span class="checklist-text">Face identity in our ONNX model + Firestore, never Gemini — agreed?</span>
+            <span class="checklist-text">InsightFace's <code>buffalo_l</code> weights are licensed for non-commercial research (fine for this hackathon); the documented production swap is AuraFace or OpenCV SFace.</span>
           </label>
           <label class="checklist-item">
-            <input type="checkbox" class="checklist-checkbox" onchange="toggleCheck(this)" />
-            <span class="checklist-text">Kill switches: event.status master switch + publicFrozen panic + per-item yank — sufficient?</span>
+            <span class="checklist-text"><code>deploy/judge-mode.sh</code> (the judging-month posture) is written and reviewed but not yet run against the live project — deliberately deferred to SHIP day.</span>
           </label>
         </div>
       </section>
