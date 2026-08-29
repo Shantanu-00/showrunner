@@ -83,6 +83,12 @@ PUBLISHER_RENEW_SECONDS = 45  # comfortably inside the TTL: two renewals may fai
 #: each invocation enqueues one Cloud Task at +30 s hitting the same endpoint. The effective demo
 #: cadence is 30 s and it is delivered server-side — a console loop reads as a button press.
 DEMO_INTERLEAVE_SECONDS = 30
+#: The production `director-tick` cadence, spec 09 §2 verbatim (`*/2 * * * *`), as seconds. Mirrored
+#: here so `GET /v1/events/{id}/public` can tell a client how long until the next tick is due without
+#: the client hardcoding a schedule it cannot see. **If `deploy/judge-mode.sh` re-schedules the job for
+#: the judging month, this is the value that has to move with it** — the countdown is honest only while
+#: the two agree, and a countdown that lies is worse than no countdown.
+PRODUCTION_TICK_SECONDS = 120
 
 # --- Story Director rails (spec 05) -----------------------------------------------------------
 #
@@ -163,6 +169,16 @@ KIOSK_STAGE_MATCH_OTHER = 0.2
 #: still letting a repeat win when the event genuinely has nothing else — a hard exclusion would
 #: empty the wall at a five-guest party.
 KIOSK_DIVERSITY_PENALTY = 0.35
+#: NOT spec-pinned. How recently a bounty must have been escalated to still deserve the whole screen
+#: (spec 04 §4's `bounty_call` takeover). Spec 05 §3 escalates an unfulfilled bounty at half-life and
+#: spec 04 §4 gives an escalated one the lead slot, and neither says when that claim expires — so on an
+#: event where nobody submits, the escalate → expire → reissue cycle holds the wall indefinitely.
+#: Measured on `dev_demo`: 12 of 16 bounties ended with `kioskTakeover: true`. On a real wedding a
+#: submission breaks the loop; on the judge event, where visitors arrive hours apart, nothing does.
+#: 12 minutes is long enough that the takeover is unmissable and short enough that the wall goes back
+#: to photographs — the poster becomes punctuation instead of nagging. An escalated bounty that ages
+#: out still banners in every guest's pocket; it just stops owning the five-metre screen.
+KIOSK_TAKEOVER_FRESH_MINUTES = 12
 #: Spec 11 §3.3, verbatim: tier → kiosk hero-score multiplier, taken as the max across faces in
 #: frame. Deterministic metadata, never a model's opinion — VIP is policy, not memory (spec 11 §4).
 VIP_WEIGHT_BY_TIER = {0: 3.0, 1: 1.8, 2: 1.3, 3: 1.0}
@@ -176,6 +192,13 @@ DEFAULT_TIER = 3
 # aesthetic floor are what stop a reel from being a slideshow of the worst photographs at the event.
 REEL_MIN_SHOTS = 10  # spec 06 §2.3 verbatim ("shot count (10–24)")
 REEL_MAX_SHOTS = 24  # spec 06 §2.3 verbatim
+#: NOT spec-pinned. What the *prompt* asks for, as opposed to what the code enforces — and the gap
+#: between the two is the point. `REEL_MIN_SHOTS` stays exactly spec 06 §2.3's floor for the finished
+#: cut; but the linter drops near-duplicates *after* the model answers, so asking for the floor itself
+#: means any drop at all lands under it. Measured on `dev_demo`: a plan answering 12 shots routinely
+#: lost 3 to the near-duplicate rule and failed at 9. Three shots of headroom is the cheapest fix that
+#: does not touch a spec value or weaken the output contract.
+REEL_SHOT_REQUEST_MIN = REEL_MIN_SHOTS + 3
 REEL_CANDIDATE_CAP = 40  # spec 06 §3 step 1 verbatim ("cap 40")
 #: How many documents the SELECT query reads before diversity sampling cuts it to the cap. Wide
 #: enough that sampling has something to choose between, narrow enough to stay one page.
