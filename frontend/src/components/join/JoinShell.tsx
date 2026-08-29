@@ -15,6 +15,29 @@ import { AwardBurst } from "./AwardBurst";
 import { EventTab } from "@/components/gallery/EventTab";
 import { MeTab } from "@/components/me/MeTab";
 
+/** The three photos bundled for the `/judge` tour. Real JPEGs in `frontend/public/samples/`, fetched
+ * as blobs so they enter the pipeline byte-identically to a phone upload — same signed PUT, same
+ * intake, same Curator. They carry no EXIF capture time, which is itself honest: `intake` falls back
+ * to arrival time and `shared/pipeline.py` marks `exifMissing`, so the Curator's temporal prior goes
+ * flat at 0.5 exactly as it would for a stripped WhatsApp forward. */
+const SAMPLE_FILES = ["sample-1.jpg", "sample-2.jpg", "sample-3.jpg"];
+
+async function loadSampleFiles(): Promise<File[]> {
+  const loaded = await Promise.all(
+    SAMPLE_FILES.map(async (name) => {
+      try {
+        const res = await fetch(`/samples/${name}`);
+        if (!res.ok) return null;
+        const blob = await res.blob();
+        return new File([blob], name, { type: blob.type || "image/jpeg" });
+      } catch {
+        return null;
+      }
+    })
+  );
+  return loaded.filter((f): f is File => f !== null);
+}
+
 export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   const eventId = useRouteEventId("/join/", fallbackEventId);
   const [tab, setTab] = useState<JoinTab>("event");
@@ -43,6 +66,19 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
     setJudgeMode(params.get("judge") === "1");
     const requestedTab = params.get("tab"); // e.g. the /claim redemption landing on Me
     if (requestedTab === "me" || requestedTab === "event") setTab(requestedTab);
+
+    // `?samples=1` — the `/judge` tour's step 3 (spec 09 §4's "3 sample photos ready to upload").
+    // A desktop browser has no camera and a judge should not have to find three photos of their own,
+    // so the samples ship with the page and arrive here as ordinary `File`s. Deliberately routed
+    // through `setPendingFiles`, which is what the file input does: the SendSheet opens, the judge
+    // makes the *real* consent choice (moment C1), and the ordinary outbox/drain path carries them.
+    // Anything that skipped the send sheet would also skip the consent decision, which is the single
+    // most important thing this step exists to show.
+    if (params.get("samples") === "1") {
+      void loadSampleFiles().then((files) => {
+        if (files.length) setPendingFiles(files);
+      });
+    }
   }, []);
 
   // Spec 12 §3: `data-theme`/`data-stage` on <html> retune every open surface with a pure

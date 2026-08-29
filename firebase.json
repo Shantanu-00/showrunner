@@ -6,6 +6,7 @@
       { "source": "/join/**", "destination": "/join/pune_wedding_2026.html" },
       { "source": "/kiosk/**", "destination": "/kiosk/pune_wedding_2026.html" },
       { "source": "/events/**/claim", "destination": "/events/pune_wedding_2026/claim.html" },
+      { "source": "/judge", "destination": "/judge.html" },
       { "source": "/host", "destination": "/host.html" },
       { "source": "/host/**", "destination": "/host/pune_wedding_2026.html" },
       { "source": "**", "destination": "/index.html" }

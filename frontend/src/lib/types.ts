@@ -190,6 +190,15 @@ export interface EventPublicInfo {
   uploadsOpen?: boolean;
   publicFrozen?: boolean;
   serverTime?: string;
+  /** The Story Director's heartbeat, for the `/judge` page's next-tick countdown. `ledger/` is
+   * host-only in `firestore.rules` and a judge is anonymous, so this is the read path HANDOFF §4.22
+   * prescribed instead of a rules exception. `cadenceSec` is derived **server-side** from
+   * `event.class` so the class itself never leaks to a guest. */
+  director?: {
+    lastTickAt: string | null;
+    tickCount: number;
+    cadenceSec: number;
+  };
 }
 
 // ---------------------------------------------------------------------------

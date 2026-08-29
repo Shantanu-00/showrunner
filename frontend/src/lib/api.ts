@@ -111,6 +111,28 @@ export async function getEventPublic(eventId: string): Promise<EventPublicInfo> 
   return authedJson<EventPublicInfo>(`/v1/events/${eventId}/public`, { method: "GET" });
 }
 
+/** GET /warmup — fire-and-forget from `/judge` (EXECUTION-PLAN §7e row 16). `worker-face` carries a
+ * 326 MB InsightFace model and cold-starts in ~30 s, which is the difference between a judge's first
+ * upload taking ~6 s and taking ~42 s. Deliberately unauthenticated and deliberately ignored: it
+ * takes no input, returns no data, and a failure must never be visible on the page. */
+export function warmup(): Promise<void> {
+  return fetch(`${API_URL}/warmup`, { method: "GET", keepalive: true }).then(
+    () => undefined,
+    () => undefined
+  );
+}
+
+/** POST /v1/events/{eventId}/demo/tick — the labelled manual override on `/judge`.
+ *
+ * Server-side this only ever runs on a `protected_demo` event and is rate-limited, because it spends
+ * a real `gemini-3.7-flash` call. It is NOT the autonomy story — the Cloud Scheduler cadence is, and
+ * EXECUTION-PLAN §7e row 11 is explicit that a judge pressing a button seconds before reading
+ * "without human intervention" is a rules-§4 contradiction. This exists only so a judge does not
+ * have to sit out a full interval during the judging month's slower cadence. */
+export async function forceDemoTick(eventId: string): Promise<{ ran: boolean; message?: string }> {
+  return authedJson(`/v1/events/${eventId}/demo/tick`, { method: "POST", body: "{}" });
+}
+
 /** POST /v1/events/{eventId}/people — selfie enrollment, consent moment C2 (spec 02 §3/§7).
  * Identity is granted server-side directly on the caller's own uid — the response carries no
  * usable token; call `refreshClaims()` after a `linked`/`held_for_review` outcome. */
