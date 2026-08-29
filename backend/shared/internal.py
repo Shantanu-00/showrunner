@@ -54,10 +54,20 @@ def _id_token_credentials(audience: str) -> google.auth.impersonated_credentials
     )
 
 
-def _bearer_for(audience: str) -> str:
+def bearer_for(audience: str) -> str:
+    """An ID token for one of our own private Cloud Run services, as `Authorization: Bearer`.
+
+    Public because `api`'s `/warmup` needs exactly this and nothing else around it — it pokes the
+    three hot-path workers' `/livez` rather than calling a real endpoint, so it wants the token
+    mechanism without `embed_selfie`'s error semantics.
+    """
     creds = _id_token_credentials(audience)
     creds.refresh(google.auth.transport.requests.Request())
     return creds.token
+
+
+#: Retained so the two callers below read as they always did.
+_bearer_for = bearer_for
 
 
 def embed_selfie(image_b64: str, *, max_faces: int = 1, timeout_s: float = 20.0) -> dict:

@@ -14,17 +14,19 @@ import datetime as dt
 
 import os
 
+import requests
 from fastapi import Depends, FastAPI, Path
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from schemas.event import EventStatus, UPLOAD_OPEN_STATUSES
-from shared import fs, log
+from schemas.event import EventClass, EventStatus, UPLOAD_OPEN_STATUSES
+from shared import fs, internal, log
 from shared.auth import Principal, caller
-from shared.settings import settings
+from shared.settings import DEMO_INTERLEAVE_SECONDS, PRODUCTION_TICK_SECONDS, settings
 
 from .host import create_router as host_create_router, router as host_router
 from .identity import claim_router, router as identity_router
-from .internal import router as internal_router
+from .internal import demo_router, router as internal_router
 from .media import router as media_router
 from .moderation import router as moderation_router
 from .reels import router as reels_router
@@ -57,11 +59,91 @@ app.include_router(reels_router)
 # Cloud Scheduler's target (spec 09 §2). Not under /v1: it is infrastructure calling infrastructure,
 # and it authenticates its caller itself because `api` is the one service deployed public.
 app.include_router(internal_router)
+# The `/judge` page's labelled manual override. Under /v1 and guest-authenticated, unlike the
+# Scheduler's own endpoint above — but scoped to `class=='protected_demo'` and rate-limited, so it can
+# never touch a real event (backend/api/internal.py::force_demo_tick).
+app.include_router(demo_router)
 
 
 @app.get("/livez")
 async def livez() -> dict[str, str]:
     return {"status": "ok", "service": "api", "environment": settings().environment}
+
+
+#: Which private services `/warmup` pokes, and why only these three. `worker-face` is the whole point
+#: — a 326 MB InsightFace model, ~29.6 s cold, measured. Curate and safety are 2–5 s each but they are
+#: the two Gemini stages on the same photo, so warming them is what turns a judge's measured
+#: first-upload latency from ~42 s into ~6 s. `intake` is deliberately absent: it has no URL in
+#: settings (it is an Eventarc target, not a Tasks target) and adding one to the deploy for a 2 s cold
+#: start is not worth a change to `up.sh`.
+_WARMUP_TARGETS = ("face_url", "curate_url", "safety_url")
+
+
+@app.get("/warmup")
+async def warmup() -> dict[str, object]:
+    """Pre-warm the hot path. Called fire-and-forget by `/judge` on page load (§7e row 16).
+
+    Unauthenticated on purpose: it takes no input, returns no data about anything, and the worst a
+    caller can do is make three containers that are already billed-when-running start slightly
+    earlier. It is also entirely best-effort — a failure here is invisible to the judge by design,
+    because the alternative (a page that reports a warm-up error) is strictly worse than a page that
+    is 30 seconds slower.
+
+    Latency is scored: the judging call was explicit that a cold start becomes a problem *"if that
+    makes the user experience not so good."* This is the cheap half of the fix; `worker-face`
+    min-instances=1 (~$15/mo) is the fallback if it proves insufficient.
+    """
+    cfg = settings()
+    woken: list[str] = []
+    for attr in _WARMUP_TARGETS:
+        url = getattr(cfg, attr, "")
+        if not url:
+            continue
+        try:
+            # Short timeout: the point is to *start* the container, not to wait for it. A cold
+            # worker-face will not answer inside 2 s and does not need to — the instance is already
+            # booting by the time we give up on the response.
+            await run_in_threadpool(_poke, url)
+            woken.append(attr.removesuffix("_url"))
+        except Exception:  # noqa: BLE001 - warming is advisory; never surface a failure
+            continue
+    return {"woken": woken}
+
+
+def _poke(url: str) -> None:
+    requests.get(
+        f"{url}/livez",
+        headers={"Authorization": f"Bearer {internal.bearer_for(url)}"},
+        timeout=2.0,
+    )
+
+
+def _director_block(event_id: str, event: dict[str, object]) -> dict[str, object]:
+    """The Story Director's heartbeat, as much of it as a guest may see.
+
+    Three fields and no more: when it last ran, how many times, and how often it is scheduled to run.
+    A judge can therefore watch a countdown that is derived from a real Firestore write made by a real
+    Cloud Scheduler invocation — which is the whole evidentiary point — without any surface being
+    opened onto `ledger/`, where the director's reasoning, its deferred ideas and its assessments live.
+
+    `cadenceSec` is the shorter of the two spec 09 §2 jobs when both cover this event. It is computed
+    here rather than read from `platform/tickPulse` because that document is global across every
+    event's mixed cadences and would be wrong the moment a demo event and a production event are both
+    ticking (the same reasoning `components/host/TickCountdown.tsx` already records).
+    """
+    demo = event.get("class") == EventClass.PROTECTED_DEMO.value
+    cadence = DEMO_INTERLEAVE_SECONDS if demo else PRODUCTION_TICK_SECONDS
+    last: object = None
+    count = 0
+    try:
+        snap = fs.director_state_ref(event_id).get()
+        if snap.exists:
+            doc = snap.to_dict() or {}
+            last = doc.get("lastTickAt")
+            count = int(doc.get("tickCount") or 0)
+    except Exception:  # noqa: BLE001 - a missing heartbeat renders as "no tick yet", never as an error
+        pass
+    return {"lastTickAt": last, "tickCount": count, "cadenceSec": cadence}
 
 
 @app.get("/v1/events/{eventId}/public")
@@ -75,13 +157,24 @@ async def event_public(
     Deliberately narrow: name, status, timezone, active stage, theme, a stage label list. No
     cost figures, no class, no demo flags, no stage timing/required moments, nothing that would
     leak platform or operational state to a guest.
+
+    The one addition (S14) is the `director` block, and it is here rather than in the security rules
+    on purpose. `/judge`'s next-tick countdown needs `ledger/directorState.lastTickAt`, which is
+    host-only in `firestore.rules` and must stay that way — HANDOFF §4.22 called for "a field on
+    `GET /v1/events/{id}/public`, not a rules exception," and this is it. Note what is *derived* rather
+    than forwarded: `cadenceSec` is computed from `event.class` here, so the client learns how fast
+    this event reconciles without learning which class it is. The block honours the paragraph above.
     """
-    event = fs.get_event(eventId)
+    # Both Firestore reads go through the threadpool. This is the endpoint every guest hits on load,
+    # served at concurrency 80 from the same process that takes upload requests and runs director
+    # ticks — a blocking read here stalls all of them (the discipline `api/internal.py` already keeps).
+    event = await run_in_threadpool(fs.get_event, eventId)
     if not event:
         return {"exists": False}
     status = event.get("status", EventStatus.DRAFT.value)
     stages = event.get("stages") or []
     return {
+        "director": await run_in_threadpool(_director_block, eventId, event),
         "exists": True,
         "eventId": eventId,
         "name": event.get("name"),
