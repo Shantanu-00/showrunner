@@ -97,12 +97,25 @@ def reset_event(event_id: str) -> None:
         fs.ops_col,
         fs.hashes_col,
         fs.bounties_col,
+        # `reels` belongs on this list for the same reason `hashes` does, and it was missing for the
+        # same kind of reason. A reel's `assetManifest` names the photographs it was cut from; wiping
+        # the media without wiping the reels leaves every published reel pointing at deleted documents,
+        # so spec 06 §7's consent interlock correctly retracts it on the next `recompute_visibility`.
+        # Found live this session: `dev_demo` had one fully-rendered, published reel sitting at
+        # `unpublished` with `failureReason: constituent 01M13N45… is no longer eligible` — a good film
+        # pulled off the wall by a reseed rather than by any guest's decision.
+        fs.reels_col,
     ):
         docs = list(collection(event_id).stream())
         for doc in docs:
             doc.reference.delete()
         if docs:
             log(f"reset: cleared {len(docs)} doc(s) from {collection(event_id).id}")
+
+    # And the wall itself, which holds `premieredReelIds` — a memory of the last 20 reels it has
+    # already premiered (spec 04 §4). Left behind, it would suppress the premiere of a freshly seeded
+    # reel that happens to reuse an id, and it advertises slots whose media no longer exists.
+    fs.kiosk_playlist_ref(event_id).delete()
 
     # The Story Director's state, for the same reason `hashes` is on that list: a reset that clears the
     # photographs but not the counters that counted them leaves the director reasoning about coverage
@@ -114,17 +127,34 @@ def reset_event(event_id: str) -> None:
     fs.director_state_ref(event_id).delete()
 
 
-def ensure_event(event_id: str, timezone: str) -> dict[str, Any]:
+def ensure_event(
+    event_id: str,
+    timezone: str,
+    *,
+    name: str = "Showrunner Eval/Demo Wedding",
+    event_class: EventClass = EventClass.INTERNAL_DEV,
+    public_floor: float | None = None,
+) -> dict[str, Any]:
     """Same shape as `scripts/dev_event.py`, at a stable id — re-anchored to `now` on every run
-    so a re-seed keeps its fixtures' relative capture offsets inside the current stage windows."""
+    so a re-seed keeps its fixtures' relative capture offsets inside the current stage windows.
+
+    `event_class` and `public_floor` are parameters so `scripts/seed_judge_event.py` can produce the
+    one `protected_demo` event without forking this file. That matters more than it looks: spec 09 §5
+    requires the seeded dataset to arrive through the real upload path ("never direct Firestore writes
+    — judges may check"), and this module *is* that path. A judge-specific copy would drift from it.
+
+    `public_floor` is the ordinary `Event.publicFloor` field, the one any host can set — deliberately
+    not a demo-only override. See `shared/visibility.py::public_floor` for why that distinction is a
+    trust decision rather than a refactor.
+    """
     tz = ZoneInfo(timezone)
     now = dt.datetime.now(dt.timezone.utc)
     event = Event(
         eventId=event_id,
-        name="Showrunner Eval/Demo Wedding",
+        name=name,
         timezone=timezone,
         status=EventStatus.LIVE,
-        **{"class": EventClass.INTERNAL_DEV},
+        **{"class": event_class},
         stages=dev_event.build_stages(now, tz),
         activeStage="sangeet",
         eventTypeProfile=EventTypeProfile(
@@ -133,9 +163,13 @@ def ensure_event(event_id: str, timezone: str) -> dict[str, Any]:
             sensitivityProfile=SensitivityProfile(),
             culturalGlossary=["haldi", "sangeet", "kanyadaan", "baraat", "mangalsutra"],
         ),
+        # `autoPromoteEnrollees` stays at its default `False` even on the judge event: it is the one
+        # demo flag that is a code branch no real host can trigger, and the seeded cast's tier-0/1
+        # people demonstrate `vipWeight` without putting that branch on a judge's own path.
         demoConfig=DemoConfig(enabled=True, compressedTimeline=True),
         createdAt=now,
         liveAt=now,
+        **({"publicFloor": public_floor} if public_floor is not None else {}),
     )
     payload = dev_event.firestore_ready(event.model_dump(by_alias=True))
     fs.event_ref(event_id).set(payload, merge=True)
@@ -267,9 +301,19 @@ def main() -> int:
     ap.add_argument("--skip-cast", action="store_true", help="upload fixtures only, reuse an existing cast")
     ap.add_argument("--no-reset", action="store_true", help="keep whatever is already on the event (default: wipe first)")
     ap.add_argument("--reset-only", action="store_true", help="wipe the event's people/media/ops and exit (make demo-reset)")
+    ap.add_argument("--event-id", default=None, help="exact event id (default: dev_{--event})")
+    ap.add_argument(
+        "--class",
+        dest="event_class",
+        default=EventClass.INTERNAL_DEV.value,
+        choices=[c.value for c in EventClass],
+        help="server-assigned event class (spec 11 §1.1 — never settable through the public API)",
+    )
+    ap.add_argument("--public-floor", type=float, default=None, help="Event.publicFloor (spec 04 §2)")
+    ap.add_argument("--name", default="Showrunner Eval/Demo Wedding")
     args = ap.parse_args()
 
-    event_id = f"dev_{args.event}"
+    event_id = args.event_id or f"dev_{args.event}"
 
     if args.reset_only:
         reset_event(event_id)
@@ -285,7 +329,13 @@ def main() -> int:
 
     if not args.no_reset:
         reset_event(event_id)
-    event = ensure_event(event_id, args.timezone)
+    event = ensure_event(
+        event_id,
+        args.timezone,
+        name=args.name,
+        event_class=EventClass(args.event_class),
+        public_floor=args.public_floor,
+    )
     tz = ZoneInfo(args.timezone)
     log(f"event {event_id} ready (status={event.get('status')}, class={event.get('class')})")
 
