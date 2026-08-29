@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Share2, EyeOff, Eye, Heart, Sparkles } from "lucide-react";
 import type { MediaDoc } from "@/lib/types";
 import { listenPrivateAlbum, listenReactions, setReaction, type Reaction } from "@/lib/firestore";
 import { ApiError, authedFetch, mediaRenderPath, setSubjectVeto } from "@/lib/api";
@@ -19,15 +20,12 @@ async function shareOrOpen(eventId: string, media: MediaDoc) {
       await navigator.share({ files: [file] });
       return;
     } catch {
-      // user cancelled or share-with-files unsupported — fall through to opening the image
+      // user cancelled
     }
   }
   window.open(URL.createObjectURL(blob), "_blank");
 }
 
-/** My Album (spec 04 §3, spec 12 §5.2): face-matched grid, lightbox actions = share/save +
- * subject veto (C4) — every photo here already contains the viewer's own face by construction
- * (that is what `albumOf` membership means), so the veto action is always eligible. */
 export function AlbumGrid({ eventId, personId }: { eventId: string; personId: string }) {
   const [items, setItems] = useState<MediaDoc[]>([]);
   const [selected, setSelected] = useState<MediaDoc | null>(null);
@@ -44,8 +42,6 @@ export function AlbumGrid({ eventId, personId }: { eventId: string; personId: st
   }, [eventId, personId]);
 
   function onLove(mediaId: string) {
-    // Optimistic and idempotent: a second tap un-loves. The Story Director never reads this — it
-    // only shapes this person's own album ordering and, every 15 reactions, a taste memo (spec 07).
     const next: Reaction | null = reactions[mediaId] === "love" ? null : "love";
     setReactions((prev) => {
       const copy = { ...prev };
@@ -75,15 +71,21 @@ export function AlbumGrid({ eventId, personId }: { eventId: string; personId: st
 
   if (items.length === 0) {
     return (
-      <p className="text-center mt-16 px-5" style={{ color: "var(--ink-muted)" }}>
-        Take a selfie and every photo of you finds its way here.
-      </p>
+      <div className="text-center mt-12 px-6 py-12 rounded-2xl glass-card mx-4 border border-dashed border-white/10">
+        <Sparkles className="w-8 h-8 text-[var(--accent)] mx-auto mb-2 opacity-60" />
+        <p className="font-[family-name:var(--font-display)] text-base text-[var(--ivory)] mb-1">
+          No matches found yet
+        </p>
+        <p className="text-xs text-[var(--ink-muted)] max-w-xs mx-auto">
+          As guests upload photos, any moment containing your face will automatically stream into this private album.
+        </p>
+      </div>
     );
   }
 
   return (
     <>
-      <div className="grid grid-cols-3 gap-1.5 px-3 mt-2">
+      <div className="grid grid-cols-3 gap-2 px-3 mt-2">
         {items.map((media) => (
           <AlbumThumb
             key={media.mediaId}
@@ -102,30 +104,39 @@ export function AlbumGrid({ eventId, personId }: { eventId: string; personId: st
           media={selected}
           onClose={() => setSelected(null)}
           actions={
-            <>
+            <div className="flex flex-wrap gap-2 justify-center">
               <button
                 type="button"
                 onClick={() => void shareOrOpen(eventId, selected)}
-                className="text-sm px-4 py-2 rounded-[var(--radius-pill)]"
-                style={{ border: "var(--hairline)", color: "var(--ivory)" }}
+                className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-full glass-card hover:border-[var(--accent)] text-[var(--ivory)] font-medium"
               >
-                📤 Share / save
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Share / Save</span>
               </button>
               <button
                 type="button"
                 disabled={vetoing}
                 onClick={() => void onVeto(selected, !selected.subjectVetoes.includes(personId))}
-                className="text-sm px-4 py-2 rounded-[var(--radius-pill)] disabled:opacity-50"
-                style={{ border: "var(--hairline)", color: "var(--danger)" }}
+                className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-full glass-card border border-[var(--danger)]/40 hover:border-[var(--danger)] text-[var(--danger)] font-medium disabled:opacity-50"
               >
-                {selected.subjectVetoes.includes(personId) ? "🙈 Unhide from public" : "🙈 Hide me from public"}
+                {selected.subjectVetoes.includes(personId) ? (
+                  <>
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Unhide from Public</span>
+                  </>
+                ) : (
+                  <>
+                    <EyeOff className="w-3.5 h-3.5" />
+                    <span>Hide Me from Public Wall</span>
+                  </>
+                )}
               </button>
               {vetoError && (
-                <p className="text-xs w-full text-center" style={{ color: "var(--danger)" }}>
+                <p className="text-xs w-full text-center text-[var(--danger)] mt-1">
                   {vetoError}
                 </p>
               )}
-            </>
+            </div>
           }
         />
       )}
@@ -148,11 +159,11 @@ function AlbumThumb({
 }) {
   const src = useAuthedImage(eventId, media.thumbUri ? media.mediaId : null, "thumb");
   return (
-    <div className="relative aspect-square rounded-[var(--radius-card)] overflow-hidden" style={{ border: "var(--hairline)" }}>
+    <div className="relative aspect-square rounded-2xl overflow-hidden glass-card shadow-md group">
       <button type="button" onClick={() => onSelect(media)} className="absolute inset-0">
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={src} alt="" className="w-full h-full object-cover" />
+          <img src={src} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
         ) : (
           <div className="w-full h-full skeleton-shimmer" />
         )}
@@ -163,11 +174,14 @@ function AlbumThumb({
           e.stopPropagation();
           onLove(media.mediaId);
         }}
-        aria-label={loved ? "Un-love this photo" : "Love this photo"}
-        className="absolute bottom-1 right-1 text-lg leading-none rounded-full w-7 h-7 flex items-center justify-center"
-        style={{ background: "rgba(10,10,10,0.55)" }}
+        aria-label={loved ? "Un-favorite this photo" : "Favorite this photo"}
+        className={`absolute bottom-2 right-2 p-1.5 rounded-full transition-all backdrop-blur-md ${
+          loved
+            ? "bg-rose-500 text-white shadow-lg scale-110"
+            : "bg-black/60 text-white/70 hover:text-white hover:bg-black/80"
+        }`}
       >
-        {loved ? "❤️" : "🤍"}
+        <Heart className={`w-3.5 h-3.5 ${loved ? "fill-current" : ""}`} />
       </button>
     </div>
   );

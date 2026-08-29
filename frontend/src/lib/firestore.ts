@@ -1,6 +1,20 @@
 // Live Firestore listeners — spec 04 §3's "all are live queries, zero polling" and spec 03 §2's
 // "no client ever polls". Every gallery/kiosk/album surface subscribes here; nothing in this
 // file ever calls getDocs() on a poll interval.
+//
+// **Every listener here now requires event membership, and not one filter changed to get it.** That is
+// the payoff of expressing membership as a custom claim (`members: [eventId, …]`, minted by
+// `POST /v1/events/{eventId}/join`) rather than as a field on a document: `isMember(eventId)` in
+// `firestore.rules` reads the token, so there is nothing for a query to filter on and nothing a client
+// could get subtly wrong. Contrast the `visibility`/`status` pair, which *is* document state and
+// therefore has to appear in every query below — a Firestore query whose filters do not guarantee the
+// read rule fails entirely, so those filters and the rules are one design.
+//
+// The consequence for callers is a sequencing rule, not a query rule: `lib/membership.ts`'s
+// `ensureMembership(eventId)` must have resolved before any subscribe below, because a listener opened
+// against a token that predates the claim is denied and does not retry. Every guest shell awaits it.
+// `rules-tests/run_matrix.py`'s `queries` group asserts each of these shapes across the boundary in
+// both directions.
 
 import {
   collection,
@@ -237,7 +251,14 @@ export function listenPerson(
 }
 
 /** The event's full people roster — small collection, used only for the deterministic
- * tier→vipWeight lookup behind Highlights ranking and the "Why this photo?" card. */
+ * tier→vipWeight lookup behind Highlights ranking and the "Why this photo?" card.
+ *
+ * This and `listenPeopleDirectory` below read *whole* person documents, which is why the person
+ * document must hold nothing but what a wall already shows. `uidLinks` (the uid↔person map) and spec
+ * 07 §2's `tasteProfile`/`tasteMemo` used to live here and now live in `people/{personId}/private/profile`,
+ * deny-all to every client — a rule cannot grant `displayName` and withhold the rest of a document, so
+ * the only way to keep them private was to move them. Nothing on this path changed as a result: neither
+ * listener ever read those fields, and `PersonDoc` never declared them. */
 export function listenPeopleTiers(
   eventId: string,
   onData: (tierByPersonId: Record<string, number>) => void,

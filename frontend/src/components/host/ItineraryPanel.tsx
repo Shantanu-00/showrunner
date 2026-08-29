@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Sparkles, Plus, Trash2, Calendar, Clock, AlertTriangle, Check, X, Tag } from "lucide-react";
 import { parseItinerary, saveStages } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
 import type { EventStageDoc, HostEventDoc, RequiredMoment } from "@/lib/hostTypes";
@@ -10,7 +11,7 @@ interface DraftStage {
   stageId: string;
   label: string;
   timeHint?: string;
-  startsAt: string; // <input type="datetime-local"> value, local time
+  startsAt: string;
   endsAt: string;
   requiredMoments: RequiredMoment[];
 }
@@ -30,10 +31,6 @@ function fromEventStage(s: EventStageDoc, i: number): DraftStage {
   };
 }
 
-/** Model Armor sanitize → Gemini structured parse → an editable, host-reviewed table (spec 08
- * §3.2). "An LLM parse of a WhatsApp itinerary forward is never silently authoritative" — the
- * model gives structure and a `timeHint`; only the host's own date/time pickers below produce
- * the real `startsAt`/`endsAt` the stage-fusion temporal prior (spec 03 §5.1) actually reads. */
 export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventId: string }) {
   const [raw, setRaw] = useState("");
   const [stages, setStages] = useState<DraftStage[]>(
@@ -81,7 +78,7 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
   function addStage() {
     setStages((prev) => [
       ...prev,
-      { key: `new-${Date.now()}`, stageId: "", label: "New stage", startsAt: "", endsAt: "", requiredMoments: [] },
+      { key: `new-${Date.now()}`, stageId: "", label: "New Stage Phase", startsAt: "", endsAt: "", requiredMoments: [] },
     ]);
   }
 
@@ -124,7 +121,7 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
       await saveStages(eventId, payload);
       setSavedAt(Date.now());
     } catch (err) {
-      setError(err instanceof ApiError ? `Couldn't save (${err.status}).` : "Something went wrong.");
+      setError(err instanceof ApiError ? `Couldn't save (${err.status}): ${err.message}` : "Something went wrong.");
     } finally {
       setSaving(false);
     }
@@ -133,141 +130,181 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
   const canEdit = event.status === "draft" || event.status === "live" || event.status === "paused";
 
   return (
-    <section className="mb-8">
-      <p className="font-[family-name:var(--font-display)] text-lg mb-3" style={{ color: "var(--ivory)" }}>
-        Timeline
-      </p>
+    <section className="mb-10 glass-card p-6 rounded-3xl border border-white/10 shadow-xl">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="font-[family-name:var(--font-display)] text-xl font-medium text-[var(--ivory)]">
+            Timeline & Stage Windows
+          </h3>
+          <p className="text-xs text-[var(--ink-muted)]">
+            Autonomous timeline graph for EXIF alignment, bounty triggers, and story reel generation.
+          </p>
+        </div>
+      </div>
 
       {canEdit && (
-        <>
+        <div className="mb-6 p-5 rounded-2xl bg-black/40 border border-white/5 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-semibold text-[var(--gold-300)]">
+            <Sparkles className="w-4 h-4" />
+            <span>AI Itinerary Parser (Gemini + Model Armor)</span>
+          </div>
           <textarea
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            placeholder="Paste the itinerary — WhatsApp forward, PDF text, anything…"
-            rows={4}
-            className="w-full mb-2 px-4 py-3 rounded-[var(--radius-card)] text-sm"
-            style={{ background: "var(--bg-1)", border: "var(--hairline)", color: "var(--ivory)" }}
+            placeholder="Paste raw schedule (WhatsApp forward, invitation timeline, run-of-show text)…"
+            rows={3}
+            className="w-full px-4 py-3 rounded-xl bg-black/50 border border-white/10 text-xs text-[var(--ivory)] placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
           />
           <button
             type="button"
             onClick={() => void handleParse()}
             disabled={parsing || !raw.trim()}
-            className="text-sm px-4 py-2 rounded-[var(--radius-pill)] mb-4"
-            style={{ border: "var(--hairline)", color: "var(--accent)", opacity: parsing ? 0.6 : 1 }}
+            className="btn-secondary px-4 py-2 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
           >
-            {parsing ? "The Curator is reading it…" : "Parse itinerary"}
+            <Sparkles className="w-3.5 h-3.5 text-[var(--accent)]" />
+            <span>{parsing ? "Extracting Structured Timeline…" : "Auto-Parse Itinerary"}</span>
           </button>
-        </>
+        </div>
       )}
 
       {warnings.length > 0 && (
-        <div className="mb-4 text-sm" style={{ color: "var(--warn)" }}>
+        <div className="mb-4 p-3 rounded-xl bg-[var(--warn)]/15 border border-[var(--warn)]/30 text-xs text-[var(--warn)] space-y-1">
           {warnings.map((w, i) => (
-            <p key={i}>⚠ {w}</p>
+            <div key={i} className="flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>{w}</span>
+            </div>
           ))}
         </div>
       )}
 
-      <div className="space-y-3 mb-4">
-        {stages.map((stage) => (
-          <div key={stage.key} className="rounded-[var(--radius-card)] p-4" style={{ border: "var(--hairline)" }}>
-            <div className="flex items-center gap-2 mb-2">
+      <div className="space-y-4 mb-6">
+        {stages.map((stage, idx) => (
+          <div key={stage.key} className="rounded-2xl p-5 glass-card bg-black/30 border border-white/10 hover:border-[var(--accent)] transition-all">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-6 h-6 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] flex items-center justify-center font-mono text-xs font-bold">
+                {idx + 1}
+              </div>
               <input
                 value={stage.label}
                 disabled={!canEdit}
                 onChange={(e) => updateStage(stage.key, { label: e.target.value })}
-                className="flex-1 font-[family-name:var(--font-display)] text-lg bg-transparent"
-                style={{ color: "var(--ivory)" }}
+                className="flex-1 font-[family-name:var(--font-display)] text-lg bg-transparent font-medium text-[var(--ivory)] border-b border-transparent hover:border-white/20 focus:border-[var(--accent)] focus:outline-none"
               />
               {stage.timeHint && (
-                <span className="text-xs shrink-0" style={{ color: "var(--ink-muted)" }}>
-                  as written: {stage.timeHint}
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-white/5 text-[var(--ink-muted)] shrink-0">
+                  Hint: {stage.timeHint}
                 </span>
               )}
               {canEdit && (
-                <button type="button" onClick={() => removeStage(stage.key)} style={{ color: "var(--ink-muted)" }}>
-                  ✕
+                <button
+                  type="button"
+                  onClick={() => removeStage(stage.key)}
+                  className="p-1.5 rounded-full hover:bg-white/10 text-[var(--ink-muted)] hover:text-[var(--danger)] transition-colors"
+                  aria-label="Remove stage"
+                >
+                  <Trash2 className="w-4 h-4" />
                 </button>
               )}
             </div>
 
-            <div className="flex gap-3 mb-3">
-              <label className="flex-1 text-xs" style={{ color: "var(--ink-muted)" }}>
-                Starts
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+              <label className="text-[11px] text-[var(--ink-muted)] font-medium">
+                <span className="flex items-center gap-1 mb-1">
+                  <Clock className="w-3 h-3 text-[var(--gold-300)]" />
+                  <span>Start Window</span>
+                </span>
                 <input
                   type="datetime-local"
                   value={stage.startsAt}
                   disabled={!canEdit}
                   onChange={(e) => updateStage(stage.key, { startsAt: e.target.value })}
-                  className="block w-full mt-1 px-2 py-1.5 rounded-[var(--radius-card)]"
-                  style={{ background: "var(--bg-1)", border: "var(--hairline)", color: "var(--ivory)" }}
+                  className="block w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-[var(--ivory)] focus:border-[var(--accent)] focus:outline-none"
                 />
               </label>
-              <label className="flex-1 text-xs" style={{ color: "var(--ink-muted)" }}>
-                Ends
+              <label className="text-[11px] text-[var(--ink-muted)] font-medium">
+                <span className="flex items-center gap-1 mb-1">
+                  <Clock className="w-3 h-3 text-[var(--gold-300)]" />
+                  <span>End Window</span>
+                </span>
                 <input
                   type="datetime-local"
                   value={stage.endsAt}
                   disabled={!canEdit}
                   onChange={(e) => updateStage(stage.key, { endsAt: e.target.value })}
-                  className="block w-full mt-1 px-2 py-1.5 rounded-[var(--radius-card)]"
-                  style={{ background: "var(--bg-1)", border: "var(--hairline)", color: "var(--ivory)" }}
+                  className="block w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-[var(--ivory)] focus:border-[var(--accent)] focus:outline-none"
                 />
               </label>
             </div>
 
-            <div className="flex flex-wrap gap-2 mb-2">
-              {stage.requiredMoments.map((m) => (
-                <span
-                  key={m.momentId}
-                  className="text-xs px-2 py-1 rounded-[var(--radius-pill)] flex items-center gap-1"
-                  style={{ background: "var(--bg-1)", color: "var(--ink-muted)" }}
-                >
-                  {m.label}
-                  {canEdit && (
-                    <button type="button" onClick={() => removeMoment(stage.key, m.momentId)}>
-                      ✕
-                    </button>
-                  )}
-                </span>
-              ))}
+            <div className="space-y-2 pt-2 border-t border-white/5">
+              <div className="flex items-center gap-1 text-[11px] text-[var(--ink-muted)]">
+                <Tag className="w-3 h-3" />
+                <span>Required Moments for Story Director:</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {stage.requiredMoments.map((m) => (
+                  <span
+                    key={m.momentId}
+                    className="text-xs px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[var(--ivory)] flex items-center gap-1.5"
+                  >
+                    <span>{m.label}</span>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => removeMoment(stage.key, m.momentId)}
+                        className="hover:text-[var(--danger)]"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+              {canEdit && (
+                <MomentAdder onAdd={(label) => addMoment(stage.key, label)} />
+              )}
             </div>
-            {canEdit && (
-              <MomentAdder onAdd={(label) => addMoment(stage.key, label)} />
-            )}
           </div>
         ))}
       </div>
 
       {canEdit && (
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 pt-3 border-t border-white/10">
           <button
             type="button"
             onClick={addStage}
-            className="text-sm px-4 py-2 rounded-[var(--radius-pill)]"
-            style={{ border: "var(--hairline)", color: "var(--ink-muted)" }}
+            className="btn-secondary px-4 py-2.5 text-xs font-semibold flex items-center gap-1.5"
           >
-            + Add stage
+            <Plus className="w-4 h-4" />
+            <span>Add Stage Window</span>
           </button>
           <button
             type="button"
             onClick={() => void handleSave()}
             disabled={saving || stages.length === 0}
-            className="text-sm px-5 py-2 rounded-[var(--radius-pill)] font-medium"
-            style={{ background: "var(--accent)", color: "var(--bg-0)", opacity: saving ? 0.6 : 1 }}
+            className="btn-primary px-6 py-2.5 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
           >
-            {saving ? "Saving…" : "Save stages"}
+            {saving ? (
+              <span>Committing Graph…</span>
+            ) : (
+              <>
+                <Check className="w-4 h-4" />
+                <span>Save Timeline Changes</span>
+              </>
+            )}
           </button>
           {savedAt && (
-            <span className="text-xs" style={{ color: "var(--ok)" }}>
-              Saved
+            <span className="flex items-center gap-1 text-xs text-[var(--ok)] font-medium">
+              <Check className="w-3.5 h-3.5" />
+              <span>Saved</span>
             </span>
           )}
         </div>
       )}
 
       {error && (
-        <p className="text-sm mt-3" style={{ color: "var(--danger)" }}>
+        <p className="text-xs mt-3 text-[var(--danger)]">
           {error}
         </p>
       )}
@@ -278,7 +315,7 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
 function MomentAdder({ onAdd }: { onAdd: (label: string) => void }) {
   const [value, setValue] = useState("");
   return (
-    <div className="flex gap-2">
+    <div className="flex gap-2 pt-1">
       <input
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -288,9 +325,8 @@ function MomentAdder({ onAdd }: { onAdd: (label: string) => void }) {
             setValue("");
           }
         }}
-        placeholder="+ required moment"
-        className="text-xs px-3 py-1.5 rounded-[var(--radius-pill)] flex-1"
-        style={{ background: "var(--bg-0)", border: "var(--hairline)", color: "var(--ivory)" }}
+        placeholder="+ Add required moment (e.g. Ring Exchange, First Dance)"
+        className="text-xs px-3 py-1.5 rounded-full bg-black/40 border border-white/10 text-[var(--ivory)] flex-1 placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
       />
       <button
         type="button"
@@ -298,10 +334,9 @@ function MomentAdder({ onAdd }: { onAdd: (label: string) => void }) {
           onAdd(value);
           setValue("");
         }}
-        className="text-xs px-3 py-1.5 rounded-[var(--radius-pill)]"
-        style={{ border: "var(--hairline)", color: "var(--ink-muted)" }}
+        className="btn-secondary px-3 py-1.5 text-xs font-semibold shrink-0"
       >
-        Add
+        Add Moment
       </button>
     </div>
   );

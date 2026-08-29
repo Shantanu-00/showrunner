@@ -3,12 +3,14 @@
     "public": "frontend/out",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
-      { "source": "/join/**", "destination": "/join/pune_wedding_2026.html" },
-      { "source": "/kiosk/**", "destination": "/kiosk/pune_wedding_2026.html" },
-      { "source": "/events/**/claim", "destination": "/events/pune_wedding_2026/claim.html" },
+      { "source": "/join", "destination": "/join.html" },
+      { "source": "/join/**", "destination": "/join/judge_demo.html" },
+      { "source": "/kiosk/**", "destination": "/kiosk/judge_demo.html" },
+      { "source": "/events/**/claim", "destination": "/events/judge_demo/claim.html" },
+      { "source": "/how-it-works", "destination": "/how-it-works.html" },
       { "source": "/judge", "destination": "/judge.html" },
       { "source": "/host", "destination": "/host.html" },
-      { "source": "/host/**", "destination": "/host/pune_wedding_2026.html" },
+      { "source": "/host/**", "destination": "/host/judge_demo.html" },
       { "source": "**", "destination": "/index.html" }
     ]
   },

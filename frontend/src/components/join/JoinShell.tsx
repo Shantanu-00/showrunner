@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ensureAnonymousAuth, getUid } from "@/lib/firebase";
+import { WifiOff, Camera, UploadCloud, Sparkles, Lock } from "lucide-react";
+import { getUid } from "@/lib/firebase";
+import { ensureMembership, type MembershipState } from "@/lib/membership";
 import { getEventPublic } from "@/lib/api";
 import * as outbox from "@/lib/outbox";
 import { drain, installResumeTriggers, onOutboxChange } from "@/lib/uploadManager";
@@ -15,11 +17,6 @@ import { AwardBurst } from "./AwardBurst";
 import { EventTab } from "@/components/gallery/EventTab";
 import { MeTab } from "@/components/me/MeTab";
 
-/** The three photos bundled for the `/judge` tour. Real JPEGs in `frontend/public/samples/`, fetched
- * as blobs so they enter the pipeline byte-identically to a phone upload — same signed PUT, same
- * intake, same Curator. They carry no EXIF capture time, which is itself honest: `intake` falls back
- * to arrival time and `shared/pipeline.py` marks `exifMissing`, so the Curator's temporal prior goes
- * flat at 0.5 exactly as it would for a stripped WhatsApp forward. */
 const SAMPLE_FILES = ["sample-1.jpg", "sample-2.jpg", "sample-3.jpg"];
 
 async function loadSampleFiles(): Promise<File[]> {
@@ -49,31 +46,51 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   const [doneItems, setDoneItems] = useState<DoneLedgerEntry[]>([]);
   const [online, setOnline] = useState(true);
   const [eventInfo, setEventInfo] = useState<EventPublicInfo | null>(null);
-  const [judgeMode, setJudgeMode] = useState(false);
+  // `?explain=1` unlocks the glass-box "Why this photo?" overlay (spec 04 §4). It is a *show me the
+  // stored ranking factors* switch and nothing else: it changes no query, no visibility and no
+  // ordering, which is why it can ride in a URL. It used to be spelled `?judge=1`, and the rename is
+  // the point — a flag named after an audience reads as a special mode for that audience, and there
+  // is no such mode here. The old spelling is still accepted so previously-shared links keep working.
+  const [explainMode, setExplainMode] = useState(false);
+  const [membership, setMembership] = useState<MembershipState | null>(null);
+  const [codeInput, setCodeInput] = useState("");
+  const [joining, setJoining] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // The door (spec 02 §1's event boundary). `isMember(eventId)` in `firestore.rules` is a custom-claim
+  // check, so every listener this page opens is denied until `POST /join` has minted it and the ID
+  // token has been force-refreshed — which is why this replaced a bare `ensureAnonymousAuth()` and why
+  // nothing below renders on `authReady` until it resolves. An invite link carries `?joinCode=`;
+  // `ensureMembership` reads it out of the URL and strips it before it reaches browser history.
   useEffect(() => {
-    void ensureAnonymousAuth().then(() => {
-      setAuthReady(true);
-      setUid(getUid());
+    void ensureMembership(eventId).then((state) => {
+      setMembership(state);
+      if (state.status === "member") {
+        setAuthReady(true);
+        setUid(getUid());
+      }
     });
     const uninstall = installResumeTriggers();
     return uninstall;
-  }, []);
+  }, [eventId]);
+
+  async function onSubmitCode() {
+    setJoining(true);
+    const state = await ensureMembership(eventId, codeInput.trim());
+    setMembership(state);
+    if (state.status === "member") {
+      setAuthReady(true);
+      setUid(getUid());
+    }
+    setJoining(false);
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setJudgeMode(params.get("judge") === "1");
-    const requestedTab = params.get("tab"); // e.g. the /claim redemption landing on Me
+    setExplainMode(params.get("explain") === "1" || params.get("judge") === "1");
+    const requestedTab = params.get("tab");
     if (requestedTab === "me" || requestedTab === "event") setTab(requestedTab);
 
-    // `?samples=1` — the `/judge` tour's step 3 (spec 09 §4's "3 sample photos ready to upload").
-    // A desktop browser has no camera and a judge should not have to find three photos of their own,
-    // so the samples ship with the page and arrive here as ordinary `File`s. Deliberately routed
-    // through `setPendingFiles`, which is what the file input does: the SendSheet opens, the judge
-    // makes the *real* consent choice (moment C1), and the ordinary outbox/drain path carries them.
-    // Anything that skipped the send sheet would also skip the consent decision, which is the single
-    // most important thing this step exists to show.
     if (params.get("samples") === "1") {
       void loadSampleFiles().then((files) => {
         if (files.length) setPendingFiles(files);
@@ -81,9 +98,6 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
     }
   }, []);
 
-  // Spec 12 §3: `data-theme`/`data-stage` on <html> retune every open surface with a pure
-  // CSS-variable swap — no reload, no re-render. One REST call at load (this is deliberately
-  // NOT a listener/poll — the theme flip demo beat lives on the kiosk, which does listen live).
   useEffect(() => {
     if (!authReady) return;
     let cancelled = false;
@@ -122,11 +136,6 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
     };
   }, []);
 
-  /** Spec 05 §3: "guest taps banner → camera → upload flows the normal pipeline with `bountyId`
-   * stamped at intent time." `bountyId` is set (or cleared) *before* the OS picker opens, not
-   * after a file comes back — some browsers never fire the file input's `onChange` at all when
-   * the picker is cancelled, so clearing on that event would leave a stale bounty attached to
-   * whatever the guest shoots next through the ordinary camera tab. */
   function onCameraTabTap(bountyId: string | null = null) {
     setPendingBountyId(bountyId);
     setTab("camera");
@@ -152,43 +161,123 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   }
 
   return (
-    <div className="min-h-screen pb-20" style={{ background: "var(--bg-0)" }}>
+    <div className="min-h-screen pb-28" style={{ background: "var(--bg-0)" }}>
       {!online && (
         <div
-          className="sticky top-0 z-40 text-center text-sm py-2"
-          style={{ background: "var(--warn)", color: "var(--bg-0)" }}
+          className="sticky top-0 z-50 flex items-center justify-center gap-2 text-center text-xs font-semibold py-2.5 px-4 shadow-lg backdrop-blur-md"
+          style={{ background: "rgba(251, 191, 36, 0.95)", color: "#0b0709" }}
         >
-          📶 reconnecting — your uploads are safe
+          <WifiOff className="w-4 h-4" />
+          <span>Reconnecting — your uploads are preserved offline</span>
         </div>
       )}
 
-      <header className="px-5 pt-8 pb-4">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl" style={{ color: "var(--ivory)" }}>
-          Showrunner
+      <header className="px-5 pt-8 pb-4 max-w-2xl mx-auto">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded-lg bg-[var(--gold-500)]/10 text-[var(--accent)] border border-[var(--gold-500)]/20">
+              <Sparkles className="w-4 h-4" />
+            </span>
+            <span className="text-[11px] font-mono uppercase tracking-[0.2em] text-[var(--accent)]">
+              {eventInfo?.name ?? "Showrunner"}
+            </span>
+          </div>
+          {authReady ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] text-[var(--ink-muted)]">
+              <span className="live-dot" />
+              <span>Live Synced</span>
+            </div>
+          ) : (
+            <span className="text-xs text-[var(--ink-muted)] animate-pulse">Connecting…</span>
+          )}
+        </div>
+        <h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold text-gold-gradient">
+          {eventInfo?.name ?? "Event Gallery"}
         </h1>
-        <p className="text-sm mt-2" style={{ color: "var(--ink-muted)" }}>
-          Photos you share go to the couple&rsquo;s album and to people who appear in
-          them. Public display is always your choice per upload.
+        <p className="text-xs mt-1.5 text-[var(--ink-muted)] leading-relaxed">
+          AI media director actively curating, indexing faces, and projecting to the live kiosk.
         </p>
-        {!authReady && (
-          <p className="text-xs mt-2" style={{ color: "var(--ink-muted)" }}>
-            Joining the event…
-          </p>
-        )}
       </header>
+
+      {membership && membership.status !== "member" && (
+        // The door, closed. An invite-only event asks for the code the host shared; a full or wrapped
+        // one says so plainly and names the host as the remedy, because no code the guest could type
+        // would change the answer. "Seats" is the honest word throughout: the cap counts devices, and
+        // spec 02 §1 gives one person several of them.
+        <section className="px-5 max-w-md mx-auto mt-10">
+          <div className="p-7 rounded-2xl glass-card border border-[var(--hairline)] text-center">
+            <div className="w-14 h-14 rounded-full bg-[var(--accent-glow)] flex items-center justify-center text-[var(--accent)] mx-auto mb-4">
+              <Lock className="w-7 h-7" />
+            </div>
+            <h2 className="font-[family-name:var(--font-display)] text-xl text-[var(--ivory)] mb-2">
+              {membership.status === "needs-code" ? "This event is invite-only" : "Can't join right now"}
+            </h2>
+            <p className="text-xs text-[var(--ink-muted)] mb-5 leading-relaxed">{membership.message}</p>
+            {membership.status === "needs-code" && (
+              <>
+                <input
+                  value={codeInput}
+                  onChange={(e) => setCodeInput(e.target.value)}
+                  placeholder="Invite code"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="w-full mb-3 px-4 py-3 rounded-xl bg-white/5 border border-[var(--hairline)] text-sm text-[var(--ivory)] text-center tracking-wide placeholder:text-[var(--ink-muted)] focus:outline-none focus:border-[var(--accent)]"
+                />
+                <button
+                  type="button"
+                  disabled={joining || codeInput.trim().length === 0}
+                  onClick={() => void onSubmitCode()}
+                  className="btn-primary w-full py-3 px-6 text-sm disabled:opacity-50"
+                >
+                  {joining ? "Checking…" : "Join event"}
+                </button>
+              </>
+            )}
+            {membership.status === "error" && (
+              <button
+                type="button"
+                onClick={() => void onSubmitCode()}
+                className="btn-primary w-full py-3 px-6 text-sm"
+              >
+                Try again
+              </button>
+            )}
+          </div>
+        </section>
+      )}
 
       {authReady && <BountyBanner eventId={eventId} onShootNow={onShootNow} />}
       {uid && <AwardBurst eventId={eventId} uid={uid} />}
 
-      {tab === "event" && (
-        <EventTab eventId={eventId} eventInfo={eventInfo} judgeMode={judgeMode} onShootNow={onShootNow} />
+      {/* Gated on membership, not merely on auth: every listener inside `EventTab` is denied until the
+          `members` claim is on the token, and a grid that renders permission-denied errors is a worse
+          answer to "this event is invite-only" than the code card above. */}
+      {tab === "event" && authReady && (
+        <EventTab eventId={eventId} eventInfo={eventInfo} explainMode={explainMode} onShootNow={onShootNow} />
       )}
 
-      {tab === "camera" && (
-        <section className="px-5">
-          <p className="text-center mt-16" style={{ color: "var(--ink-muted)" }}>
-            Tap the camera tab again to pick more photos.
-          </p>
+      {tab === "camera" && authReady && (
+        <section className="px-5 max-w-md mx-auto text-center mt-12">
+          <div className="p-8 rounded-2xl glass-card border border-[var(--hairline)] flex flex-col items-center">
+            <div className="w-16 h-16 rounded-full bg-[var(--accent-glow)] flex items-center justify-center text-[var(--accent)] mb-4 shadow-lg">
+              <Camera className="w-8 h-8" />
+            </div>
+            <h2 className="font-[family-name:var(--font-display)] text-xl font-medium text-[var(--ivory)] mb-2">
+              Capture or Upload
+            </h2>
+            <p className="text-xs text-[var(--ink-muted)] mb-6 max-w-xs">
+              Take photos directly or pick from your camera roll. The director scores and shares according to your consent settings.
+            </p>
+            <button
+              type="button"
+              onClick={() => onCameraTabTap()}
+              className="btn-primary w-full py-3 px-6 flex items-center justify-center gap-2 text-sm"
+            >
+              <UploadCloud className="w-4 h-4 stroke-[2.2]" />
+              <span>Select Photos & Videos</span>
+            </button>
+          </div>
         </section>
       )}
 

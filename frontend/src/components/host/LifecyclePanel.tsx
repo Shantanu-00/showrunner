@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Play, Pause, Archive, CheckCircle2, RotateCw, Camera, Users, PieChart, DollarSign } from "lucide-react";
 import { finalizeEvent, goLive, pauseEvent, resumeEvent, wrapEvent } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
 import type { ConsoleSummary, HostEventDoc } from "@/lib/hostTypes";
@@ -8,10 +9,6 @@ import { TickCountdown } from "./TickCountdown";
 
 const STEPS: HostEventDoc["status"][] = ["draft", "live", "paused", "wrapping", "wrapped"];
 
-/** The master switch (spec 08 §2): `draft → live → paused → wrapping → wrapped`, as a stepped
- * control, plus the KPI header row (spec 12 §8). Every number here is a real aggregate from
- * `GET /console` (`backend/api/host.py::console_summary`) — refreshed on mount and after every
- * action that could have moved one, never on a timer (no client polling anywhere). */
 export function LifecyclePanel({
   event,
   eventId,
@@ -49,18 +46,18 @@ export function LifecyclePanel({
   const stepIndex = STEPS.indexOf(event.status);
 
   return (
-    <section className="mb-8">
+    <section className="mb-10 glass-card p-6 rounded-3xl border border-white/10 shadow-xl">
       <div className="flex items-center justify-between mb-4">
-        <p className="font-[family-name:var(--font-display)] text-lg" style={{ color: "var(--ivory)" }}>
-          Controls
-        </p>
+        <h2 className="font-[family-name:var(--font-display)] text-xl font-medium text-[var(--ivory)]">
+          Event State & Telemetry
+        </h2>
         <button
           type="button"
           onClick={onRefresh}
-          className="text-xs px-3 py-1 rounded-[var(--radius-pill)]"
-          style={{ border: "var(--hairline)", color: "var(--ink-muted)" }}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/15 text-[var(--ink-muted)] hover:text-white transition-colors"
         >
-          ↻ Refresh
+          <RotateCw className="w-3.5 h-3.5" />
+          <span>Refresh Telemetry</span>
         </button>
       </div>
 
@@ -68,12 +65,13 @@ export function LifecyclePanel({
         {STEPS.map((s, i) => (
           <span
             key={s}
-            className="text-xs font-mono px-3 py-1.5 rounded-[var(--radius-pill)]"
-            style={{
-              background: i === stepIndex ? "var(--accent)" : "var(--bg-1)",
-              color: i === stepIndex ? "var(--bg-0)" : "var(--ink-muted)",
-              border: i === stepIndex ? "none" : "var(--hairline)",
-            }}
+            className={`text-xs font-mono px-3.5 py-1.5 rounded-full font-semibold capitalize transition-all ${
+              i === stepIndex
+                ? "bg-[var(--accent)] text-black shadow-md scale-105"
+                : i < stepIndex
+                ? "bg-white/10 text-[var(--ivory)] border border-white/15"
+                : "bg-white/5 text-[var(--ink-muted)] border border-white/5"
+            }`}
           >
             {s}
           </span>
@@ -81,54 +79,82 @@ export function LifecyclePanel({
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <Kpi label="Photos" value={summary?.photos ?? "—"} />
-        <Kpi label="Guests" value={summary?.guests ?? "—"} />
-        <Kpi label="Coverage" value={summary ? `${summary.coveragePct}%` : "—"} />
-        <Kpi label="Cost so far" value={summary ? `$${summary.costSoFarUsd.toFixed(2)}` : "—"} />
+        <Kpi icon={Camera} label="Ingested Photos" value={summary?.photos ?? "—"} />
+        <Kpi icon={Users} label="Active Guests" value={summary?.guests ?? "—"} />
+        <Kpi icon={PieChart} label="Stage Coverage" value={summary ? `${summary.coveragePct}%` : "—"} />
+        <Kpi icon={DollarSign} label="Pipeline Spend" value={summary ? `$${summary.costSoFarUsd.toFixed(2)}` : "—"} />
         {(event.status === "live" || event.status === "wrapping") && (
           <TickCountdown eventId={eventId} eventClass={event.class} />
         )}
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap gap-3 pt-4 border-t border-white/10">
         {event.status === "draft" && (
-          <ActionButton label="Go Live" busy={busy === "go-live"} onClick={() => run("go-live", () => goLive(eventId))} primary />
+          <ActionButton
+            icon={Play}
+            label="Go Live (Activate Director)"
+            busy={busy === "go-live"}
+            onClick={() => run("go-live", () => goLive(eventId))}
+            primary
+          />
         )}
         {event.status === "live" && (
           <>
-            <ActionButton label="Pause uploads" busy={busy === "pause"} onClick={() => run("pause", () => pauseEvent(eventId))} />
-            <ActionButton label="Wrap event" busy={busy === "wrap"} onClick={() => run("wrap", () => wrapEvent(eventId))} />
+            <ActionButton
+              icon={Pause}
+              label="Pause Uploads"
+              busy={busy === "pause"}
+              onClick={() => run("pause", () => pauseEvent(eventId))}
+            />
+            <ActionButton
+              icon={Archive}
+              label="Wrap Event"
+              busy={busy === "wrap"}
+              onClick={() => run("wrap", () => wrapEvent(eventId))}
+            />
           </>
         )}
         {event.status === "paused" && (
           <>
-            <ActionButton label="Resume" busy={busy === "resume"} onClick={() => run("resume", () => resumeEvent(eventId))} primary />
-            <ActionButton label="Wrap event" busy={busy === "wrap"} onClick={() => run("wrap", () => wrapEvent(eventId))} />
+            <ActionButton
+              icon={Play}
+              label="Resume Event"
+              busy={busy === "resume"}
+              onClick={() => run("resume", () => resumeEvent(eventId))}
+              primary
+            />
+            <ActionButton
+              icon={Archive}
+              label="Wrap Event"
+              busy={busy === "wrap"}
+              onClick={() => run("wrap", () => wrapEvent(eventId))}
+            />
           </>
         )}
         {event.status === "wrapping" && (
           <ActionButton
-            label="Generate wrap report & finish"
+            icon={CheckCircle2}
+            label="Generate Wrap Report & Finalize"
             busy={busy === "finalize"}
             onClick={() => run("finalize", () => finalizeEvent(eventId))}
             primary
           />
         )}
         {event.status === "wrapped" && (
-          <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
-            This event is wrapped — read-only.
+          <p className="text-xs text-[var(--ink-muted)]">
+            This event is wrapped — all media and telemetry are frozen in read-only state.
           </p>
         )}
       </div>
 
       {error && (
-        <p className="text-sm mt-4" style={{ color: "var(--danger)" }}>
+        <p className="text-xs mt-4 text-[var(--danger)] p-3 rounded-xl bg-[var(--danger)]/10 border border-[var(--danger)]/20">
           {error}
           {contactUrl && (
             <>
               {" "}
-              <a href={contactUrl} className="underline">
-                Contact the developer
+              <a href={contactUrl} className="underline font-semibold ml-1">
+                Contact Developer Support
               </a>
             </>
           )}
@@ -138,13 +164,14 @@ export function LifecyclePanel({
   );
 }
 
-function Kpi({ label, value }: { label: string; value: string | number }) {
+function Kpi({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string | number }) {
   return (
-    <div className="rounded-[var(--radius-card)] p-3" style={{ background: "var(--bg-1)", border: "var(--hairline)" }}>
-      <p className="text-xs mb-1" style={{ color: "var(--ink-muted)" }}>
-        {label}
-      </p>
-      <p className="font-mono tabular-nums text-xl" style={{ color: "var(--ivory)" }}>
+    <div className="rounded-2xl p-4 glass-card bg-black/40 border border-white/5 flex flex-col justify-between">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[11px] text-[var(--ink-muted)] font-medium">{label}</span>
+        <Icon className="w-4 h-4 text-[var(--gold-300)]" />
+      </div>
+      <p className="font-mono tabular-nums text-2xl font-bold text-[var(--ivory)]">
         {value}
       </p>
     </div>
@@ -152,11 +179,13 @@ function Kpi({ label, value }: { label: string; value: string | number }) {
 }
 
 function ActionButton({
+  icon: Icon,
   label,
   onClick,
   busy,
   primary,
 }: {
+  icon: React.ElementType;
   label: string;
   onClick: () => void;
   busy: boolean;
@@ -167,14 +196,14 @@ function ActionButton({
       type="button"
       onClick={onClick}
       disabled={busy}
-      className="px-5 py-2.5 rounded-[var(--radius-pill)] font-medium text-sm"
-      style={
+      className={`px-5 py-3 rounded-full font-semibold text-xs flex items-center gap-2 shadow-lg transition-all ${
         primary
-          ? { background: "var(--accent)", color: "var(--bg-0)", opacity: busy ? 0.6 : 1 }
-          : { border: "var(--hairline)", color: "var(--ivory)", opacity: busy ? 0.6 : 1 }
-      }
+          ? "btn-primary"
+          : "btn-secondary"
+      } disabled:opacity-50`}
     >
-      {busy ? "Working…" : label}
+      <Icon className="w-4 h-4 stroke-[2.2]" />
+      <span>{busy ? "Processing Command…" : label}</span>
     </button>
   );
 }

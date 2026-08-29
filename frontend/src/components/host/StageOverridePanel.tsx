@@ -1,12 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { Play, RotateCcw, Check } from "lucide-react";
 import { setStageOverride } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
 import type { HostEventDoc } from "@/lib/hostTypes";
 
-/** "Now: ▶ stage" — always wins over the schedule/evidence fusion, instantly (spec 05 §2). Only
- * shown once the event has stages to override between; disabled once wrapped. */
 export function StageOverridePanel({
   event,
   eventId,
@@ -36,41 +35,53 @@ export function StageOverridePanel({
   }
 
   return (
-    <section className="mb-8">
-      <p className="font-[family-name:var(--font-display)] text-lg mb-3" style={{ color: "var(--ivory)" }}>
-        Now: ▶ stage
+    <section className="mb-10 glass-card p-6 rounded-3xl border border-white/10 shadow-xl">
+      <div className="flex items-center gap-2 mb-2">
+        <Play className="w-4 h-4 text-[var(--accent)]" />
+        <h3 className="font-[family-name:var(--font-display)] text-lg font-medium text-[var(--ivory)]">
+          Live Stage Override
+        </h3>
+      </div>
+      <p className="text-xs text-[var(--ink-muted)] mb-4 leading-relaxed">
+        Instantly force the active stage context across kiosk wall and story director algorithms.
       </p>
-      <div className="flex flex-wrap gap-2">
-        {event.stages.map((s) => (
-          <button
-            key={s.stageId}
-            type="button"
-            onClick={() => void pick(s.stageId)}
-            disabled={busy !== null}
-            className="text-sm px-4 py-2 rounded-[var(--radius-pill)]"
-            style={
-              current === s.stageId
-                ? { background: "var(--accent)", color: "var(--bg-0)" }
-                : { border: "var(--hairline)", color: "var(--ivory)" }
-            }
-          >
-            {busy === s.stageId ? "…" : s.label}
-          </button>
-        ))}
+
+      <div className="flex flex-wrap gap-2.5">
+        {event.stages.map((s) => {
+          const isActive = current === s.stageId;
+          return (
+            <button
+              key={s.stageId}
+              type="button"
+              onClick={() => void pick(s.stageId)}
+              disabled={busy !== null}
+              className={`flex items-center gap-1.5 text-xs px-4 py-2.5 rounded-full font-semibold transition-all ${
+                isActive
+                  ? "bg-[var(--accent)] text-black shadow-md scale-105"
+                  : "bg-white/5 border border-white/10 text-[var(--ivory)] hover:border-white/20"
+              }`}
+            >
+              {isActive && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+              <span>{busy === s.stageId ? "Switching…" : s.label}</span>
+            </button>
+          );
+        })}
+
         {event.stageOverride && (
           <button
             type="button"
             onClick={() => void pick(null)}
             disabled={busy !== null}
-            className="text-sm px-4 py-2 rounded-[var(--radius-pill)]"
-            style={{ border: "var(--hairline)", color: "var(--ink-muted)" }}
+            className="flex items-center gap-1.5 text-xs px-4 py-2.5 rounded-full bg-white/5 border border-white/10 text-[var(--ink-muted)] hover:text-white transition-colors"
           >
-            {busy === "clear" ? "…" : "Clear override"}
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>{busy === "clear" ? "Clearing…" : "Restore Auto Schedule"}</span>
           </button>
         )}
       </div>
+
       {error && (
-        <p className="text-sm mt-2" style={{ color: "var(--danger)" }}>
+        <p className="text-xs mt-3 text-[var(--danger)]">
           {error}
         </p>
       )}

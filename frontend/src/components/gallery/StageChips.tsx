@@ -11,8 +11,8 @@ export function StageChips({
 }) {
   if (stages.length === 0) return null;
   return (
-    <div className="flex gap-2 overflow-x-auto px-4 pb-1 -mx-1">
-      <Chip label="All" isActive={active === null} onClick={() => onChange(null)} />
+    <div className="flex gap-2 overflow-x-auto px-4 pb-2 scrollbar-none">
+      <Chip label="All Phases" isActive={active === null} onClick={() => onChange(null)} />
       {stages.map((s) => (
         <Chip
           key={s.stageId}
@@ -38,12 +38,11 @@ function Chip({
     <button
       type="button"
       onClick={onClick}
-      className="shrink-0 px-4 py-2 rounded-[var(--radius-pill)] text-sm whitespace-nowrap min-h-11"
-      style={{
-        border: isActive ? "2px solid var(--accent)" : "var(--hairline)",
-        color: isActive ? "var(--accent)" : "var(--ink-muted)",
-        background: "var(--bg-1)",
-      }}
+      className={`shrink-0 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200 ${
+        isActive
+          ? "bg-[var(--accent)] text-black font-semibold shadow-md"
+          : "bg-white/5 border border-white/10 text-[var(--ink-muted)] hover:text-[var(--ivory)] hover:border-white/20"
+      }`}
     >
       {label}
     </button>

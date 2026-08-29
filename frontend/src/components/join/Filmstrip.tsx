@@ -1,59 +1,48 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Camera, Video, Sparkles, Lock, ShieldAlert, CheckCircle2, RotateCw } from "lucide-react";
 import { listenMedia } from "@/lib/firestore";
 import type { DoneLedgerEntry, MediaDoc, OutboxItem } from "@/lib/types";
 import { retryItem } from "@/lib/uploadManager";
 
-/** Most recent done-ledger entries to keep tailing — an hours-long event shouldn't grow the
- * filmstrip without bound; the ledger's own key order (ULID) is already chronological. */
 const MAX_DONE_CHIPS = 6;
 
 const PENDING_LABEL: Record<string, string> = {
-  queued: "Sending to the director…",
-  url_issued: "Sending to the director…",
-  uploading: "Sending to the director…",
+  queued: "Sending…",
+  url_issued: "Uploading…",
+  uploading: "Uploading…",
 };
 
-/** Spec 12 §4's wait-state copy table — the same agent-verb micro-copy, driven by the media
- * doc's real `stages` field instead of a generic spinner (the no-spinner rule's whole point).
- * `pending` decides the shimmer, so it has to agree with the label rather than assume "not
- * indexed yet" is the only terminal state — a permanent failure or a review hold is also done
- * shimmering even though it never reaches `indexed`. */
-function describeMedia(media: MediaDoc | null): { label: string; pending: boolean } {
-  if (!media) return { label: "Sending to the director…", pending: true };
+function describeMedia(media: MediaDoc | null): { label: string; pending: boolean; iconType: "live" | "pool" | "self" | "hold" | "curating" } {
+  if (!media) return { label: "Sending…", pending: true, iconType: "curating" };
   const stages = media.stages ?? {};
   if (media.status === "indexed") {
-    if (media.visibility === "public") return { label: "live 🎉", pending: false };
-    if (media.visibility === "self") return { label: "🔒 just for you", pending: false };
-    return { label: "🔒 in the pool", pending: false };
+    if (media.visibility === "public") return { label: "Live on wall", pending: false, iconType: "live" };
+    if (media.visibility === "self") return { label: "Just for you", pending: false, iconType: "self" };
+    return { label: "In photo pool", pending: false, iconType: "pool" };
   }
   if (media.status === "quarantined" || media.status === "rejected" || media.status === "abandoned") {
-    return { label: "Held for review", pending: false };
+    return { label: "Held for review", pending: false, iconType: "hold" };
   }
-  // Spec 03 §6's asymmetric failure design: a *permanent* stage failure (model refusal, twice
-  // schema-invalid) never quarantines — the photo just never reaches `indexed`, so it would
-  // otherwise sit here forever reading "still processing" for a mishap that already happened.
   if (Object.values(stages).some((s) => s === "failed_permanent")) {
-    return { label: "Kept in your album", pending: false };
+    return { label: "Kept in album", pending: false, iconType: "self" };
   }
   if (stages.curate === "pending" || stages.curate == null) {
-    return { label: "The Curator is judging your shot…", pending: true };
+    return { label: "Curating…", pending: true, iconType: "curating" };
   }
   if (stages.faces === "pending" || stages.faces == null) {
-    return { label: "Looking for you in the archives…", pending: true };
+    return { label: "Face matching…", pending: true, iconType: "curating" };
   }
   if (stages.safety === "pending" || stages.safety == null) {
-    return { label: "The Guardian is giving it one last look…", pending: true };
+    return { label: "Safety check…", pending: true, iconType: "curating" };
   }
-  return { label: "Sending to the director…", pending: true };
+  return { label: "Processing…", pending: true, iconType: "curating" };
 }
 
 function PendingChip({ item }: { item: OutboxItem }) {
   const label = PENDING_LABEL[item.state] ?? item.state;
-  return (
-    <ChipShell isPending kind={item.kind} label={label} />
-  );
+  return <ChipShell isPending kind={item.kind} label={label} />;
 }
 
 function DoneChip({ eventId, entry }: { eventId: string; entry: DoneLedgerEntry }) {
@@ -63,14 +52,22 @@ function DoneChip({ eventId, entry }: { eventId: string; entry: DoneLedgerEntry 
     return listenMedia(eventId, entry.clientMediaId, setMedia, () => {});
   }, [eventId, entry.clientMediaId]);
 
-  const { label, pending } = describeMedia(media);
-  return <ChipShell isPending={pending} label={label} thumbDataUrl={entry.thumbDataUrl} />;
+  const { label, pending, iconType } = describeMedia(media);
+  return (
+    <ChipShell
+      isPending={pending}
+      label={label}
+      iconType={iconType}
+      thumbDataUrl={entry.thumbDataUrl}
+    />
+  );
 }
 
 function ChipShell({
   isPending,
   label,
   kind,
+  iconType,
   thumbDataUrl,
   failed,
   onRetry,
@@ -78,35 +75,63 @@ function ChipShell({
   isPending: boolean;
   label: string;
   kind?: OutboxItem["kind"];
+  iconType?: "live" | "pool" | "self" | "hold" | "curating";
   thumbDataUrl?: string;
   failed?: boolean;
   onRetry?: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center gap-1 shrink-0">
-      <div
-        className="relative w-16 h-16 rounded-[var(--radius-card)] overflow-hidden flex items-center justify-center"
-        style={{ border: "var(--hairline)", background: "var(--bg-1)" }}
-      >
+    <div className="flex flex-col items-center gap-1.5 shrink-0">
+      <div className="relative w-16 h-16 rounded-2xl overflow-hidden glass-card border border-[var(--hairline)] flex items-center justify-center shadow-md">
         {thumbDataUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={thumbDataUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
         ) : (
-          <span className="text-xs" aria-hidden>
-            {kind === "video" ? "🎬" : "📷"}
+          <span className="text-[var(--ink-muted)]">
+            {kind === "video" ? <Video className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
           </span>
         )}
-        {isPending && <div className="absolute inset-0 skeleton-shimmer" />}
+
+        {isPending && (
+          <div className="absolute inset-0 skeleton-shimmer bg-black/40 flex items-center justify-center">
+            <Sparkles className="w-5 h-5 text-[var(--accent)] animate-pulse" />
+          </div>
+        )}
+
+        {!isPending && iconType === "live" && (
+          <div className="absolute bottom-1 right-1 p-1 rounded-full bg-[var(--ok)] text-black shadow-md">
+            <CheckCircle2 className="w-3 h-3 stroke-[3]" />
+          </div>
+        )}
+
+        {!isPending && (iconType === "pool" || iconType === "self") && (
+          <div className="absolute bottom-1 right-1 p-1 rounded-full bg-black/70 text-[var(--gold-300)] border border-white/10 shadow-md">
+            <Lock className="w-3 h-3 stroke-[2.5]" />
+          </div>
+        )}
+
+        {!isPending && iconType === "hold" && (
+          <div className="absolute bottom-1 right-1 p-1 rounded-full bg-[var(--danger)] text-white shadow-md">
+            <ShieldAlert className="w-3 h-3 stroke-[2.5]" />
+          </div>
+        )}
       </div>
+
       <span
-        className="text-[10px] text-center max-w-16"
+        className="text-[10px] font-medium text-center max-w-16 truncate"
         style={{ color: failed ? "var(--danger)" : "var(--ink-muted)" }}
       >
         {label}
       </span>
+
       {failed && onRetry && (
-        <button type="button" onClick={onRetry} className="text-[10px] underline" style={{ color: "var(--accent)" }}>
-          Retry
+        <button
+          type="button"
+          onClick={onRetry}
+          className="flex items-center gap-1 text-[10px] font-medium text-[var(--accent)] hover:underline"
+        >
+          <RotateCw className="w-2.5 h-2.5" />
+          <span>Retry</span>
         </button>
       )}
     </div>
@@ -129,7 +154,7 @@ export function Filmstrip({
   if (failed.length === 0 && pending.length === 0 && recentDone.length === 0) return null;
 
   return (
-    <div className="flex gap-3 overflow-x-auto px-4 py-3">
+    <div className="flex gap-3 overflow-x-auto px-4 py-3 bg-black/40 backdrop-blur-md border-t border-b border-white/5">
       {failed.map((item) => (
         <ChipShell
           key={item.clientMediaId}

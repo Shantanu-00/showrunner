@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState, type CSSProperties } from "react";
+import { Camera } from "lucide-react";
 import type { HeroSlot as HeroSlotType, MediaDoc } from "@/lib/types";
 import { listenMedia, listenUploaderCredit } from "@/lib/firestore";
-import { mediaRenderUrl } from "@/lib/api";
+import { MediaImg } from "@/lib/MediaImg";
 
 function primaryFaceOrigin(media: MediaDoc | null): string {
   if (!media || media.faces.length === 0) return "50% 50%";
@@ -15,9 +16,6 @@ function primaryFaceOrigin(media: MediaDoc | null): string {
   return `${cx.toFixed(1)}% ${cy.toFixed(1)}%`;
 }
 
-/** `hero` — face-anchored Ken Burns, Curator's caption, the credit chip (spec 12 §6). Never
- * crops a head: the pan's transform-origin is the primary face box center, so the zoom holds
- * on the face while everything else drifts away from it (§4's "pan away from the face box"). */
 export function HeroSlot({ eventId, slot }: { eventId: string; slot: HeroSlotType }) {
   const [media, setMedia] = useState<MediaDoc | null>(null);
   const [creditName, setCreditName] = useState<string | null>(null);
@@ -31,19 +29,19 @@ export function HeroSlot({ eventId, slot }: { eventId: string; slot: HeroSlotTyp
     return listenUploaderCredit(eventId, media.uploaderUid, setCreditName);
   }, [eventId, media?.uploaderUid]);
 
-  const src = media?.displayUri
-    ? mediaRenderUrl(eventId, slot.mediaId, "display")
-    : media?.thumbUri
-      ? mediaRenderUrl(eventId, slot.mediaId, "thumb")
-      : null;
+  // Rendered through `MediaImg` rather than a bare `<img src>`: on an invite-only event the venue TV
+  // holds a `members` claim from a kiosk link and fetches the bytes with it, because `api/media.py`
+  // no longer serves them unauthenticated there. An open event's wall is unchanged.
+  const variant = media?.displayUri ? "display" : media?.thumbUri ? "thumb" : null;
 
   return (
     <div className="absolute inset-0 overflow-hidden" style={{ background: "var(--bg-0)" }}>
-      {src ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          key={slot.mediaId}
-          src={src}
+      {variant ? (
+        <MediaImg
+          eventId={eventId}
+          mediaId={slot.mediaId}
+          variant={variant}
+          imgKey={slot.mediaId}
           alt={media?.curator?.caption ?? ""}
           className="w-full h-full object-cover ken-burns"
           style={
@@ -52,28 +50,28 @@ export function HeroSlot({ eventId, slot }: { eventId: string; slot: HeroSlotTyp
               "--ken-burns-duration": `${slot.holdSec}s`,
             } as CSSProperties
           }
+          fallback={<div className="w-full h-full skeleton-shimmer" />}
         />
       ) : (
         <div className="w-full h-full skeleton-shimmer" />
       )}
 
       <div
-        className="absolute inset-x-0 bottom-0 pt-24 pb-32 px-[3%]"
-        style={{ background: "linear-gradient(to top, rgb(11 7 9 / 0.85), transparent)" }}
+        className="absolute inset-x-0 bottom-0 pt-32 pb-32 px-[3%]"
+        style={{ background: "linear-gradient(to top, rgba(11, 7, 9, 0.92) 0%, rgba(11, 7, 9, 0.5) 60%, transparent 100%)" }}
       >
         {media?.curator?.caption && (
           <p
-            className="font-[family-name:var(--font-display)] italic text-3xl mb-3 max-w-3xl"
-            style={{ color: "var(--ivory)" }}
+            className="font-[family-name:var(--font-display)] italic text-3xl sm:text-4xl mb-3 max-w-4xl leading-tight text-[var(--ivory)]"
           >
-            {media.curator.caption}
+            &ldquo;{media.curator.caption}&rdquo;
           </p>
         )}
         <span
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-[var(--radius-pill)] text-sm"
-          style={{ background: "var(--bg-glass)", border: "var(--hairline)", color: "var(--gold-300)" }}
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full glass-card border border-white/15 text-xs text-[var(--gold-300)] font-medium shadow-lg"
         >
-          📸 {creditName ?? "a guest"}
+          <Camera className="w-3.5 h-3.5 text-[var(--accent)]" />
+          <span>Captured by {creditName ?? "a guest"}</span>
         </span>
       </div>
     </div>

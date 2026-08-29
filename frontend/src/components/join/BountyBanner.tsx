@@ -1,21 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Target, Camera, X, Zap } from "lucide-react";
 import type { BountyDoc } from "@/lib/types";
 import { listenActiveBounties } from "@/lib/firestore";
 
-/** Spec 05 §4's client-side anti-spam gate: at most one banner per guest per 10 minutes,
- * regardless of how many bounties are active. Escalation does not bypass it — the escalation
- * itself is a kiosk-side signal (spec 04 §4's takeover slot), not a second interruption pass at
- * a guest who has already been asked once. */
 const SNOOZE_MS = 10 * 60 * 1000;
-/** Spec 12 §7: "quiet 240ms retreat" on expiry/dismiss — matches `--dur-standard` in tokens.css. */
 const RETREAT_MS = 240;
 
 function useCountdown(endMsIn: number | null | undefined): { fraction: number; expired: boolean } {
-  // Epoch millis, normalised by `listenActiveBounties`. This used to take the raw `expiresAt` and
-  // call `new Date(...)` on it, which for a Firestore `Timestamp` yields NaN -- and NaN is falsy, so
-  // the guard below silently returned a permanently-full ring instead of counting down.
   const endMs = useMemo(() => (typeof endMsIn === "number" && Number.isFinite(endMsIn) ? endMsIn : null), [endMsIn]);
   const startRef = useRef<number>(Date.now());
   const [now, setNow] = useState(() => Date.now());
@@ -38,15 +31,16 @@ function CountdownRing({ fraction }: { fraction: number }) {
   return (
     <div
       aria-hidden
-      className="w-8 h-8 rounded-full shrink-0"
-      style={{ background: `conic-gradient(var(--gold-500) ${deg}deg, rgb(212 175 106 / 0.15) 0deg)` }}
-    />
+      className="w-10 h-10 rounded-full shrink-0 flex items-center justify-center p-0.5 shadow-md"
+      style={{ background: `conic-gradient(var(--gold-500) ${deg}deg, rgba(212, 175, 106, 0.15) 0deg)` }}
+    >
+      <div className="w-full h-full rounded-full bg-[var(--bg-1)] flex items-center justify-center text-[var(--accent)]">
+        <Target className="w-4 h-4 animate-pulse" />
+      </div>
+    </div>
   );
 }
 
-/** The mission-briefing banner (spec 12 §7) — slides down over any tab, one bounty at a time.
- * `onShootNow` hands the tap back to `JoinShell`, which is what actually opens the camera and
- * stamps `bountyId` onto the resulting upload batch (spec 01 §3, spec 05 §3). */
 export function BountyBanner({
   eventId,
   onShootNow,
@@ -99,36 +93,34 @@ export function BountyBanner({
   const escalated = bounty.status === "escalated";
 
   return (
-    <div className={`fixed top-0 inset-x-0 z-50 px-3 pt-3 ${leaving ? "banner-out" : "banner-in"}`}>
+    <div className={`fixed top-4 inset-x-0 z-50 px-4 ${leaving ? "banner-out" : "banner-in"}`}>
       <div
-        className="mx-auto max-w-md rounded-[var(--radius-banner)] p-4"
+        className="mx-auto max-w-md rounded-3xl p-5 shadow-2xl glass-card border-2"
         style={{
-          background: "var(--bg-glass)",
-          backdropFilter: "blur(16px)",
-          border: escalated ? "1px solid var(--gold-500)" : "var(--hairline)",
+          borderColor: escalated ? "var(--gold-400)" : "rgba(212, 175, 106, 0.4)",
+          background: "rgba(23, 16, 20, 0.94)",
+          boxShadow: escalated ? "0 0 30px rgba(212, 175, 106, 0.3)" : "var(--shadow-glass)",
         }}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <p className="font-mono text-xs tracking-[0.2em]" style={{ color: "var(--gold-300)" }}>
-              {escalated ? "THE DIRECTOR NEEDS THIS" : "THE DIRECTOR ASKS"}
-            </p>
-            <p
-              className="font-[family-name:var(--font-display)] text-xl mt-1"
-              style={{ color: "var(--ivory)" }}
-            >
+            <div className="flex items-center gap-1.5 mb-1">
+              <Zap className="w-3.5 h-3.5 text-[var(--accent)]" />
+              <span className="font-mono text-[10px] uppercase tracking-[0.2em] font-semibold text-[var(--gold-300)]">
+                {escalated ? "URGENT STORY DIRECTIVE" : "PHOTO MISSION DETECTED"}
+              </span>
+            </div>
+            <h3 className="font-[family-name:var(--font-display)] text-lg font-medium text-[var(--ivory)] leading-snug">
               {bounty.copy || bounty.title}
-            </p>
+            </h3>
           </div>
           <CountdownRing fraction={fraction} />
         </div>
 
-        <div className="flex items-center gap-3 mt-4">
-          <span
-            className="px-3 py-1.5 rounded-[var(--radius-pill)] font-mono text-sm tabular-nums"
-            style={{ background: "var(--gold-500)", color: "var(--bg-0)" }}
-          >
-            +{bounty.points}
+        <div className="flex items-center gap-2.5 mt-4">
+          <span className="px-3 py-1.5 rounded-full bg-[var(--gold-500)] text-black font-mono text-xs font-bold tabular-nums shadow-sm flex items-center gap-1">
+            <span>+{bounty.points}</span>
+            <span className="text-[10px] uppercase font-sans">pts</span>
           </span>
           <button
             type="button"
@@ -136,19 +128,18 @@ export function BountyBanner({
               onShootNow(bounty.bountyId);
               retreat();
             }}
-            className="flex-1 py-2.5 rounded-[var(--radius-pill)] font-medium"
-            style={{ background: "var(--accent)", color: "var(--bg-0)" }}
+            className="flex-1 py-2.5 px-4 rounded-full btn-primary text-xs font-semibold flex items-center justify-center gap-1.5"
           >
-            Shoot now
+            <Camera className="w-3.5 h-3.5 stroke-[2.2]" />
+            <span>Shoot now</span>
           </button>
           <button
             type="button"
             onClick={retreat}
-            aria-label="Dismiss"
-            className="text-lg px-1"
-            style={{ color: "var(--ink-muted)" }}
+            aria-label="Dismiss mission"
+            className="p-2 rounded-full hover:bg-white/10 text-[var(--ink-muted)] hover:text-white transition-colors"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
       </div>

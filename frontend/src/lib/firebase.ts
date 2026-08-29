@@ -61,14 +61,53 @@ export function getUid(): string | null {
   return auth?.currentUser?.uid ?? null;
 }
 
-/** Spec 02 §1: after enroll/claim/reclaim the server mints custom claims for the uid; the
- * client must force-refresh its ID token to see them. Returns the claims the rules also read. */
-export async function refreshClaims(): Promise<{ personId?: string; host?: string }> {
+/** The claims `firestore.rules` reads, as the client sees them.
+ *
+ * `hosts` and `members` are **arrays**, and both used to be — or would have been — a single string.
+ * A scalar `host` claim silently revoked a host's first console the moment they created a second
+ * event, because `set_custom_user_claims` overwrites rather than appends (`backend/shared/auth.py`);
+ * membership has the same shape for the same reason, since one phone attends more than one event.
+ * `host` is still surfaced because tokens minted before the change last an hour. */
+export interface Claims {
+  personId?: string;
+  /** The legacy scalar, still honoured by `isHost()` in the rules. Prefer `hosts`. */
+  host?: string;
+  hosts: string[];
+  members: string[];
+}
+
+function claimArray(raw: unknown, legacy?: unknown): string[] {
+  const out = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
+  if (typeof legacy === "string" && legacy && !out.includes(legacy)) out.push(legacy);
+  return out;
+}
+
+/** Spec 02 §1: after enroll/claim/reclaim/join the server mints custom claims for the uid; the
+ * client must force-refresh its ID token to see them. A Firestore listener started before this
+ * resolves is evaluated against the *old* token and fails permission-denied — which is why
+ * `lib/membership.ts` awaits this before any surface subscribes. */
+export async function refreshClaims(): Promise<Claims> {
   const user = auth?.currentUser;
-  if (!user) return {};
+  if (!user) return { hosts: [], members: [] };
   const result = await user.getIdTokenResult(true);
+  const legacyHost = typeof result.claims.host === "string" ? result.claims.host : undefined;
   return {
     personId: typeof result.claims.personId === "string" ? result.claims.personId : undefined,
-    host: typeof result.claims.host === "string" ? result.claims.host : undefined,
+    host: legacyHost,
+    hosts: claimArray(result.claims.hosts, legacyHost),
+    members: claimArray(result.claims.members),
   };
+}
+
+/** Whether this token already grants membership of `eventId` — a host claim counts, exactly as
+ * `isMember(eventId)` in the rules ORs `isHost(eventId)` in. Read without a force-refresh, so it is
+ * cheap enough to call before deciding whether a join round trip is needed at all. */
+export async function hasMembership(eventId: string): Promise<boolean> {
+  const user = auth?.currentUser;
+  if (!user) return false;
+  const result = await user.getIdTokenResult();
+  return (
+    claimArray(result.claims.members).includes(eventId) ||
+    claimArray(result.claims.hosts, result.claims.host).includes(eventId)
+  );
 }

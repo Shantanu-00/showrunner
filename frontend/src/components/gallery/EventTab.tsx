@@ -1,24 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Trophy, Target } from "lucide-react";
 import type { EventPublicInfo } from "@/lib/types";
 import { listenActiveBounties } from "@/lib/firestore";
 import { PublicGallery } from "./PublicGallery";
 import { MissionsSheet } from "./MissionsSheet";
 import { LeaderboardSheet } from "./LeaderboardSheet";
 
-/** The Event tab (spec 12 §5.2 point 3): top bar (event name, 🏆 leaderboard entry, 🎯 missions
- * chip when any bounty is live) over the public gallery. Reels row lands with the Reel Director
- * session, not this one (spec 12 §5.2 names it as a separate, still-unbuilt row). */
 export function EventTab({
   eventId,
   eventInfo,
-  judgeMode,
+  explainMode,
   onShootNow,
 }: {
   eventId: string;
   eventInfo: EventPublicInfo | null;
-  judgeMode: boolean;
+  explainMode: boolean;
   onShootNow: (bountyId: string) => void;
 }) {
   const [missionCount, setMissionCount] = useState(0);
@@ -30,34 +28,39 @@ export function EventTab({
   );
 
   return (
-    <section>
+    <section className="max-w-4xl mx-auto">
       <div className="flex items-center justify-between px-4 pb-3">
-        <p className="font-[family-name:var(--font-display)] text-lg truncate" style={{ color: "var(--ivory)" }}>
-          {eventInfo?.name ?? ""}
-        </p>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono uppercase tracking-wider text-[var(--accent)]">
+            Curated Stream
+          </span>
+        </div>
+
         <div className="flex items-center gap-2 shrink-0">
           {missionCount > 0 && (
             <button
               type="button"
               onClick={() => setSheet("missions")}
-              className="text-sm px-3 py-1.5 rounded-[var(--radius-pill)]"
-              style={{ border: "var(--hairline)", color: "var(--accent)" }}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-[var(--gold-500)]/10 text-[var(--accent)] border border-[var(--gold-500)]/30 hover:bg-[var(--gold-500)]/20 transition-all active:scale-95 font-medium"
             >
-              🎯 {missionCount} active
+              <Target className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>{missionCount} active missions</span>
             </button>
           )}
+
           <button
             type="button"
             onClick={() => setSheet("leaderboard")}
             aria-label="Leaderboard"
-            className="text-lg px-2 py-1"
+            className="flex items-center justify-center p-2 rounded-full glass-card hover:border-[var(--accent)] text-[var(--gold-300)] transition-all active:scale-95"
+            title="Leaderboard"
           >
-            🏆
+            <Trophy className="w-4 h-4 stroke-[2]" />
           </button>
         </div>
       </div>
 
-      <PublicGallery eventId={eventId} stages={eventInfo?.stages ?? []} judgeMode={judgeMode} />
+      <PublicGallery eventId={eventId} stages={eventInfo?.stages ?? []} explainMode={explainMode} />
 
       {sheet === "missions" && (
         <MissionsSheet eventId={eventId} onShootNow={onShootNow} onClose={() => setSheet("none")} />

@@ -1,11 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Sparkles, Radio } from "lucide-react";
 import { JoinQr } from "./JoinQr";
 
-/** The three permanent kiosk overlays (spec 12 §6): monogram + stage + join-QR bottom-left, and
- * the truthful live status glyph bottom-right. Every number here traces to a real value —
- * no placeholder counters. */
 export function MonogramAndQr({
   eventName,
   stageLabel,
@@ -18,15 +16,16 @@ export function MonogramAndQr({
   qrSizePx?: number;
 }) {
   return (
-    <div className="absolute bottom-[3%] left-[3%] z-30 flex items-end gap-4">
+    <div className="absolute bottom-[3%] left-[3%] z-30 flex items-end gap-4 p-3 rounded-2xl glass-card backdrop-blur-xl border border-white/10 shadow-2xl">
       <JoinQr url={joinUrl} sizePx={qrSizePx} />
-      <div>
-        <p className="font-[family-name:var(--font-display)] text-2xl" style={{ color: "var(--ivory)" }}>
+      <div className="pr-2">
+        <h3 className="font-[family-name:var(--font-display)] text-2xl font-semibold text-gold-gradient">
           {eventName}
-        </p>
+        </h3>
         {stageLabel && (
-          <p className="text-sm font-medium" style={{ color: "var(--accent)" }}>
-            {stageLabel}
+          <p className="text-xs font-mono font-medium text-[var(--accent)] mt-0.5 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]" />
+            <span>{stageLabel}</span>
           </p>
         )}
       </div>
@@ -53,25 +52,22 @@ export function LiveStatusGlyph({
 
   return (
     <div
-      className="absolute bottom-[3%] right-[3%] z-30 font-mono tabular-nums text-sm flex items-center gap-2"
-      style={{ color: "var(--ivory)" }}
+      className="absolute bottom-[3%] right-[3%] z-30 font-mono tabular-nums text-xs px-4 py-2 rounded-full glass-card backdrop-blur-xl border border-white/10 shadow-2xl flex items-center gap-2.5 text-[var(--ivory)]"
     >
-      <span
-        aria-hidden
-        className="inline-block w-2 h-2 rounded-full"
-        style={{
-          background: "var(--ok)",
-          opacity: leaseHeld ? 1 : 0.3,
-          animation: leaseHeld ? "gold-sheen 2s ease-in-out infinite" : "none",
-        }}
-      />
-      <span>LIVE</span>
-      <span aria-hidden>·</span>
-      <span>{publicCount === null ? "—" : publicCount.toLocaleString()} photos</span>
-      <span aria-hidden>·</span>
-      <span>directed by agents</span>
-      <span aria-hidden>·</span>
-      <span>{agoSec === null ? "—" : `updated ${agoSec}s ago`}</span>
+      <div className="flex items-center gap-1.5 text-[var(--ok)] font-bold">
+        <span className="live-dot" />
+        <span>LIVE</span>
+      </div>
+      <span className="text-white/20">|</span>
+      <span className="text-[var(--gold-300)] font-semibold">
+        {publicCount === null ? "—" : publicCount.toLocaleString()} photos
+      </span>
+      <span className="text-white/20">|</span>
+      <span className="text-[var(--ink-muted)]">agent directed</span>
+      <span className="text-white/20">|</span>
+      <span className="text-[var(--ink-muted)]">
+        {agoSec === null ? "—" : `sync ${agoSec}s ago`}
+      </span>
     </div>
   );
 }

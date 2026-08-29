@@ -1,14 +1,10 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { X } from "lucide-react";
 import type { MediaDoc } from "@/lib/types";
-import { mediaRenderUrl } from "@/lib/api";
-import { useAuthedImage } from "@/lib/useAuthedImage";
+import { MediaImg } from "@/lib/MediaImg";
 
-/** Full-screen `display_1600` viewer (spec 04 §3) shared by the public gallery and the private
- * album — the two surfaces attach different action rows (Why this photo? vs share/save/veto).
- * Public-tier media renders straight from the unauthenticated render URL; pool/self-tier media
- * (the private album) needs a bearer token, so it goes through `useAuthedImage` instead. */
 export function Lightbox({
   eventId,
   media,
@@ -21,46 +17,47 @@ export function Lightbox({
   actions?: ReactNode;
 }) {
   const variant = media.displayUri ? "display" : media.thumbUri ? "thumb" : null;
+  // A pool/self-tier photo always needs a token; a public one needs one too once the event is
+  // invite-only, which is the choice `MediaImg` makes from the event's access mode.
   const isPublic = media.visibility === "public";
-  const authedSrc = useAuthedImage(eventId, !isPublic ? media.mediaId : null, variant ?? "display");
-  const src = variant ? (isPublic ? mediaRenderUrl(eventId, media.mediaId, variant) : authedSrc) : null;
+
   return (
-    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "rgba(0,0,0,0.92)" }}>
+    <div className="fixed inset-0 z-50 flex flex-col justify-between bg-black/95 backdrop-blur-xl animate-fadeIn">
       <div className="flex justify-end p-4">
         <button
           type="button"
           onClick={onClose}
-          className="text-3xl leading-none"
-          style={{ color: "var(--ivory)" }}
-          aria-label="Close"
+          className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+          aria-label="Close photo viewer"
         >
-          ×
+          <X className="w-6 h-6 stroke-[2]" />
         </button>
       </div>
 
-      <div className="flex-1 flex items-center justify-center px-2 overflow-hidden">
-        {src ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={src}
+      <div className="flex-1 flex items-center justify-center px-4 overflow-hidden">
+        {variant ? (
+          <MediaImg
+            eventId={eventId}
+            mediaId={media.mediaId}
+            variant={variant}
+            forceAuthed={!isPublic}
             alt={media.curator?.caption ?? ""}
-            className="max-h-full max-w-full object-contain rounded-[var(--radius-card)]"
+            className="max-h-[75vh] max-w-full object-contain rounded-2xl shadow-2xl border border-white/10"
+            fallback={<div className="w-full max-w-md h-80 skeleton-shimmer rounded-2xl" />}
           />
         ) : (
-          <div className="w-full h-64 skeleton-shimmer rounded-[var(--radius-card)]" />
+          <div className="w-full max-w-md h-80 skeleton-shimmer rounded-2xl" />
         )}
       </div>
 
-      {media.curator?.caption && (
-        <p
-          className="text-center px-6 pb-2 font-[family-name:var(--font-display)] italic text-lg"
-          style={{ color: "var(--ivory)" }}
-        >
-          {media.curator.caption}
-        </p>
-      )}
-
-      {actions && <div className="px-6 pb-8 pt-2 flex flex-wrap gap-3 justify-center">{actions}</div>}
+      <div className="p-6 max-w-2xl mx-auto w-full text-center">
+        {media.curator?.caption && (
+          <p className="font-[family-name:var(--font-display)] italic text-lg text-[var(--ivory)] mb-3 leading-relaxed">
+            &ldquo;{media.curator.caption}&rdquo;
+          </p>
+        )}
+        {actions && <div className="flex flex-wrap gap-3 justify-center items-center">{actions}</div>}
+      </div>
     </div>
   );
 }

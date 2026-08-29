@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Sparkles, Clock, WifiOff, HelpCircle, Eye } from "lucide-react";
 import type { MediaDoc } from "@/lib/types";
 import { listenHighlights, listenPeopleTiers, listenPublicGallery } from "@/lib/firestore";
 import { rankHighlights, whyFactorsForGallery } from "@/lib/scoring";
-import { mediaRenderUrl } from "@/lib/api";
+import { MediaImg } from "@/lib/MediaImg";
 import { StageChips } from "./StageChips";
 import { Lightbox } from "./Lightbox";
 import { WhyThisPhoto } from "./WhyThisPhoto";
@@ -12,11 +13,11 @@ import { WhyThisPhoto } from "./WhyThisPhoto";
 export function PublicGallery({
   eventId,
   stages,
-  judgeMode,
+  explainMode,
 }: {
   eventId: string;
   stages: Array<{ stageId: string; label: string }>;
-  judgeMode: boolean;
+  explainMode: boolean;
 }) {
   const [mode, setMode] = useState<"recent" | "highlights">("recent");
   const [stageFilter, setStageFilter] = useState<string | null>(null);
@@ -61,64 +62,84 @@ export function PublicGallery({
   return (
     <section>
       {!connected && (
-        <p className="text-center text-xs px-4 pb-2" style={{ color: "var(--warn)" }}>
-          📶 reconnecting — the gallery will catch up
-        </p>
+        <div className="flex items-center justify-center gap-1.5 text-center text-xs px-4 pb-3 text-[var(--warn)]">
+          <WifiOff className="w-3.5 h-3.5" />
+          <span>Reconnecting — the gallery will catch up live</span>
+        </div>
       )}
 
       <div className="flex items-center gap-2 px-4 pb-3">
-        <button
-          type="button"
-          onClick={() => setMode("recent")}
-          className="text-sm px-3 py-1.5 rounded-[var(--radius-pill)]"
-          style={{
-            background: mode === "recent" ? "var(--accent)" : "transparent",
-            color: mode === "recent" ? "var(--bg-0)" : "var(--ink-muted)",
-            border: mode === "recent" ? "none" : "var(--hairline)",
-          }}
-        >
-          Recent
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("highlights")}
-          className="text-sm px-3 py-1.5 rounded-[var(--radius-pill)]"
-          style={{
-            background: mode === "highlights" ? "var(--accent)" : "transparent",
-            color: mode === "highlights" ? "var(--bg-0)" : "var(--ink-muted)",
-            border: mode === "highlights" ? "none" : "var(--hairline)",
-          }}
-        >
-          ✨ Highlights
-        </button>
+        <div className="flex items-center p-1 rounded-full bg-white/5 border border-white/10">
+          <button
+            type="button"
+            onClick={() => setMode("recent")}
+            className={`flex items-center gap-1.5 text-xs px-3.5 py-1.5 rounded-full transition-all font-medium ${
+              mode === "recent"
+                ? "bg-[var(--accent)] text-black font-semibold shadow-md"
+                : "text-[var(--ink-muted)] hover:text-[var(--ivory)]"
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>Latest</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("highlights")}
+            className={`flex items-center gap-1.5 text-xs px-3.5 py-1.5 rounded-full transition-all font-medium ${
+              mode === "highlights"
+                ? "bg-[var(--accent)] text-black font-semibold shadow-md"
+                : "text-[var(--ink-muted)] hover:text-[var(--ivory)]"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Director&rsquo;s Picks</span>
+          </button>
+        </div>
       </div>
 
       <StageChips stages={stages} active={stageFilter} onChange={setStageFilter} />
 
       {visible.length === 0 ? (
-        <p className="text-center mt-16 px-5" style={{ color: "var(--ink-muted)" }}>
-          The kiosk is waiting for its first photo. Scan, shoot, make history.
-        </p>
+        <div className="text-center mt-16 px-6 py-12 rounded-2xl glass-card mx-4 border border-dashed border-white/10">
+          <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-[var(--ink-muted)] mx-auto mb-3">
+            <Sparkles className="w-6 h-6" />
+          </div>
+          <p className="font-[family-name:var(--font-display)] text-lg text-[var(--ivory)] mb-1">
+            Waiting for first uploads
+          </p>
+          <p className="text-xs text-[var(--ink-muted)] max-w-sm mx-auto">
+            Scan the QR code or tap the Camera tab to capture moments and send them to the autonomous director.
+          </p>
+        </div>
       ) : (
-        <div className="columns-2 sm:columns-3 gap-2 px-3 mt-2 [column-fill:_balance]">
+        <div className="columns-2 sm:columns-3 gap-2.5 px-3 mt-3 [column-fill:_balance]">
           {visible.map((media) => (
             <button
               key={media.mediaId}
               type="button"
               onClick={() => setSelected(media)}
-              className="block w-full mb-2 break-inside-avoid rounded-[var(--radius-card)] overflow-hidden"
-              style={{ border: "var(--hairline)" }}
+              className="group relative block w-full mb-2.5 break-inside-avoid rounded-xl overflow-hidden glass-card hover:border-[var(--accent)] transition-all transform hover:-translate-y-0.5 shadow-md"
             >
               {media.thumbUri ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={mediaRenderUrl(eventId, media.mediaId, "thumb")}
+                // On an invite-only event this renders through authed-fetch → blob instead of a bare
+                // `<img src>`, because `api/media.py` stops serving bytes unauthenticated there.
+                <MediaImg
+                  eventId={eventId}
+                  mediaId={media.mediaId}
+                  variant="thumb"
                   alt={media.curator?.caption ?? ""}
-                  className="w-full h-auto block"
+                  className="w-full h-auto block object-cover group-hover:scale-105 transition-transform duration-300"
+                  fallback={<div className="w-full aspect-square skeleton-shimmer" />}
                 />
               ) : (
                 <div className="w-full aspect-square skeleton-shimmer" />
               )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                <span className="text-[11px] text-[var(--ivory)] font-medium truncate flex items-center gap-1">
+                  <Eye className="w-3 h-3" />
+                  <span>View photo</span>
+                </span>
+              </div>
             </button>
           ))}
         </div>
@@ -133,21 +154,21 @@ export function PublicGallery({
             setShowWhy(false);
           }}
           actions={
-            judgeMode ? (
+            explainMode ? (
               <button
                 type="button"
                 onClick={() => setShowWhy(true)}
-                className="text-sm px-4 py-2 rounded-[var(--radius-pill)]"
-                style={{ border: "var(--hairline)", color: "var(--accent)" }}
+                className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-full glass-pill text-[var(--accent)] hover:border-[var(--accent)] font-medium"
               >
-                Why this photo?
+                <HelpCircle className="w-3.5 h-3.5" />
+                <span>Explain Ranking Factors</span>
               </button>
             ) : undefined
           }
         />
       )}
 
-      {selected && showWhy && judgeMode && (
+      {selected && showWhy && explainMode && (
         <WhyThisPhoto
           factors={whyFactorsForGallery(selected, tierByPersonId, rankOf(selected.mediaId))}
           onClose={() => setShowWhy(false)}

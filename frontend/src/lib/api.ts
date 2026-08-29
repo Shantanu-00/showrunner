@@ -1,10 +1,12 @@
 import { getUid, auth } from "./firebase";
+import { recordAccessMode } from "./eventAccess";
 import { RING_VALUE } from "./types";
 import type {
   ClaimLinkResponse,
   ConsentRing,
   EnrollResponse,
   EventPublicInfo,
+  JoinResponse,
   RedeemResponse,
   UploadBatchRequest,
   UploadBatchResponse,
@@ -22,9 +24,14 @@ export function mediaRenderPath(eventId: string, mediaId: string, variant: "thum
   return `/v1/events/${eventId}/media/${mediaId}/render?variant=${variant}`;
 }
 
-/** For the public-only surfaces (kiosk, public gallery): the render endpoint's public branch is
- * deliberately unauthenticated (same reasoning as the reel video), so these can go straight into
- * `<img src>` with no token. Pool/self-tier surfaces need `useAuthedImage` instead. */
+/** For the public-only surfaces of an **open** event (kiosk, public gallery): the render endpoint's
+ * public branch is unauthenticated there (same reasoning as the reel video), so this can go straight
+ * into `<img src>` with no token and a 60-photo grid costs 60 plain image requests.
+ *
+ * Not safe to use unconditionally any more. On an invite-only event `api/media.py` requires event
+ * membership on every branch, and a bare `<img src>` cannot carry an Authorization header — so it
+ * would 404 and render a broken image. Use `MediaImg` (`lib/MediaImg.tsx`), which picks this path or
+ * `useAuthedImage` per event; pool/self-tier surfaces still need `useAuthedImage` on either kind. */
 export function mediaRenderUrl(eventId: string, mediaId: string, variant: "thumb" | "display"): string {
   return `${API_URL}${mediaRenderPath(eventId, mediaId, variant)}`;
 }
@@ -34,7 +41,11 @@ export function mediaRenderUrl(eventId: string, mediaId: string, variant: "thumb
  * reinvented per surface. */
 export async function authedFetch(path: string, init: RequestInit): Promise<Response> {
   const token = await auth?.currentUser?.getIdToken();
-  return fetch(`${API_URL}${path}`, {
+  // An absolute URL passes through unprefixed. `ReelDoc.videoUri` is stored absolute (the publisher
+  // builds it from `API_BASE_URL` so a kiosk can load it without knowing this app's config), and on an
+  // invite-only event it has to be fetched with a token like everything else.
+  const url = /^https?:\/\//.test(path) ? path : `${API_URL}${path}`;
+  return fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -106,9 +117,33 @@ export async function refreshUploadUrl(
   return res.json();
 }
 
-/** GET /v1/events/{eventId}/public — the narrow, non-sensitive bootstrap (name/theme/stage). */
+/** GET /v1/events/{eventId}/public — the narrow, non-sensitive bootstrap (name/theme/stage).
+ *
+ * Also the one place `accessMode` enters the client, so it is recorded here rather than at each of the
+ * four surfaces that fetch this: `MediaImg` needs it to decide between a bare `<img src>` and an
+ * authed-fetch blob, and threading it through the kiosk slot tree and the gallery's `.map()` would put
+ * the same prop in a dozen signatures (`lib/eventAccess.ts`). */
 export async function getEventPublic(eventId: string): Promise<EventPublicInfo> {
-  return authedJson<EventPublicInfo>(`/v1/events/${eventId}/public`, { method: "GET" });
+  const info = await authedJson<EventPublicInfo>(`/v1/events/${eventId}/public`, { method: "GET" });
+  recordAccessMode(eventId, info.accessMode);
+  return info;
+}
+
+/** POST /v1/events/{eventId}/join — the door (spec 02 §1's event boundary).
+ *
+ * Idempotent and cheap to call on every page load: the server only takes a seat and only writes a
+ * claim the first time. Until this succeeds and the ID token is force-refreshed, **every** Firestore
+ * listener on this event fails permission-denied, because `isMember(eventId)` in `firestore.rules` is
+ * a claim check — so this is the first call any guest surface makes. `lib/membership.ts` is the
+ * wrapper every shell actually uses; this is the raw request.
+ *
+ * `code` is required only on an invite-only event, where it is compared against a stored sha256 and
+ * never travels anywhere but this request body. */
+export async function joinEvent(eventId: string, code?: string): Promise<JoinResponse> {
+  return authedJson<JoinResponse>(`/v1/events/${eventId}/join`, {
+    method: "POST",
+    body: JSON.stringify(code ? { code } : {}),
+  });
 }
 
 /** GET /warmup — fire-and-forget from `/judge` (EXECUTION-PLAN §7e row 16). `worker-face` carries a

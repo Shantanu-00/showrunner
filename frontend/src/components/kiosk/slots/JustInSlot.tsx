@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { JustInSlot as JustInSlotType, MediaDoc } from "@/lib/types";
 import { listenJustIn } from "@/lib/firestore";
-import { mediaRenderUrl } from "@/lib/api";
+import { MediaImg } from "@/lib/MediaImg";
 
 /** `just_in` — the "your photo is on the wall" guarantee (spec 04 §4): recency-only, no score
  * term, no curation. A 96px filmstrip of whatever just went public. */
@@ -19,10 +19,10 @@ export function JustInSlot({ eventId, slot }: { eventId: string; slot: JustInSlo
   return (
     <div className="absolute inset-0" style={{ background: "var(--bg-0)" }}>
       {hero?.displayUri || hero?.thumbUri ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={mediaRenderUrl(eventId, hero.mediaId, hero.displayUri ? "display" : "thumb")}
-          alt=""
+        <MediaImg
+          eventId={eventId}
+          mediaId={hero.mediaId}
+          variant={hero.displayUri ? "display" : "thumb"}
           className="absolute inset-0 w-full h-full object-cover"
           style={{ filter: "blur(24px) brightness(0.5)" }}
         />
@@ -50,10 +50,10 @@ export function JustInSlot({ eventId, slot }: { eventId: string; slot: JustInSlo
               style={{ border: "var(--hairline)" }}
             >
               {media.thumbUri && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={mediaRenderUrl(eventId, media.mediaId, "thumb")}
-                  alt=""
+                <MediaImg
+                  eventId={eventId}
+                  mediaId={media.mediaId}
+                  variant="thumb"
                   className="w-full h-full object-cover"
                 />
               )}

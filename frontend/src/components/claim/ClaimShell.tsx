@@ -2,14 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Link2, Sparkles, AlertTriangle } from "lucide-react";
 import { ensureAnonymousAuth, refreshClaims } from "@/lib/firebase";
 import { claimByCode, ApiError } from "@/lib/api";
 import { useRouteEventId } from "@/lib/routeParams";
 
-/** `/events/{eventId}/claim#<code>` (spec 02 §3.1, matches the real URL
- * `backend/api/identity.py::create_claim_link` builds). No custom token is minted — the server
- * grants `personId` directly to whichever uid is on this request's bearer token, so the only
- * client-side step after a successful call is a force-refreshed ID token. */
 export function ClaimShell({ eventId: fallbackEventId }: { eventId: string }) {
   const eventId = useRouteEventId("/events/", fallbackEventId);
   const router = useRouter();
@@ -18,7 +15,7 @@ export function ClaimShell({ eventId: fallbackEventId }: { eventId: string }) {
   useEffect(() => {
     const code = window.location.hash.slice(1);
     if (!code) {
-      setError("This link is missing its code.");
+      setError("This access link is missing its authorization code.");
       return;
     }
     void ensureAnonymousAuth()
@@ -30,29 +27,42 @@ export function ClaimShell({ eventId: fallbackEventId }: { eventId: string }) {
       .catch((err) => {
         setError(
           err instanceof ApiError && (err.status === 403 || err.status === 404)
-            ? "This link has expired or was revoked."
-            : "Couldn't reach the director yet — try again in a moment."
+            ? "This magic link has expired or was revoked by the host."
+            : "Connection error reaching host authority — please retry."
         );
       });
   }, [eventId, router]);
 
   return (
-    <div
-      className="fixed inset-0 flex flex-col items-center justify-center px-6 text-center"
-      style={{ background: "var(--bg-0)" }}
-    >
+    <div className="fixed inset-0 flex flex-col items-center justify-center px-6 text-center bg-[var(--bg-0)] animate-fadeIn">
       {error ? (
-        <>
-          <p className="text-5xl mb-4" aria-hidden>
-            🔗
-          </p>
-          <p style={{ color: "var(--ink-muted)" }}>{error}</p>
-        </>
+        <div className="max-w-sm p-8 rounded-3xl glass-card border border-[var(--danger)]/30 flex flex-col items-center">
+          <div className="w-14 h-14 rounded-full bg-[var(--danger)]/20 text-[var(--danger)] flex items-center justify-center mb-4">
+            <AlertTriangle className="w-7 h-7" />
+          </div>
+          <h3 className="font-[family-name:var(--font-display)] text-xl font-medium text-[var(--ivory)] mb-2">
+            Authorization Failed
+          </h3>
+          <p className="text-xs text-[var(--ink-muted)] mb-6 leading-relaxed">{error}</p>
+          <a
+            href={`/join/${eventId}`}
+            className="btn-primary w-full py-3 text-xs font-semibold text-center"
+          >
+            Return to Event
+          </a>
+        </div>
       ) : (
-        <>
-          <div className="w-16 h-16 rounded-full skeleton-shimmer mb-6" />
-          <p style={{ color: "var(--ink-muted)" }}>Opening your album…</p>
-        </>
+        <div className="flex flex-col items-center">
+          <div className="relative w-16 h-16 rounded-full skeleton-shimmer mb-4 flex items-center justify-center border border-[var(--hairline)]">
+            <Sparkles className="w-8 h-8 text-[var(--accent)] animate-pulse" />
+          </div>
+          <h3 className="font-[family-name:var(--font-display)] text-xl font-medium text-[var(--ivory)] mb-1">
+            Redeeming Magic Link
+          </h3>
+          <p className="text-xs text-[var(--ink-muted)] font-mono">
+            Verifying token claims & opening private album…
+          </p>
+        </div>
       )}
     </div>
   );

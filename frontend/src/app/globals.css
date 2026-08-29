@@ -4,19 +4,25 @@
 @theme {
   --color-bg-0: var(--bg-0);
   --color-bg-1: var(--bg-1);
+  --color-bg-2: var(--bg-2);
   --color-maroon-900: var(--maroon-900);
   --color-maroon-700: var(--maroon-700);
   --color-maroon-500: var(--maroon-500);
   --color-gold-500: var(--gold-500);
   --color-gold-300: var(--gold-300);
   --color-ivory: var(--ivory);
+  --color-ivory-dim: var(--ivory-dim);
   --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-danger: var(--danger);
   --color-accent: var(--accent, var(--gold-500));
   --color-accent-2: var(--accent-2, var(--maroon-500));
+  --color-accent-soft: var(--accent-soft, var(--gold-300));
+  --color-accent-glow: var(--accent-glow, var(--gold-glow));
 
+  --radius-sm: var(--radius-sm);
   --radius-card: var(--radius-card);
   --radius-banner: var(--radius-banner);
   --radius-pill: var(--radius-pill);
@@ -26,18 +32,95 @@ html,
 body {
   background: var(--bg-0);
   color: var(--ivory);
+  min-height: 100vh;
+  selection-background-color: var(--accent);
+  selection-color: var(--bg-0);
+}
+
+body {
+  background-image: 
+    radial-gradient(ellipse 80% 50% at 50% -20%, var(--accent-glow), transparent 70%),
+    radial-gradient(ellipse 60% 40% at 50% 120%, rgba(61, 12, 17, 0.2), transparent 70%);
+  background-attachment: fixed;
 }
 
 * {
   font-variant-numeric: normal;
+  box-sizing: border-box;
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-/* Spec 12 §4 — the no-spinner rule: every wait state is a gold sheen sweep, never an
-   indeterminate spinner. Shared by the upload filmstrip, kiosk cold start, and the enroll ritual. */
+/* Glassmorphism & Modern Luxury Surfaces */
+.glass-card {
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: var(--hairline-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-glass);
+  transition: all var(--dur-standard) var(--ease-luxe);
+}
+
+.glass-card:hover {
+  border-color: rgba(212, 175, 106, 0.35);
+}
+
+.glass-pill {
+  background: var(--bg-glass);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: var(--hairline);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-luxe);
+}
+
+.glow-accent {
+  box-shadow: 0 0 25px -4px var(--accent-glow);
+}
+
+.text-gold-gradient {
+  background: linear-gradient(135deg, var(--gold-200) 0%, var(--gold-400) 50%, var(--gold-500) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-soft) 100%);
+  color: #0b0709;
+  font-weight: 600;
+  border-radius: var(--radius-pill);
+  box-shadow: 0 4px 20px -4px var(--accent-glow);
+  transition: all var(--dur-standard) var(--ease-luxe);
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 25px -2px var(--accent-glow);
+  filter: brightness(1.06);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0px);
+}
+
+.btn-secondary {
+  background: var(--bg-1);
+  border: var(--hairline-subtle);
+  color: var(--ivory);
+  border-radius: var(--radius-pill);
+  transition: all var(--dur-standard) var(--ease-luxe);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg-2);
+  color: var(--gold-300);
+}
+
+/* Spec 12 §4 — the no-spinner rule: gold sheen sweep for wait states */
 @keyframes gold-sheen {
   0% {
     background-position: -150% 0;
@@ -50,25 +133,24 @@ body {
   background-image: linear-gradient(
     100deg,
     transparent 35%,
-    rgb(212 175 106 / 0.35) 50%,
+    rgba(212, 175, 106, 0.28) 50%,
     transparent 65%
   );
   background-size: 250% 100%;
   animation: gold-sheen 1.6s linear infinite;
 }
 
-/* Consent moment C2 (spec 02 §4, spec 12 §5.2) — the animated gold ring around the selfie circle. */
+/* Consent moment C2 — animated high-tech gold scanner ring */
 @keyframes consent-ring-spin {
   to {
     transform: rotate(360deg);
   }
 }
 .consent-ring {
-  animation: consent-ring-spin 2.4s linear infinite;
+  animation: consent-ring-spin 3s linear infinite;
 }
 
-/* Kiosk hero Ken Burns (spec 12 §4): scale 1.04 → 1.12 across the slot's holdSec, driven inline
-   via --ken-burns-duration; direction (pan-away-from-face) is set per-slot via transform-origin. */
+/* Kiosk hero Ken Burns */
 @keyframes ken-burns {
   from {
     transform: scale(1.04);
@@ -81,10 +163,7 @@ body {
   animation: ken-burns var(--ken-burns-duration, 6s) linear forwards;
 }
 
-/* Bounty banner choreography (spec 12 §7): slide+fade in on `--ease-luxe`, a quiet retreat on
-   expiry/dismiss, and the award burst is one CSS-only "confetti" sweep (no canvas dependency —
-   ≤60 absolutely-positioned pieces, each animating this same keyframe with a randomised delay/
-   drift set inline by the component, which is cheaper than a second animation per particle). */
+/* Bounty HUD banner animations */
 @keyframes banner-in {
   from {
     transform: translateY(-100%);
@@ -111,6 +190,7 @@ body {
 .banner-out {
   animation: banner-out var(--dur-standard) var(--ease-luxe) forwards;
 }
+
 @keyframes confetti-fall {
   0% {
     transform: translate(0, 0) rotate(0deg);
@@ -124,6 +204,7 @@ body {
 .confetti-piece {
   animation: confetti-fall 1.2s ease-out forwards;
 }
+
 @keyframes points-pop {
   0% {
     transform: scale(0.6);
@@ -142,6 +223,26 @@ body {
   animation: points-pop var(--dur-standard) var(--ease-luxe) forwards;
 }
 
+/* Subtle live radar pulse for live badges */
+@keyframes live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(74, 222, 128, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0);
+  }
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--ok);
+  border-radius: 9999px;
+  animation: live-pulse 2s infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .skeleton-shimmer,
   .consent-ring,
@@ -149,7 +250,8 @@ body {
   .banner-in,
   .banner-out,
   .confetti-piece,
-  .points-pop {
+  .points-pop,
+  .live-dot {
     animation: none !important;
   }
   .ken-burns {

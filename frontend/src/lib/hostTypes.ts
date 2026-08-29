@@ -167,4 +167,20 @@ export interface HostEventDoc {
   publicFrozen: boolean;
   costSoFarUsd: number;
   wrapReport?: WrapReport | null;
+  /** The door (spec 02 §1's event boundary), host-settable via `POST …/access*`. Only the code's
+   * sha256 is ever stored, so a console can show *that* a code exists and when it was rotated, never
+   * the code itself — the plaintext is returned once, at mint time, and cannot be re-read. */
+  access?: {
+    mode?: "open" | "invite";
+    /** Seats, not people: the cap counts uids and one person routinely holds several (spec 02 §1). */
+    maxGuests?: number | null;
+    codeHash?: string | null;
+    codeRotatedAt?: string | null;
+    /** Honoured by the kiosk client, not by a security rule — `kiosk/{document}` is
+     * `allow read: if true` (spec 09 §3) and a rule cannot read this without a `get()`. */
+    kioskPublic?: boolean;
+  };
+  /** Seats taken. Incremented transactionally by `POST /join`, in the same transaction as the
+   * `guests/{uid}` create, so the counter and the roster cannot disagree. */
+  guestCount?: number;
 }

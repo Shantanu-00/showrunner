@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ShieldCheck, KeyRound, ArrowRight, LayoutDashboard, Calendar, RefreshCw } from "lucide-react";
 import { ensureAnonymousAuth, refreshClaims } from "@/lib/firebase";
 import { redeemHostCode, getConsoleSummary } from "@/lib/hostApi";
 import { listenHostEvent } from "@/lib/hostFirestore";
 import { useRouteEventId } from "@/lib/routeParams";
 import type { ConsoleSummary, HostEventDoc } from "@/lib/hostTypes";
 import { FreezeButton } from "./FreezeButton";
+import { AccessPanel } from "./AccessPanel";
+import { ClaimReviewPanel } from "./ClaimReviewPanel";
+import { rememberEvent } from "./rememberedEvents";
 import { LifecyclePanel } from "./LifecyclePanel";
 import { ItineraryPanel } from "./ItineraryPanel";
 import { StageOverridePanel } from "./StageOverridePanel";
@@ -14,15 +18,21 @@ import { WrapReportPanel } from "./WrapReportPanel";
 
 type AuthState = "checking" | "need-code" | "ready" | "not-found";
 
-/** `/host/{eventId}` — the producer's booth (spec 08 §4, spec 12 §8), descoped this session to
- * four things plus the persistent panic controls: timeline (paste→parse→review), the master
- * switch, "Now: ▶ stage", and the wrap-up report. Cut: the coverage heat-grid, review-queue UI
- * (`POST /media/{id}/review` exists — curl it), the People tab, director prefs. */
+/** The `host` custom claim is moving from a single event id to a list, so one browser can hold
+ * several events at once. Read both shapes: a client that only understood the scalar would lock the
+ * host out of their own console the moment the claim became an array. */
+function grantsHostOf(claims: { host?: string }, eventId: string): boolean {
+  const host = claims.host as string | string[] | undefined;
+  if (Array.isArray(host)) return host.includes(eventId);
+  return host === eventId;
+}
+
 export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string }) {
   const eventId = useRouteEventId("/host/", fallbackEventId);
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [codeInput, setCodeInput] = useState("");
   const [codeError, setCodeError] = useState<string | null>(null);
+  const [otherEvent, setOtherEvent] = useState<{ eventId: string; name: string } | null>(null);
   const [redeeming, setRedeeming] = useState(false);
   const [event, setEvent] = useState<HostEventDoc | null>(null);
   const [summary, setSummary] = useState<ConsoleSummary | null>(null);
@@ -39,11 +49,22 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
       try {
         await redeemHostCode(hostCode);
       } catch {
-        // Falls through to the claim check below — an expired/bad code just means no access yet.
+        // Fall through
+      } finally {
+        // The code is spent either way, and leaving it in the address bar leaves it in browser
+        // history, in a screenshot, and in whatever the host pastes to a co-host next. Strip it
+        // without a navigation so nothing re-mounts and no history entry is added.
+        params.delete("hostCode");
+        const query = params.toString();
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`
+        );
       }
     }
     const claims = await refreshClaims();
-    setAuthState(claims.host === eventId ? "ready" : "need-code");
+    setAuthState(grantsHostOf(claims, eventId) ? "ready" : "need-code");
   }, [eventId]);
 
   useEffect(() => {
@@ -54,7 +75,12 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
     if (authState !== "ready") return;
     const unsub = listenHostEvent(
       eventId,
-      (doc) => setEvent(doc ?? null),
+      (doc) => {
+        setEvent(doc ?? null);
+        // Whichever way this host got in — creation, a recovery code, a co-host link — this browser
+        // can now offer them "continue to your event" from /host instead of asking for the id again.
+        if (doc?.name) rememberEvent(eventId, doc.name);
+      },
       () => setAuthState("not-found")
     );
     refreshSummary();
@@ -66,87 +92,165 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
     setRedeeming(true);
     setCodeError(null);
     try {
-      await redeemHostCode(codeInput.trim());
+      const redeemed = await redeemHostCode(codeInput.trim());
       const claims = await refreshClaims();
-      setAuthState(claims.host === eventId ? "ready" : "need-code");
-      if (claims.host !== eventId) setCodeError("That code isn't for this event.");
+      const ok = grantsHostOf(claims, eventId);
+      setAuthState(ok ? "ready" : "need-code");
+      if (!ok) {
+        // The code was valid — it just belongs to a different event. Say which one and offer the
+        // door, rather than "that code isn't for this event" and a dead end.
+        setCodeError(null);
+        setOtherEvent(
+          redeemed.eventId
+            ? { eventId: redeemed.eventId, name: redeemed.eventName ?? redeemed.eventId }
+            : null
+        );
+        if (!redeemed.eventId) setCodeError("That code isn't for this event.");
+      }
     } catch {
-      setCodeError("That code didn't work — check it and try again.");
+      setCodeError("That code didn't work — please check and try again.");
     } finally {
       setRedeeming(false);
     }
   }
 
   if (authState === "checking") {
-    return <p className="text-center mt-24" style={{ color: "var(--ink-muted)" }}>Checking access…</p>;
-  }
-
-  if (authState === "not-found") {
-    return <p className="text-center mt-24" style={{ color: "var(--ink-muted)" }}>Unknown event.</p>;
-  }
-
-  if (authState === "need-code") {
     return (
-      <div className="max-w-md mx-auto px-5 py-24 text-center">
-        <p className="font-[family-name:var(--font-display)] text-xl mb-3" style={{ color: "var(--ivory)" }}>
-          Host access needed
-        </p>
-        <p className="text-sm mb-6" style={{ color: "var(--ink-muted)" }}>
-          Paste your host link&rsquo;s code or your recovery code.
-        </p>
-        <input
-          value={codeInput}
-          onChange={(e) => setCodeInput(e.target.value)}
-          placeholder="Host code"
-          className="w-full mb-3 px-4 py-3 rounded-[var(--radius-card)]"
-          style={{ background: "var(--bg-1)", border: "var(--hairline)", color: "var(--ivory)" }}
-        />
-        {codeError && (
-          <p className="text-sm mb-3" style={{ color: "var(--danger)" }}>
-            {codeError}
-          </p>
-        )}
-        <button
-          type="button"
-          onClick={() => void submitCode()}
-          disabled={redeeming}
-          className="w-full py-3 rounded-[var(--radius-pill)] font-medium"
-          style={{ background: "var(--accent)", color: "var(--bg-0)", opacity: redeeming ? 0.6 : 1 }}
-        >
-          {redeeming ? "Checking…" : "Unlock console"}
-        </button>
+      // Spec 12 §4's no-spinner rule: a branded shimmer plus copy that names what is happening,
+      // never an indeterminate ring.
+      <div className="max-w-3xl mx-auto px-5 pt-12">
+        <div className="h-9 w-56 rounded-xl skeleton-shimmer bg-white/5 mb-6" />
+        <div className="h-32 rounded-3xl skeleton-shimmer bg-white/5 mb-3" />
+        <div className="h-32 rounded-3xl skeleton-shimmer bg-white/5 mb-4" />
+        <p className="text-xs text-[var(--ink-muted)]">Checking you&rsquo;re the host of this event…</p>
       </div>
     );
   }
 
-  if (!event) {
-    return <p className="text-center mt-24" style={{ color: "var(--ink-muted)" }}>Loading…</p>;
+  if (authState === "not-found") {
+    return (
+      <div className="text-center mt-24 px-6 py-12 rounded-2xl glass-card max-w-md mx-auto">
+        <p className="text-sm text-[var(--ink-muted)]">Unknown or expunged event ID.</p>
+      </div>
+    );
   }
 
-  return (
-    <div className="max-w-2xl mx-auto px-5 pb-24 pt-6">
-      <div
-        className="sticky top-0 z-40 -mx-5 px-5 py-3 mb-8 flex items-center justify-between gap-3"
-        style={{ background: "var(--bg-0)", borderBottom: "var(--hairline)" }}
-      >
-        <div className="min-w-0">
-          <p className="font-[family-name:var(--font-display)] text-lg truncate" style={{ color: "var(--ivory)" }}>
-            {event.name}
+  if (authState === "need-code") {
+    return (
+      <div className="max-w-md mx-auto px-5 py-24 text-center animate-fadeIn">
+        <div className="p-8 rounded-3xl glass-card border border-white/10 shadow-2xl flex flex-col items-center">
+          <div className="w-14 h-14 rounded-full bg-[var(--gold-500)]/15 text-[var(--accent)] flex items-center justify-center mb-4">
+            <KeyRound className="w-7 h-7" />
+          </div>
+          <h2 className="font-[family-name:var(--font-display)] text-2xl font-semibold text-[var(--ivory)] mb-2">
+            Host Access Required
+          </h2>
+          <p className="text-xs text-[var(--ink-muted)] mb-6 max-w-xs leading-relaxed">
+            Enter your host invite code or recovery key to open the event control booth.
           </p>
-          <p className="text-xs font-mono" style={{ color: "var(--ink-muted)" }}>
-            {event.status}
-          </p>
-        </div>
-        <FreezeButton
-          eventId={eventId}
-          frozen={event.publicFrozen}
-          onChanged={(frozen) => setEvent((prev) => (prev ? { ...prev, publicFrozen: frozen } : prev))}
-        />
-      </div>
 
-      <LifecyclePanel event={event} eventId={eventId} summary={summary} onRefresh={refreshSummary} />
+          <input
+            value={codeInput}
+            onChange={(e) => setCodeInput(e.target.value)}
+            placeholder="Enter host code"
+            className="w-full px-4 py-3 rounded-xl bg-black/50 border border-white/10 text-sm font-mono text-center text-[var(--ivory)] placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none mb-3"
+          />
+
+          {codeError && (
+            <p className="text-xs text-[var(--danger)] mb-4">{codeError}</p>
+          )}
+
+          {otherEvent && (
+            <div className="w-full mb-4 p-4 rounded-2xl bg-[var(--warn)]/10 border border-[var(--warn)]/30 text-left">
+              <p className="text-xs text-[var(--ivory-dim)] leading-relaxed mb-3">
+                That code opens <strong className="text-[var(--ivory)]">{otherEvent.name}</strong>,
+                not this event.
+              </p>
+              <a
+                href={`/host/${encodeURIComponent(otherEvent.eventId)}`}
+                className="btn-secondary inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold"
+              >
+                <span>Go to that event</span>
+                <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
+              </a>
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={redeeming || !codeInput.trim()}
+            onClick={() => void submitCode()}
+            className="btn-primary w-full py-3.5 rounded-full text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
+          >
+            <span>{redeeming ? "Verifying…" : "Authenticate as Host"}</span>
+            <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+          </button>
+
+          <a
+            href="/host"
+            className="mt-4 text-[11px] font-semibold text-[var(--ink-muted)] hover:text-[var(--accent)] transition-colors"
+          >
+            Don&rsquo;t have a code? Create an event instead
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (!event) return null;
+
+  return (
+    <div className="min-h-screen pb-24 max-w-3xl mx-auto px-5 pt-8">
+      {/* Header Command Bar */}
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 mb-8 border-b border-white/10">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[11px] font-mono uppercase tracking-[0.2em] text-[var(--accent)]">
+              HOST DIRECTORY BOOTH
+            </span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[var(--ink-muted)] font-mono">
+              {event.class}
+            </span>
+          </div>
+          <h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold text-gold-gradient">
+            {event.name}
+          </h1>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <FreezeButton
+            eventId={eventId}
+            frozen={event.publicFrozen ?? false}
+            onChanged={(frozen) => setEvent({ ...event, publicFrozen: frozen })}
+          />
+        </div>
+      </header>
+
+      <LifecyclePanel
+        event={event}
+        eventId={eventId}
+        summary={summary}
+        onRefresh={() => {
+          refreshSummary();
+        }}
+      />
+
+      {/* Highest in the column after the lifecycle KPIs on purpose: a held claim is a guest standing
+          in the room who cannot see their own photos, and it is only resolvable here. */}
+      <ClaimReviewPanel eventId={eventId} />
+
+      <AccessPanel event={event} eventId={eventId} guestCount={summary?.guests ?? null} />
+
+      <StageOverridePanel
+        event={event}
+        eventId={eventId}
+        onChanged={() => {
+          refreshSummary();
+        }}
+      />
+
       <ItineraryPanel event={event} eventId={eventId} />
-      <StageOverridePanel event={event} eventId={eventId} onChanged={refreshSummary} />
+
       {event.wrapReport && <WrapReportPanel report={event.wrapReport} />}
     </div>
   );

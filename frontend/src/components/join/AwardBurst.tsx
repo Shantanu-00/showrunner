@@ -1,18 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Sparkles } from "lucide-react";
 import { listenGuestPoints } from "@/lib/firestore";
 
-const HOLD_MS = 1400;
-const PARTICLE_COUNT = 24;
-const COLORS = ["var(--gold-500)", "var(--gold-300)", "var(--maroon-500)"];
+const HOLD_MS = 1500;
+const PARTICLE_COUNT = 28;
+const COLORS = ["var(--gold-500)", "var(--gold-300)", "var(--maroon-500)", "#ffffff"];
 
-/** The award half of the bounty banner's choreography (spec 12 §7: "check-morph → points
- * count-up → themed confetti burst"), deliberately decoupled from `BountyBanner`: the signal is
- * `guests/{uid}.points` increasing, not a specific bounty's `submissions` array, so this also
- * fires correctly for a partial-credit award or any future point source without the client
- * having to reconstruct which mission earned it (spec 05 §3 — `points` is already the ledger's
- * running total, scaled and clamped server-side). Mounted once per session, always on. */
 export function AwardBurst({ eventId, uid }: { eventId: string; uid: string }) {
   const [delta, setDelta] = useState<number | null>(null);
   const prevRef = useRef<number | null>(null);
@@ -32,17 +27,22 @@ export function AwardBurst({ eventId, uid }: { eventId: string; uid: string }) {
   if (delta == null) return null;
 
   return (
-    <div className="fixed inset-x-0 top-28 z-[70] flex justify-center pointer-events-none">
-      <div className="relative">
+    <div className="fixed inset-x-0 top-24 z-[70] flex justify-center pointer-events-none">
+      <div className="relative flex items-center justify-center">
         <div
-          className="points-pop px-6 py-3 rounded-[var(--radius-pill)] font-mono text-2xl tabular-nums"
-          style={{ background: "var(--gold-500)", color: "var(--bg-0)" }}
+          className="points-pop px-6 py-3 rounded-full font-mono text-2xl font-bold tabular-nums shadow-2xl flex items-center gap-2 border-2 border-white/20"
+          style={{
+            background: "linear-gradient(135deg, var(--gold-400) 0%, var(--gold-500) 100%)",
+            color: "#0b0709",
+            boxShadow: "0 0 40px rgba(212, 175, 106, 0.6)",
+          }}
         >
-          +{delta}
+          <Sparkles className="w-6 h-6 animate-spin" style={{ animationDuration: "3s" }} />
+          <span>+{delta} pts</span>
         </div>
         {Array.from({ length: PARTICLE_COUNT }, (_, i) => {
           const angle = (i / PARTICLE_COUNT) * 360;
-          const dist = 60 + (i % 3) * 24;
+          const dist = 65 + (i % 3) * 26;
           const x = Math.cos((angle * Math.PI) / 180) * dist;
           const style: CSSProperties & Record<"--confetti-x" | "--confetti-rot", string> = {
             background: COLORS[i % COLORS.length],
@@ -53,7 +53,7 @@ export function AwardBurst({ eventId, uid }: { eventId: string; uid: string }) {
           return (
             <span
               key={i}
-              className="confetti-piece absolute left-1/2 top-1/2 w-2 h-2 rounded-sm"
+              className="confetti-piece absolute left-1/2 top-1/2 w-2.5 h-2.5 rounded-sm shadow-md"
               style={style}
             />
           );

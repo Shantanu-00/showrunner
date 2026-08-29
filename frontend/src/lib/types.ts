@@ -190,6 +190,13 @@ export interface EventPublicInfo {
   uploadsOpen?: boolean;
   publicFrozen?: boolean;
   serverTime?: string;
+  /** The door, and only the door (spec 02 §1's event boundary): whether joining needs a code. Never
+   * the code's hash, never the seat cap, never how full it is. A guest standing outside an
+   * invite-only event has to be told this much or the join screen cannot ask them for anything — and
+   * it is also what tells the client to route photo bytes through the authed-fetch path instead of a
+   * bare `<img src>`, because `api/media.py` refuses the unauthenticated branch on an invite-only
+   * event (`lib/eventAccess.ts`, `lib/MediaImg.tsx`). */
+  accessMode?: "open" | "invite";
   /** The Story Director's heartbeat, for the `/judge` page's next-tick countdown. `ledger/` is
    * host-only in `firestore.rules` and a judge is anonymous, so this is the read path HANDOFF §4.22
    * prescribed instead of a rules exception. `cadenceSec` is derived **server-side** from
@@ -300,6 +307,24 @@ export interface RedeemResponse {
 export interface VisibilityResponse {
   mediaId: string;
   visibility: "self" | "pool" | "public" | null;
+}
+
+/** `POST /v1/events/{eventId}/join` — mirrors `backend/schemas/membership.py`.
+ *
+ * The response's job is to tell the client its ID token is now stale: membership is a custom claim
+ * (`members: [eventId, …]`), and until `refreshClaims()` has force-refreshed the token, every
+ * Firestore listener on this event is denied. `memberOf` is that claim's new contents. */
+export interface JoinResponse {
+  eventId: string;
+  joined: boolean;
+  /** `false` on a rejoin — the proof that calling this on every page load takes no extra seat. */
+  newMember: boolean;
+  mode: "open" | "invite";
+  /** Seats, not people: the cap counts uids, and spec 02 §1 gives one person several (phone, laptop,
+   * a rescan after clearing site data). `null` means uncapped. */
+  seats?: number | null;
+  seatsUsed: number;
+  memberOf: string[];
 }
 
 /** `events/{eventId}/bounties/{bountyId}` — spec 05 §3, mirroring `backend/schemas/bounty.py`.

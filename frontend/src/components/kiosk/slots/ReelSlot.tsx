@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import type { ReelDoc, ReelSlot as ReelSlotType } from "@/lib/types";
 import { listenReel } from "@/lib/firestore";
+import { useAccessMode } from "@/lib/eventAccess";
+import { useAuthedBlobUrl } from "@/lib/useAuthedImage";
 
 /** `reel` premiere takeover storyboard (spec 12 §6): title card → play → end card.
  *
@@ -36,7 +38,16 @@ export function ReelSlot({ eventId, slot }: { eventId: string; slot: ReelSlotTyp
     return listenReel(eventId, slot.reelId, setReel, () => setReel(null));
   }, [eventId, slot.reelId]);
 
-  if (!reel?.videoUri || ended) {
+  // `videoUri` points at `api/reels.py`'s 302, which is unauthenticated for a published reel on an
+  // **open** event — a `<video>` element cannot send an Authorization header and a kiosk is a
+  // television in a venue (spec 09 §3's reasoning, and that path is unchanged). On an invite-only
+  // event that branch now requires event membership, so the file is fetched with the TV's token and
+  // played from a blob instead. A reel is a few megabytes; a photograph-sized concession.
+  const needsAuth = useAccessMode(eventId) !== "open";
+  const authedVideo = useAuthedBlobUrl(needsAuth ? reel?.videoUri ?? null : null);
+  const videoSrc = needsAuth ? authedVideo : reel?.videoUri ?? null;
+
+  if (!videoSrc || ended) {
     return (
       <div
         className="absolute inset-0 flex flex-col items-center justify-center text-center px-[10%]"
@@ -62,7 +73,7 @@ export function ReelSlot({ eventId, slot }: { eventId: string; slot: ReelSlotTyp
     <div className="absolute inset-0 flex flex-col" style={{ background: "var(--bg-0)" }}>
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <video
-        src={reel.videoUri}
+        src={videoSrc}
         autoPlay
         playsInline
         className="w-full h-full object-contain"
