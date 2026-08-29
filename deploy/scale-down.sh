@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Cost brake: drop every service to min-instances=0 and pause the queues.
+# Cost brake between work sessions: drop every service to min-instances=0 and pause the queues.
+#
+# ** This is NOT the judging-month posture — use deploy/judge-mode.sh for that. **
+# Pausing the queues is right when nobody is using the system and silently fatal when someone is:
+# an uploaded photo stops at `stages={'thumb': ...}`, never reaches `status='indexed'`, and so never
+# reaches any public surface, while the guest's filmstrip reads "The Curator is judging your shot..."
+# for ever. No error and no alert anywhere. Likewise `publisher` at min-instances=0 loses the
+# Firestore listener that keeps the wall fresh (see the note at the bottom of this file).
 #
 # Between work sessions and after a demo this is the difference between a few cents and a few
 # dollars an hour. `up.sh` (and queues.sh) put everything back.
