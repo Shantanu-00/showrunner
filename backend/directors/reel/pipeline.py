@@ -48,6 +48,7 @@ from shared.settings import (
     REEL_CRITIC_PASS_SCORE,
     REEL_MIN_SHOTS,
     REEL_RENDER_COST_USD,
+    REEL_SHOT_REQUEST_MIN,
     settings,
 )
 
@@ -370,8 +371,31 @@ async def _direct_and_critique(
         shots, issues = critic.lint(plan, candidates, persona=persona)
         previous_ids = [s.mediaId for s in shots]
 
-        if attempt == 2 or len(shots) < REEL_MIN_SHOTS:
+        if attempt == 2:
             break
+
+        if len(shots) < REEL_MIN_SHOTS:
+            # This branch used to be folded into the `break` above, and that was a real defect: an
+            # under-floor storyboard is the one outcome that most needs a second attempt, and it was
+            # the one outcome that got none. Measured on `dev_demo`: 8 of 9 commissions failed here,
+            # every one of them with `directAttempts: 0`, always because the linter dropped two or
+            # three near-duplicate portraits out of a plan that had answered near the bottom of the
+            # requested range. The commission then died at `pipeline.py`'s floor check having already
+            # paid for the DIRECT call.
+            #
+            # Regenerating instead is also the honest answer to the Multi-Agent Nexus lens's question
+            # — "how does the system recover if a worker agent loops or returns a hallucination?" The
+            # critic is deliberately skipped: there is no point paying a `flash-lite` rubric pass to
+            # review a plan the deterministic linter has already rejected, and the shortfall itself is
+            # better feedback than a critique of a cut that cannot be built.
+            feedback = [
+                f"Only {len(shots)} of your shots survived the linter, below the {REEL_MIN_SHOTS} "
+                f"minimum. What was dropped: {'; '.join(issues[:4])}.",
+                f"Return at least {REEL_SHOT_REQUEST_MIN} shots this time, and never place the same "
+                "person doing the same thing in two shots — vary the subject or the moment between "
+                "consecutive shots rather than re-cutting one portrait.",
+            ]
+            continue
 
         critique, critic_usage = await gemini.run_structured(
             critic.critic_agent(),

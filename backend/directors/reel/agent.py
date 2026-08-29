@@ -37,7 +37,7 @@ from google.genai import types
 
 from schemas.reel import ReelPersona, ReelPlan, Transition
 from services.gemini import adk_model, as_text_part
-from shared.settings import REEL_MAX_SHOTS, REEL_MIN_SHOTS, settings
+from shared.settings import REEL_MAX_SHOTS, REEL_MIN_SHOTS, REEL_SHOT_REQUEST_MIN, settings
 
 from .select import Candidate
 
@@ -90,7 +90,9 @@ event.
 or two_act (a break in the middle and a different energy after it). Choose from the shape of the
 evidence, not from habit.
 
-4. SHOTS — between {REEL_MIN_SHOTS} and {REEL_MAX_SHOTS}, in the order they will play. Each shot:
+4. SHOTS — between {REEL_SHOT_REQUEST_MIN} and {REEL_MAX_SHOTS}, in the order they will play. Ask
+for more than you think you need: near-duplicate shots are dropped before the cut is built, so a
+plan that only just clears the minimum will not survive. Each shot:
 - mediaId: copy one exactly from the evidence. A mediaId you did not read there is rejected and the
   shot is lost. Never use the same photograph twice.
 - durationBeats: 2 to 8. Long on the moments that matter, short in a montage run.
