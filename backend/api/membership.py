@@ -140,6 +140,22 @@ def _code_matches_event(access: dict[str, Any], code_hash: str) -> bool:
     return bool(stored) and str(stored) == code_hash
 
 
+def _member_link_active(link: dict[str, Any]) -> bool:
+    """The validity test for a member-granting `hostLinks` doc, apart from which eventId it targets.
+
+    Shared by `_kiosk_link_grants` (the eventId is known; the code is looked up against it) and
+    `_event_for_code` (the eventId is exactly what's being discovered) — extracted so a future
+    link-validity fix has one place to land instead of two.
+    """
+    expires_at = link.get("expiresAt")
+    return (
+        str(link.get("grants") or "host") == "member"
+        and not link.get("revoked")
+        and isinstance(expires_at, dt.datetime)
+        and dt.datetime.now(dt.timezone.utc) <= expires_at
+    )
+
+
 def _kiosk_link_grants(event_id: str, code_hash: str) -> bool:
     """A kiosk link (`host.py::create_kiosk_link`) is the second accepted code shape.
 
@@ -153,14 +169,7 @@ def _kiosk_link_grants(event_id: str, code_hash: str) -> bool:
     if not snap.exists:
         return False
     link = snap.to_dict() or {}
-    expires_at = link.get("expiresAt")
-    return (
-        str(link.get("grants") or "host") == "member"
-        and str(link.get("eventId") or "") == event_id
-        and not link.get("revoked")
-        and isinstance(expires_at, dt.datetime)
-        and dt.datetime.now(dt.timezone.utc) <= expires_at
-    )
+    return str(link.get("eventId") or "") == event_id and _member_link_active(link)
 
 
 @firestore.transactional
@@ -373,14 +382,7 @@ def _event_for_code(code_hash: str) -> tuple[str, dict[str, Any]] | None:
     if snap.exists:
         link = snap.to_dict() or {}
         event_id = str(link.get("eventId") or "")
-        expires_at = link.get("expiresAt")
-        fresh = isinstance(expires_at, dt.datetime) and dt.datetime.now(dt.timezone.utc) <= expires_at
-        if (
-            event_id
-            and str(link.get("grants") or "host") == "member"
-            and not link.get("revoked")
-            and fresh
-        ):
+        if event_id and _member_link_active(link):
             return event_id, (fs.get_event(event_id) or {})
     return None
 
