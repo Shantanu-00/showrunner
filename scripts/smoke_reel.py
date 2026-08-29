@@ -64,7 +64,7 @@ from schemas.reel import (  # noqa: E402
     Transition,
 )
 from shared import fs  # noqa: E402
-from shared.settings import REEL_BEAT_TOLERANCE_MS, REEL_MIN_SHOTS, settings  # noqa: E402
+from shared.settings import REEL_BEAT_TOLERANCE_MS, REEL_MIN_SHOTS  # noqa: E402
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -604,7 +604,7 @@ def run_live(args: argparse.Namespace) -> int:
         doc = store.get(event_id, result.reel_id) or {}
         reel_id = result.reel_id
     else:
-        api = args.api or settings().api_base_url
+        api = args.api
         if not api:
             fail("no --api and no NEXT_PUBLIC_API_URL — cannot reach the commission endpoint")
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -642,7 +642,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true", help="deterministic half only: no network, no spend")
     parser.add_argument("--event", default=os.environ.get("SMOKE_EVENT_ID", "dev_demo"))
-    parser.add_argument("--api", default=os.environ.get("SMOKE_API_URL", ""))
+    parser.add_argument(
+        "--api", default=os.environ.get("SMOKE_API_URL") or os.environ.get("NEXT_PUBLIC_API_URL", "")
+    )
     parser.add_argument("--persona", default=ReelPersona.COUPLE.value)
     parser.add_argument("--stage", default=None, help="stageId, required for stage_recap")
     parser.add_argument("--local", action="store_true", help="run the pipeline in-process (needs ffmpeg)")
