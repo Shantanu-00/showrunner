@@ -79,6 +79,11 @@ JOINABLE_STATUSES = frozenset(
 #: no cache and is what a host reaches for when something is on the wall that must come off now.
 _MODE_TTL_SECONDS = 5.0
 _mode_cache: dict[str, tuple[float, str]] = {}
+#: A long-lived `api` instance sees a growing, never-shrinking set of eventIds otherwise — nothing
+#: ever pops an entry, only overwrites one. Not a real problem at hackathon scale (thousands of
+#: events, a few bytes each), but cheap to bound: a sweep evicts anything past its TTL whenever the
+#: cache grows past this size, so it self-limits instead of trusting demo-length uptime.
+_MODE_CACHE_MAX_ENTRIES = 2048
 
 
 def access_mode(event_id: str) -> str:
@@ -96,6 +101,10 @@ def access_mode(event_id: str) -> str:
     mode = str((event.get("access") or {}).get("mode") or EventAccessMode.OPEN.value)
     if mode not in (EventAccessMode.OPEN.value, EventAccessMode.INVITE.value):
         mode = EventAccessMode.OPEN.value
+    if len(_mode_cache) >= _MODE_CACHE_MAX_ENTRIES:
+        stale = [k for k, v in _mode_cache.items() if now - v[0] >= _MODE_TTL_SECONDS]
+        for key in stale:
+            _mode_cache.pop(key, None)
     _mode_cache[event_id] = (now, mode)
     return mode
 
