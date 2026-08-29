@@ -301,8 +301,8 @@ service cloud.firestore {
 
       // ---------------------------------------------------------------- host-only operations
 
-      // Quarantines, DLQ deliveries, Model Armor deflections, moderation decisions, and the Flight
-      // Deck's `pulse_shards` telemetry (spec 10 §1) — that page is host-authed, so one rule covers it.
+      // Quarantines, DLQ deliveries, Model Armor deflections, and moderation decisions — all
+      // host-authed, so one rule covers the whole subtree.
       match /ops/{document=**} {
         allow read: if isHost(eventId) || isAdmin();
         allow write: if false;
