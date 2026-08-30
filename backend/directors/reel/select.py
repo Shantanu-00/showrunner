@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -208,6 +208,7 @@ def fetch(
         person_id=person_id,
         stage_id=stage_id,
         audience_ring=audience_ring,
+        on_fallback=lambda message: fs.ops_alert(event_id, "reel_persona_fallback", message),
     )
     return chosen, names
 
@@ -252,6 +253,14 @@ def _persona_filter(
     return out
 
 
+#: B5's fallback ceiling. A reel is a permanent, shareable file — unlike 6 seconds on the kiosk wall
+#: — so when the persona lens empties, the degrade stops at "someone the event has identified as
+#: elevated" rather than reaching all the way to an unrelated guest's random landscape (`top_tier`
+#: defaults to `DEFAULT_TIER`, i.e. an unidentified or never-promoted subject, which is exactly what
+#: this ceiling excludes). No spec pins this number — flagged for HANDOFF §9.
+FALLBACK_MAX_TIER = 2
+
+
 def choose(
     candidates: list[Candidate],
     *,
@@ -260,14 +269,19 @@ def choose(
     stage_id: str | None = None,
     audience_ring: int = 2,
     cap: int = REEL_CANDIDATE_CAP,
+    on_fallback: Callable[[str], None] | None = None,
 ) -> list[Candidate]:
     """Pure: persona filter → VIP floor → diversity round-robin → cap.
 
     Falls back rather than fails. A `couple` reel at an event where nobody has been promoted would
     filter to nothing, and returning an empty list there would mean the demo's headline artifact
-    silently never appears; so an empty persona filter degrades to the unfiltered pool, which is the
-    honest behaviour — the reel is then simply *about the event* rather than about the couple, and
-    the brief the model writes says so because the evidence says so.
+    silently never appears; so an empty persona filter degrades — not to the fully unfiltered pool,
+    but to `FALLBACK_MAX_TIER` and below (B5). The reel is then simply *about the event* rather than
+    about the couple, and the brief the model writes says so because the evidence says so, but a
+    guest's unrelated landscape still cannot end up in a couple's permanent wedding film. `on_fallback`,
+    when given, is called with a diagnostic message exactly when this path fires — this function stays
+    pure (no Firestore, no event_id), so raising the actual `ops/` alert is the caller's job
+    (`fetch()` below).
     """
     filtered = _persona_filter(
         candidates,
@@ -280,8 +294,13 @@ def choose(
         filtered = [
             c
             for c in candidates
-            if c.aesthetic >= REEL_AESTHETIC_FLOOR or c.is_highlight
+            if (c.aesthetic >= REEL_AESTHETIC_FLOOR or c.is_highlight) and c.top_tier <= FALLBACK_MAX_TIER
         ]
+        if on_fallback:
+            on_fallback(
+                f"{persona.value} reel: the persona filter matched nothing, falling back to "
+                f"tier<={FALLBACK_MAX_TIER} candidates ({len(filtered)} of {len(candidates)})"
+            )
     if not filtered:
         return []
 
