@@ -45,6 +45,7 @@ from google.genai import types
 from schemas.curator_out import CuratorOut
 from services.gemini import adk_model, as_image_part, as_text_part
 from shared.settings import settings
+from shared.stages import resolve_active
 
 #: Kept tight on purpose: spec 09 §2 prices this stage at ~1,548 input tokens per photo, and the
 #: queue rates are pinned to that number. Prompt text is the only part of the bill this file
@@ -223,7 +224,9 @@ def event_context(event: dict[str, Any]) -> str:
     """
     profile = event.get("eventTypeProfile") or {}
     stages = event.get("stages") or []
-    active = event.get("stageOverride") or event.get("activeStage")
+    # One resolver everywhere (spec 13): the schedule leg means a photo classified before any tick
+    # or host action has run still gets "the host's current stage" context, same as the wall shows.
+    active, _source = resolve_active(event)
 
     lines: list[str] = ["--- EVENT CONTEXT ---", f"Event: {event.get('name') or 'unnamed'}"]
 

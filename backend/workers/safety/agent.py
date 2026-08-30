@@ -33,6 +33,7 @@ from google.genai import types
 from schemas.guardian_out import GuardianOut
 from services.gemini import adk_model, as_image_part, as_text_part
 from shared.settings import settings
+from shared.stages import resolve_active
 
 #: Spec 09 §2 budgets this stage the same ~1,548 input tokens as the Curator, and the safety queue's
 #: 8/s rate is calibrated against it. Prompt text is the only part of that bill this file controls.
@@ -123,7 +124,7 @@ def _stage_context(event: dict[str, Any], media: dict[str, Any]) -> list[str]:
         if stage.get("stageId")
     }
     curator_stage = ((media.get("curator") or {}).get("stageId")) or None
-    host_stage = event.get("stageOverride") or event.get("activeStage")
+    host_stage, _source = resolve_active(event)  # one resolver everywhere (spec 13)
 
     stage_id = curator_stage or host_stage
     if not stage_id:

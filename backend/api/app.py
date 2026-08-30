@@ -22,7 +22,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from schemas.event import EventClass, EventStatus, UPLOAD_OPEN_STATUSES
 from shared import fs, internal, log
 from shared.auth import Principal, caller
+from shared.eventtime import EventCalendar
 from shared.settings import DEMO_INTERLEAVE_SECONDS, PRODUCTION_TICK_SECONDS, settings
+from shared.stages import as_dt, resolve_active
 
 from .host import create_router as host_create_router, router as host_router
 from .identity import claim_router, router as identity_router
@@ -200,13 +202,32 @@ async def event_public(
         "accessMode": str(access.get("mode") or "open"),
         "status": status,
         "timezone": event.get("timezone"),
-        "activeStage": event.get("stageOverride") or event.get("activeStage"),
+        "startsOn": event.get("startsOn"),
+        "endsOn": event.get("endsOn"),
+        # `resolve_active`, not the raw fields: the schedule leg (spec 13) is what shows "Now" to a
+        # guest whose host never pressed the button and whose director has not advanced yet.
+        "activeStage": resolve_active(event)[0],
         "templateId": (event.get("eventTypeProfile") or {}).get("templateId"),
+        # `day` is a derived 1-based index (spec 13), null on undated events — day granularity only,
+        # honouring this endpoint's "no stage timing" discipline: a guest's gallery groups chips by
+        # day without learning when anything is scheduled to the minute.
         "stages": [
-            {"stageId": s.get("stageId"), "label": s.get("label"), "theme": s.get("theme")}
+            {
+                "stageId": s.get("stageId"),
+                "label": s.get("label"),
+                "theme": s.get("theme"),
+                "day": _stage_day(event, s),
+            }
             for s in stages
         ],
         "uploadsOpen": status in {s.value for s in UPLOAD_OPEN_STATUSES},
         "publicFrozen": bool(event.get("publicFrozen")),
         "serverTime": dt.datetime.now(dt.timezone.utc),
     }
+
+
+def _stage_day(event: dict, stage: dict) -> int | None:
+    starts = as_dt(stage.get("startsAt"))
+    if starts is None:
+        return None
+    return EventCalendar.of(event).day_index(starts)

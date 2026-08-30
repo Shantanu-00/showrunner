@@ -25,6 +25,7 @@ from schemas.common import UNINFORMATIVE_SETTINGS, MediaStatus, Visibility
 from schemas.event import EventStatus
 from shared import coverage, fs
 from shared.settings import DEFAULT_TIER, KIOSK_CANDIDATE_LIMIT
+from shared.stages import as_dt, resolve_active
 
 from . import program
 
@@ -69,24 +70,44 @@ def live_event_ids() -> list[str]:
 def event_context(event_id: str, event: dict[str, Any] | None = None) -> EventContext | None:
     """Resolve the active stage, its predecessor and the stage's kiosk theme.
 
-    The host's `stageOverride` beats the schedule's `activeStage`, exactly as spec 05 §2 requires and
-    `GET /v1/events/{id}/public` already does — the big "Now: ▶ Pheras" button always wins instantly,
-    and the wall is the surface where that has to be visible.
+    Active = `shared/stages.py::resolve_active` — override, then `activeStage`, then the schedule
+    (spec 05 §2 + spec 13). The schedule leg is what puts "Now" on the wall of an event whose host
+    never touched the "Now: ▶" button and whose director has not advanced yet; the big button still
+    always wins instantly.
+
+    Previous = the latest-starting stage strictly *before* the active one **by time**, not by array
+    position: `save_stages` sorts what it writes, but a mid-event edit history is exactly the kind
+    of thing "sorted at the writer" cannot retroactively promise, and the ×0.4 ranking grace this
+    feeds (spec 04 §4) should follow the timeline, not the array. Undated stages fall back to array
+    order, which for them is the only order there is.
     """
     doc = event if event is not None else fs.get_event(event_id)
     if doc is None:
         return None
     stages: list[dict[str, Any]] = list(doc.get("stages") or [])
-    active = doc.get("stageOverride") or doc.get("activeStage")
-    ids = [str(s.get("stageId")) for s in stages if s.get("stageId")]
+    active, _source = resolve_active(doc)
     previous = None
-    if active in ids:
-        index = ids.index(str(active))
-        previous = ids[index - 1] if index > 0 else None
+    if active:
+        current = next((s for s in stages if str(s.get("stageId")) == active), None)
+        current_start = as_dt(current.get("startsAt")) if current else None
+        if current_start is not None:
+            earlier = [
+                (as_dt(s.get("startsAt")), str(s.get("stageId")))
+                for s in stages
+                if s.get("stageId") and str(s.get("stageId")) != active
+            ]
+            dated = [(at, sid) for at, sid in earlier if at is not None and at < current_start]
+            if dated:
+                previous = max(dated)[1]
+        else:
+            ids = [str(s.get("stageId")) for s in stages if s.get("stageId")]
+            if active in ids:
+                index = ids.index(active)
+                previous = ids[index - 1] if index > 0 else None
     theme = next(
         (s.get("theme") for s in stages if s.get("stageId") == active and s.get("theme")), None
     )
-    return EventContext(doc, str(active) if active else None, previous, theme)
+    return EventContext(doc, active, previous, theme)
 
 
 # ---------------------------------------------------------------- candidates
