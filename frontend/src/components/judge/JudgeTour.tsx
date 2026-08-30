@@ -157,7 +157,8 @@ export function JudgeTour() {
 
         <Step n={2} title="Join as a guest" href={joinBase} cta="Join the event ↗">
           One tap. No email, no password, no account — anonymous sign-in <em>is</em> the act of
-          joining, exactly as it is for a wedding guest who scanned a QR code.
+          joining, exactly as it is for a guest scanning a QR code at a wedding, a birthday, or a
+          five-day group trip.
         </Step>
 
         <Step n={3} title="Send a photo" href={`${joinBase}&samples=1`} cta="Upload 3 samples ↗">
