@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReelDoc, ReelSlot as ReelSlotType } from "@/lib/types";
 import { listenReel } from "@/lib/firestore";
 import { useAccessMode } from "@/lib/eventAccess";
@@ -32,6 +32,7 @@ function preroll(reel: ReelDoc | null): string {
 export function ReelSlot({ eventId, slot }: { eventId: string; slot: ReelSlotType }) {
   const [reel, setReel] = useState<ReelDoc | null>(null);
   const [ended, setEnded] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     setEnded(false);
@@ -73,11 +74,20 @@ export function ReelSlot({ eventId, slot }: { eventId: string; slot: ReelSlotTyp
     <div className="absolute inset-0 flex flex-col" style={{ background: "var(--bg-0)" }}>
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <video
+        ref={videoRef}
         src={videoSrc}
         autoPlay
+        muted
         playsInline
         className="w-full h-full object-contain"
         onEnded={() => setEnded(true)}
+        // Browsers only allow autoplay-with-sound after a user gesture, and a kiosk's "Start show"
+        // tap happened minutes or hours before this element even mounts. Starting muted (which every
+        // browser allows) and then unmuting once playback has actually begun sidesteps that gate
+        // entirely — toggling `.muted` on an already-playing element isn't a new autoplay request.
+        onPlaying={() => {
+          if (videoRef.current) videoRef.current.muted = false;
+        }}
       />
       <div
         className="absolute inset-x-0 bottom-[6%] text-center font-[family-name:var(--font-display)] italic"

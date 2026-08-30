@@ -161,6 +161,15 @@ export interface MediaDoc {
   posterUri?: string | null;
   width?: number | null;
   height?: number | null;
+
+  /** Video only (spec 03 §4). `worker-video-prep` runs the poster through the same render pipeline a
+   * photo takes, so `thumbUri`/`displayUri` above are populated for a clip too — which is why every
+   * existing grid and lightbox renders a video without a branch. These are the extras:
+   * `proxyUri` is the 720p H.264 faststart file for playback, and `durationSec` is what a duration
+   * badge would read. No surface plays a video yet; a clip currently renders as its poster. */
+  proxyUri?: string | null;
+  durationSec?: number | null;
+  hasAudio?: boolean | null;
 }
 
 /** Spec 11 §3 — VIP is policy (deterministic), not memory. Max-across-faces multiplier. */
@@ -215,9 +224,14 @@ export interface EventPublicInfo {
 export interface SlotFactors {
   aesthetic: number;
   recency: number;
-  diversity: number;
   stageMatch: number;
   vipWeight: number;
+  /** Optional because only the kiosk has one. `diversity` records whether a *slot* had to reuse a
+   * face cluster inside the five-slot window (`publisher/program.py::select_heroes`), which has no
+   * meaning in a gallery grid — so the gallery omits it and `WhyThisPhoto` skips the row rather than
+   * showing a number it made up. */
+  diversity?: number;
+  /** 0-based on both surfaces, matching `publisher/program.py`'s `enumerate`. Rendered as `rank + 1`. */
   rank: number;
 }
 

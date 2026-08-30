@@ -2,25 +2,36 @@
 @import "../design/tokens.css";
 
 @theme {
+  --color-canvas-primary: var(--canvas-primary);
+  --color-canvas-secondary: var(--canvas-secondary);
+  --color-surface-card: var(--surface-card);
+  --color-surface-elevated: var(--surface-elevated);
+
   --color-bg-0: var(--bg-0);
   --color-bg-1: var(--bg-1);
   --color-bg-2: var(--bg-2);
-  --color-maroon-900: var(--maroon-900);
-  --color-maroon-700: var(--maroon-700);
-  --color-maroon-500: var(--maroon-500);
-  --color-gold-500: var(--gold-500);
-  --color-gold-300: var(--gold-300);
+
+  --color-electric-indigo: var(--electric-indigo);
+  --color-emerald-live: var(--emerald-live);
+  --color-sunset-orange: var(--sunset-orange);
+
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-glow: var(--accent-glow);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+
   --color-ivory: var(--ivory);
   --color-ivory-dim: var(--ivory-dim);
   --color-ink-muted: var(--ink-muted);
   --color-ink-faint: var(--ink-faint);
+
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-danger: var(--danger);
-  --color-accent: var(--accent, var(--gold-500));
-  --color-accent-2: var(--accent-2, var(--maroon-500));
-  --color-accent-soft: var(--accent-soft, var(--gold-300));
-  --color-accent-glow: var(--accent-glow, var(--gold-glow));
 
   --radius-sm: var(--radius-sm);
   --radius-card: var(--radius-card);
@@ -31,21 +42,23 @@
 html,
 body {
   background: var(--bg-0);
-  color: var(--ivory);
+  color: var(--text-primary);
   min-height: 100vh;
   selection-background-color: var(--accent);
-  selection-color: var(--bg-0);
+  selection-color: #0b0709;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
+  background-color: var(--bg-0);
   background-image: 
-    radial-gradient(ellipse 80% 50% at 50% -20%, var(--accent-glow), transparent 70%),
-    radial-gradient(ellipse 60% 40% at 50% 120%, rgba(61, 12, 17, 0.2), transparent 70%);
+    radial-gradient(ellipse 80% 50% at 50% -10%, var(--accent-glow), transparent 70%),
+    radial-gradient(ellipse 60% 40% at 50% 120%, rgba(99, 102, 241, 0.08), transparent 70%);
   background-attachment: fixed;
 }
 
 * {
-  font-variant-numeric: normal;
   box-sizing: border-box;
 }
 
@@ -53,74 +66,143 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Glassmorphism & Modern Luxury Surfaces */
+/* Glassmorphism & Obsidian Surfaces */
 .glass-card {
-  background: var(--bg-glass);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: var(--hairline-subtle);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-glass);
-  transition: all var(--dur-standard) var(--ease-luxe);
-}
-
-.glass-card:hover {
-  border-color: rgba(212, 175, 106, 0.35);
-}
-
-.glass-pill {
   background: var(--bg-glass);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  border: var(--hairline);
+  border: 1px solid oklch(1 0 0 / 8%);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-glass);
+  transition: transform var(--dur-standard) var(--ease-spring),
+              border-color var(--dur-standard) var(--ease-luxe),
+              box-shadow var(--dur-standard) var(--ease-luxe);
+}
+
+.glass-card:hover {
+  border-color: oklch(1 0 0 / 18%);
+}
+
+.glass-pill {
+  background: rgba(15, 18, 30, 0.78);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid oklch(1 0 0 / 12%);
   border-radius: var(--radius-pill);
   box-shadow: var(--shadow-luxe);
 }
 
-.glow-accent {
-  box-shadow: 0 0 25px -4px var(--accent-glow);
-}
-
-.text-gold-gradient {
-  background: linear-gradient(135deg, var(--gold-200) 0%, var(--gold-400) 50%, var(--gold-500) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
+/* Glow CTA Button with Electric Edge Glow & Spring Physics */
+.btn-glow,
 .btn-primary {
+  position: relative;
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-soft) 100%);
-  color: #0b0709;
+  color: #080a10;
   font-weight: 600;
   border-radius: var(--radius-pill);
-  box-shadow: 0 4px 20px -4px var(--accent-glow);
-  transition: all var(--dur-standard) var(--ease-luxe);
+  min-height: 44px;
+  box-shadow: 0 0 20px -2px var(--accent-glow), 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: transform var(--dur-spring) var(--ease-spring),
+              box-shadow var(--dur-spring) var(--ease-luxe),
+              filter var(--dur-micro) ease;
 }
 
+.btn-glow:hover:not(:disabled),
 .btn-primary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 25px -2px var(--accent-glow);
-  filter: brightness(1.06);
+  transform: translateY(-1.5px) scale(1.015);
+  box-shadow: 0 0 28px 0px var(--accent-glow), 0 8px 24px rgba(0, 0, 0, 0.5);
+  filter: brightness(1.08);
 }
 
+.btn-glow:active:not(:disabled),
 .btn-primary:active:not(:disabled) {
-  transform: translateY(0px);
+  transform: translateY(0.5px) scale(0.97);
+  box-shadow: 0 0 14px -2px var(--accent-glow);
 }
 
 .btn-secondary {
   background: var(--bg-1);
-  border: var(--hairline-subtle);
-  color: var(--ivory);
+  border: 1px solid oklch(1 0 0 / 10%);
+  color: var(--text-primary);
   border-radius: var(--radius-pill);
-  transition: all var(--dur-standard) var(--ease-luxe);
+  min-height: 44px;
+  transition: transform var(--dur-spring) var(--ease-spring),
+              border-color var(--dur-standard) var(--ease-luxe),
+              background var(--dur-standard) var(--ease-luxe);
 }
 
 .btn-secondary:hover:not(:disabled) {
   border-color: var(--accent);
   background: var(--bg-2);
-  color: var(--gold-300);
+  transform: translateY(-1px);
 }
 
-/* Spec 12 §4 — the no-spinner rule: gold sheen sweep for wait states */
+.btn-secondary:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Gradient Headings */
+.text-gold-gradient {
+  background: linear-gradient(135deg, oklch(0.98 0.01 260) 0%, oklch(0.85 0.05 265) 60%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.text-electric-gradient {
+  background: linear-gradient(135deg, #ffffff 0%, var(--electric-indigo-soft) 50%, var(--electric-indigo) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Ambient Radar Scan Line */
+@keyframes radar-sweep {
+  0% {
+    top: 0%;
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+.radar-scan-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+  box-shadow: 0 0 16px 2px var(--accent), 0 0 32px 4px var(--accent-glow);
+  animation: radar-sweep 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Viewfinder Ambient Pulse */
+@keyframes ring-pulse {
+  0% {
+    transform: scale(0.98);
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 28px 6px var(--accent-glow);
+  }
+  100% {
+    transform: scale(0.98);
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+}
+
+.viewfinder-pulse {
+  animation: ring-pulse 3s ease-in-out infinite;
+}
+
+/* Gold sheen sweep */
 @keyframes gold-sheen {
   0% {
     background-position: -150% 0;
@@ -129,28 +211,40 @@ body {
     background-position: 150% 0;
   }
 }
+
 .skeleton-shimmer {
   background-image: linear-gradient(
     100deg,
     transparent 35%,
-    rgba(212, 175, 106, 0.28) 50%,
+    rgba(255, 255, 255, 0.08) 50%,
     transparent 65%
   );
   background-size: 250% 100%;
   animation: gold-sheen 1.6s linear infinite;
 }
 
-/* Consent moment C2 — animated high-tech gold scanner ring */
-@keyframes consent-ring-spin {
-  to {
-    transform: rotate(360deg);
+/* Live Emerald Pulse Dot */
+@keyframes live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--emerald-live);
+  }
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
   }
 }
-.consent-ring {
-  animation: consent-ring-spin 3s linear infinite;
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--emerald-live);
+  border-radius: 9999px;
+  animation: live-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* Kiosk hero Ken Burns */
+/* Kiosk Ken Burns & Theater Ambient Glow */
 @keyframes ken-burns {
   from {
     transform: scale(1.04);
@@ -159,105 +253,44 @@ body {
     transform: scale(1.12);
   }
 }
+
 .ken-burns {
-  animation: ken-burns var(--ken-burns-duration, 6s) linear forwards;
+  animation: ken-burns var(--ken-burns-duration, 8s) linear forwards;
 }
 
-/* Bounty HUD banner animations */
-@keyframes banner-in {
-  from {
-    transform: translateY(-100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-@keyframes banner-out {
-  from {
-    transform: translateY(0);
-    opacity: 1;
-  }
-  to {
-    transform: translateY(-100%);
-    opacity: 0;
-  }
-}
-.banner-in {
-  animation: banner-in var(--dur-standard) var(--ease-luxe) forwards;
-}
-.banner-out {
-  animation: banner-out var(--dur-standard) var(--ease-luxe) forwards;
+.theater-ambient-glow {
+  filter: blur(50px) brightness(0.65) saturate(1.4);
+  opacity: 0.75;
 }
 
-@keyframes confetti-fall {
+/* Staggered Spring Entrance Animations */
+@keyframes spring-in {
   0% {
-    transform: translate(0, 0) rotate(0deg);
-    opacity: 1;
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
   }
   100% {
-    transform: translate(var(--confetti-x, 0), 140px) rotate(var(--confetti-rot, 180deg));
-    opacity: 0;
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
-}
-.confetti-piece {
-  animation: confetti-fall 1.2s ease-out forwards;
 }
 
-@keyframes points-pop {
-  0% {
-    transform: scale(0.6);
-    opacity: 0;
-  }
-  60% {
-    transform: scale(1.15);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-.points-pop {
-  animation: points-pop var(--dur-standard) var(--ease-luxe) forwards;
+.animate-spring-in {
+  animation: spring-in var(--dur-spring) var(--ease-spring) forwards;
 }
 
-/* Subtle live radar pulse for live badges */
-@keyframes live-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.6);
-  }
-  70% {
-    box-shadow: 0 0 0 7px rgba(74, 222, 128, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0);
-  }
-}
-.live-dot {
-  width: 8px;
-  height: 8px;
-  background-color: var(--ok);
-  border-radius: 9999px;
-  animation: live-pulse 2s infinite;
+/* Optical play icon adjustment: +1px right nudge */
+.optical-play-icon {
+  transform: translateX(1px);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .skeleton-shimmer,
-  .consent-ring,
+  .radar-scan-line,
+  .viewfinder-pulse,
   .ken-burns,
-  .banner-in,
-  .banner-out,
-  .confetti-piece,
-  .points-pop,
-  .live-dot {
+  .live-dot,
+  .animate-spring-in {
     animation: none !important;
-  }
-  .ken-burns {
-    transform: scale(1.08);
-  }
-  .banner-out {
-    opacity: 0;
   }
 }

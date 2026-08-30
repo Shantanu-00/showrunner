@@ -32,6 +32,7 @@ export function MediaImg({
    * token on *either* kind of event, so the access mode is irrelevant to them. */
   forceAuthed = false,
   imgKey,
+  onLoad,
 }: {
   eventId: string;
   mediaId: string | null | undefined;
@@ -42,6 +43,7 @@ export function MediaImg({
   fallback?: ReactNode;
   forceAuthed?: boolean;
   imgKey?: string;
+  onLoad?: () => void;
 }) {
   const mode = useAccessMode(eventId);
   // `undefined` (the bootstrap has not answered yet) takes the authed path on purpose: it works on
@@ -55,6 +57,13 @@ export function MediaImg({
   if (!src) return <>{fallback}</>;
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img key={imgKey ?? mediaId ?? undefined} src={src} alt={alt} className={className} style={style} />
+    <img
+      key={imgKey ?? mediaId ?? undefined}
+      src={src}
+      alt={alt}
+      className={className}
+      style={style}
+      onLoad={onLoad}
+    />
   );
 }

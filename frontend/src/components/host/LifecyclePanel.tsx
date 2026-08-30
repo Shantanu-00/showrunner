@@ -1,7 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Play, Pause, Archive, CheckCircle2, RotateCw, Camera, Users, PieChart, DollarSign } from "lucide-react";
+import {
+  Play,
+  Pause,
+  Archive,
+  CheckCircle2,
+  RotateCw,
+  Camera,
+  Users,
+  PieChart,
+  DollarSign,
+  ShieldQuestion,
+} from "lucide-react";
 import { finalizeEvent, goLive, pauseEvent, resumeEvent, wrapEvent } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
 import type { ConsoleSummary, HostEventDoc } from "@/lib/hostTypes";
@@ -83,6 +94,17 @@ export function LifecyclePanel({
         <Kpi icon={Users} label="Active Guests" value={summary?.guests ?? "—"} />
         <Kpi icon={PieChart} label="Stage Coverage" value={summary ? `${summary.coveragePct}%` : "—"} />
         <Kpi icon={DollarSign} label="Pipeline Spend" value={summary ? `$${summary.costSoFarUsd.toFixed(2)}` : "—"} />
+        {/* Shown only when there is something to do. A KPI reading "0 awaiting you" every time trains
+            the eye to skip the tile, which is the failure this badge exists to prevent — the held
+            photos below are invisible until a host knows to scroll. */}
+        {summary != null && summary.reviewCount > 0 && (
+          <Kpi
+            icon={ShieldQuestion}
+            label="Awaiting your call"
+            value={summary.reviewCount}
+            tone="warn"
+          />
+        )}
         {(event.status === "live" || event.status === "wrapping") && (
           <TickCountdown eventId={eventId} eventClass={event.class} />
         )}
@@ -164,14 +186,33 @@ export function LifecyclePanel({
   );
 }
 
-function Kpi({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string | number }) {
+function Kpi({
+  icon: Icon,
+  label,
+  value,
+  tone = "neutral",
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string | number;
+  tone?: "neutral" | "warn";
+}) {
+  const warn = tone === "warn";
   return (
-    <div className="rounded-2xl p-4 glass-card bg-black/40 border border-white/5 flex flex-col justify-between">
+    <div
+      className={`rounded-2xl p-4 glass-card bg-black/40 border flex flex-col justify-between ${
+        warn ? "border-[var(--warn)]/40" : "border-white/5"
+      }`}
+    >
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] text-[var(--ink-muted)] font-medium">{label}</span>
-        <Icon className="w-4 h-4 text-[var(--gold-300)]" />
+        <Icon className={`w-4 h-4 ${warn ? "text-[var(--warn)]" : "text-[var(--gold-300)]"}`} />
       </div>
-      <p className="font-mono tabular-nums text-2xl font-bold text-[var(--ivory)]">
+      <p
+        className={`font-mono tabular-nums text-2xl font-bold ${
+          warn ? "text-[var(--warn)]" : "text-[var(--ivory)]"
+        }`}
+      >
         {value}
       </p>
     </div>

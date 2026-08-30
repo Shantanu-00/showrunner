@@ -4,7 +4,13 @@ import { useEffect, useState } from "react";
 import { Sparkles, Plus, Trash2, Calendar, Clock, AlertTriangle, Check, X, Tag } from "lucide-react";
 import { parseItinerary, saveStages } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
-import type { EventStageDoc, HostEventDoc, RequiredMoment } from "@/lib/hostTypes";
+import type {
+  EventStageDoc,
+  ExpectedSetting,
+  HostEventDoc,
+  RequiredMoment,
+} from "@/lib/hostTypes";
+import { EXPECTED_SETTING_LABELS } from "@/lib/hostTypes";
 
 interface DraftStage {
   key: string;
@@ -14,6 +20,7 @@ interface DraftStage {
   startsAt: string;
   endsAt: string;
   requiredMoments: RequiredMoment[];
+  expectedSetting: ExpectedSetting | "";
 }
 
 function slugify(label: string): string {
@@ -28,6 +35,7 @@ function fromEventStage(s: EventStageDoc, i: number): DraftStage {
     startsAt: s.startsAt ? s.startsAt.slice(0, 16) : "",
     endsAt: s.endsAt ? s.endsAt.slice(0, 16) : "",
     requiredMoments: s.requiredMoments ?? [],
+    expectedSetting: s.expectedSetting ?? "",
   };
 }
 
@@ -61,6 +69,7 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
           startsAt: "",
           endsAt: "",
           requiredMoments: s.requiredMoments,
+          expectedSetting: s.expectedSetting ?? "",
         }))
       );
       setWarnings(out.warnings);
@@ -78,7 +87,15 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
   function addStage() {
     setStages((prev) => [
       ...prev,
-      { key: `new-${Date.now()}`, stageId: "", label: "New Stage Phase", startsAt: "", endsAt: "", requiredMoments: [] },
+      {
+        key: `new-${Date.now()}`,
+        stageId: "",
+        label: "New Stage Phase",
+        startsAt: "",
+        endsAt: "",
+        requiredMoments: [],
+        expectedSetting: "",
+      },
     ]);
   }
 
@@ -117,6 +134,9 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
         endsAt: s.endsAt ? new Date(s.endsAt).toISOString() : null,
         requiredMoments: s.requiredMoments,
         theme: null,
+        // "" means the host declared nothing. Sent as null, not omitted: the backend enum is
+        // `SceneSetting | None`, and an empty string is not a member of it.
+        expectedSetting: s.expectedSetting || null,
       }));
       await saveStages(eventId, payload);
       setSavedAt(Date.now());
@@ -196,6 +216,29 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
                   Hint: {stage.timeHint}
                 </span>
               )}
+              {/* Where this stage happens. Optional, and blank is the normal answer — it exists so the
+                  wall knows that outdoor photos are expected during an outdoor stage *before* any have
+                  arrived. Without it, the first photos of a stage that changes setting look like
+                  outliers and get ranked down. */}
+              <select
+                value={stage.expectedSetting}
+                disabled={!canEdit}
+                onChange={(e) =>
+                  updateStage(stage.key, {
+                    expectedSetting: e.target.value as ExpectedSetting | "",
+                  })
+                }
+                aria-label={`Where ${stage.label || "this stage"} happens`}
+                title="Optional. Helps the wall judge which photos belong to this stage."
+                className="shrink-0 text-[11px] px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[var(--ink-muted)] hover:border-white/25 focus:border-[var(--accent)] focus:outline-none disabled:opacity-50"
+              >
+                <option value="">Where? (optional)</option>
+                {(Object.keys(EXPECTED_SETTING_LABELS) as ExpectedSetting[]).map((value) => (
+                  <option key={value} value={value}>
+                    {EXPECTED_SETTING_LABELS[value]}
+                  </option>
+                ))}
+              </select>
               {canEdit && (
                 <button
                   type="button"

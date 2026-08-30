@@ -10,6 +10,7 @@ import type { ConsoleSummary, HostEventDoc } from "@/lib/hostTypes";
 import { FreezeButton } from "./FreezeButton";
 import { AccessPanel } from "./AccessPanel";
 import { ClaimReviewPanel } from "./ClaimReviewPanel";
+import { ReviewPanel } from "./ReviewPanel";
 import { rememberEvent } from "./rememberedEvents";
 import { LifecyclePanel } from "./LifecyclePanel";
 import { ItineraryPanel } from "./ItineraryPanel";
@@ -238,6 +239,12 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
       {/* Highest in the column after the lifecycle KPIs on purpose: a held claim is a guest standing
           in the room who cannot see their own photos, and it is only resolvable here. */}
       <ClaimReviewPanel eventId={eventId} />
+
+      {/* Directly beneath it, and for the same reason: every conservative default in the perception
+          pipeline parks a photo here, and until this panel existed none of them could be cleared.
+          `onDecided` re-reads the summary because the KPI badge is computed from the same predicate
+          this panel lists by — they must never disagree. */}
+      <ReviewPanel eventId={eventId} onDecided={refreshSummary} />
 
       <AccessPanel event={event} eventId={eventId} guestCount={summary?.guests ?? null} />
 

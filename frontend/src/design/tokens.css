@@ -1,148 +1,179 @@
-/* Spec 12 §2 — design tokens. Single source of truth for Showrunner. */
+/* Showrunner UI/UX Design System Tokens (OKLCH Color Engine & Obsidian Surfaces) */
 :root {
-  /* Base canvas — dark-first velvet/onyx, optimized for gallery contrast and crisp video rendering */
-  --bg-0: #0b0709; /* App background, deep velvet undertone */
-  --bg-1: #171014; /* Raised surface / glass cards */
-  --bg-2: #24191e; /* Elevated pill / active card surface */
-  --bg-glass: rgba(23, 16, 20, 0.78); /* High-blur glassmorphism */
-  --bg-glass-subtle: rgba(255, 255, 255, 0.03);
+  /* OKLCH Base Canvas & Obsidian Elevation */
+  --canvas-primary: oklch(0.12 0.012 260);
+  --canvas-secondary: oklch(0.15 0.015 260);
+  --surface-card: oklch(0.16 0.018 260);
+  --surface-elevated: oklch(0.20 0.022 260);
+  --surface-overlay: rgba(10, 14, 26, 0.75);
 
-  /* Color ramps */
-  --maroon-900: #3d0c11;
-  --maroon-700: #5c1620;
-  --maroon-500: #7a1e2b;
-  --maroon-400: #9e2838;
+  /* Legacy & semantic mapping */
+  --bg-0: var(--canvas-primary);
+  --bg-1: var(--surface-card);
+  --bg-2: var(--surface-elevated);
+  --bg-glass: rgba(18, 22, 38, 0.72);
+  --bg-glass-subtle: rgba(255, 255, 255, 0.04);
+  --bg-overlay: rgba(8, 10, 18, 0.88);
 
+  /* OKLCH Core Accents */
+  --electric-indigo: oklch(0.64 0.24 275);
+  --electric-indigo-glow: oklch(0.64 0.24 275 / 25%);
+  --electric-indigo-soft: oklch(0.74 0.18 275);
+
+  --emerald-live: oklch(0.72 0.20 150);
+  --emerald-live-glow: oklch(0.72 0.20 150 / 30%);
+
+  --sunset-orange: oklch(0.68 0.21 40);
+  --sunset-orange-glow: oklch(0.68 0.21 40 / 30%);
+
+  /* Default Accents */
+  --accent: var(--electric-indigo);
+  --accent-2: var(--sunset-orange);
+  --accent-soft: var(--electric-indigo-soft);
+  --accent-glow: var(--electric-indigo-glow);
+
+  /* Status Colors */
+  --ok: var(--emerald-live);
+  --ok-glow: var(--emerald-live-glow);
+  --warn: oklch(0.78 0.18 75);
+  --warn-glow: oklch(0.78 0.18 75 / 25%);
+  --danger: oklch(0.65 0.22 25);
+  --danger-glow: oklch(0.65 0.22 25 / 30%);
+
+  /* Typography Ramp */
+  --text-primary: oklch(0.96 0.005 260);
+  --text-secondary: oklch(0.65 0.02 260);
+  --text-tertiary: oklch(0.35 0.02 260);
+
+  --ivory: var(--text-primary);
+  --ivory-dim: var(--text-secondary);
+  --ink-muted: var(--text-secondary);
+  --ink-faint: var(--text-tertiary);
+
+  /* Gold accents preserved for wedding presets */
   --gold-500: #d4af6a;
   --gold-400: #e0c283;
   --gold-300: #e9cf9a;
   --gold-200: #f5e4c2;
   --gold-glow: rgba(212, 175, 106, 0.22);
-
-  --ivory: #f8f4ed; /* Primary text */
-  --ivory-dim: #d8cfc4; /* High-readability secondary */
-  --ink-muted: #9e9386; /* Subtle helper / metadata */
-  --ink-faint: #5a5249; /* Faint boundaries / hints */
-
-  --ok: #4ade80; /* Refined emerald */
-  --ok-glow: rgba(74, 222, 128, 0.2);
-  --warn: #fbbf24; /* Refined amber */
-  --warn-glow: rgba(251, 191, 36, 0.2);
-  --danger: #f87171; /* Refined ruby */
-  --danger-glow: rgba(248, 113, 113, 0.25);
-
-  --accent: var(--gold-500);
-  --accent-2: var(--maroon-500);
-  --accent-soft: var(--gold-300);
-  --accent-glow: var(--gold-glow);
+  --maroon-900: #3d0c11;
+  --maroon-700: #5c1620;
+  --maroon-500: #7a1e2b;
+  --maroon-400: #9e2838;
 
   /* Borders & Glows */
-  --hairline: 1px solid rgba(212, 175, 106, 0.28);
-  --hairline-subtle: 1px solid rgba(255, 255, 255, 0.08);
-  --hairline-accent: 1px solid rgba(212, 175, 106, 0.55);
-  --shadow-luxe: 0 10px 30px -10px rgba(0, 0, 0, 0.7), 0 0 20px -5px var(--accent-glow);
+  --hairline-card: 1px solid oklch(1 0 0 / 8%);
+  --hairline: 1px solid oklch(1 0 0 / 10%);
+  --hairline-subtle: 1px solid oklch(1 0 0 / 6%);
+  --hairline-accent: 1px solid oklch(0.64 0.24 275 / 45%);
+  --shadow-luxe: 0 12px 36px -8px rgba(0, 0, 0, 0.75), 0 0 24px -4px var(--accent-glow);
   --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 24px rgba(99, 102, 241, 0.18);
 
+  /* Geometry & Squircle Radii (8pt Soft Grid) */
   --radius-sm: 8px;
-  --radius-card: 14px;
-  --radius-banner: 22px;
+  --radius-card: 16px;
+  --radius-banner: 24px;
   --radius-pill: 9999px;
 
-  --space: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
 
-  --dur-micro: 150ms;
+  /* Spring Physics & Motion */
+  --dur-micro: 120ms;
   --dur-standard: 240ms;
-  --dur-cinematic: 700ms;
+  --dur-spring: 360ms;
+  --dur-cinematic: 600ms;
+  --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.15);
+  --ease-spring-snappy: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-luxe: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Spec 12 §3 — event-adaptive theme overrides. Accent pair per templateId. */
+/* Event-adaptive theme overrides */
 [data-theme="wedding_hindu"] {
-  --bg-0: #0b0709;
-  --bg-1: #171014;
-  --bg-2: #26191f;
+  --canvas-primary: oklch(0.11 0.015 20);
+  --canvas-secondary: oklch(0.14 0.02 20);
+  --surface-card: oklch(0.16 0.025 20);
+  --surface-elevated: oklch(0.20 0.03 20);
   --accent: #d4af6a;
   --accent-2: #8c1d2f;
   --accent-soft: #e9cf9a;
-  --accent-glow: rgba(212, 175, 106, 0.25);
+  --accent-glow: rgba(212, 175, 106, 0.28);
 }
 
 [data-theme="wedding_generic"],
 [data-theme="wedding_christian"],
 [data-theme="wedding_muslim"] {
-  --bg-0: #0d0a11;
-  --bg-1: #18131d;
-  --bg-2: #261d2d;
+  --canvas-primary: oklch(0.12 0.012 300);
+  --canvas-secondary: oklch(0.15 0.016 300);
+  --surface-card: oklch(0.17 0.02 300);
   --accent: #e9cf9a;
   --accent-2: #b76e79;
   --accent-soft: #f4e3c1;
-  --accent-glow: rgba(233, 207, 154, 0.25);
+  --accent-glow: rgba(233, 207, 154, 0.28);
 }
 
 [data-theme="birthday"] {
-  --bg-0: #0b0e16;
-  --bg-1: #141b29;
-  --bg-2: #1e283d;
+  --canvas-primary: oklch(0.12 0.015 250);
+  --canvas-secondary: oklch(0.15 0.02 250);
   --accent: #f27059;
   --accent-2: #f2c14e;
   --accent-soft: #ff9b87;
-  --accent-glow: rgba(242, 112, 89, 0.25);
+  --accent-glow: rgba(242, 112, 89, 0.28);
 }
 
 [data-theme="bachelor_bachelorette"] {
-  --bg-0: #07070a;
-  --bg-1: #13121b;
-  --bg-2: #211e30;
+  --canvas-primary: oklch(0.10 0.015 290);
+  --canvas-secondary: oklch(0.13 0.02 290);
   --accent: #a855f7;
   --accent-2: #06b6d4;
   --accent-soft: #c084fc;
-  --accent-glow: rgba(168, 85, 247, 0.25);
+  --accent-glow: rgba(168, 85, 247, 0.28);
 }
 
 [data-theme="graduation"] {
-  --bg-0: #090e1f;
-  --bg-1: #121b36;
-  --bg-2: #1c2b54;
+  --canvas-primary: oklch(0.11 0.018 240);
+  --canvas-secondary: oklch(0.14 0.025 240);
   --accent: #eab308;
   --accent-2: #38bdf8;
   --accent-soft: #facc15;
-  --accent-glow: rgba(234, 179, 8, 0.25);
+  --accent-glow: rgba(234, 179, 8, 0.28);
 }
 
 [data-theme="corporate_offsite"] {
-  --bg-0: #0b0f17;
-  --bg-1: #131b29;
-  --bg-2: #1d293d;
+  --canvas-primary: oklch(0.12 0.012 260);
+  --canvas-secondary: oklch(0.15 0.016 260);
   --accent: #38bdf8;
   --accent-2: #94a3b8;
   --accent-soft: #7dd3fc;
-  --accent-glow: rgba(56, 189, 248, 0.25);
+  --accent-glow: rgba(56, 189, 248, 0.28);
 }
 
 [data-theme="custom"] {
-  --bg-0: #0e0c12;
-  --bg-1: #18131d;
-  --bg-2: #261d2d;
-  --accent: #e9cf9a;
-  --accent-2: #b76e79;
-  --accent-soft: #f4e3c1;
-  --accent-glow: rgba(233, 207, 154, 0.25);
+  --accent: var(--electric-indigo);
+  --accent-2: var(--sunset-orange);
+  --accent-soft: var(--electric-indigo-soft);
+  --accent-glow: var(--electric-indigo-glow);
 }
 
-/* Spec 12 §3 — wedding_hindu stage accents. */
+/* Stage-specific accents */
 [data-theme="wedding_hindu"][data-stage="haldi"] {
   --accent: #eab308;
-  --accent-glow: rgba(234, 179, 8, 0.25);
+  --accent-glow: rgba(234, 179, 8, 0.3);
 }
 [data-theme="wedding_hindu"][data-stage="sangeet"] {
   --accent: #a855f7;
-  --accent-glow: rgba(168, 85, 247, 0.25);
+  --accent-glow: rgba(168, 85, 247, 0.3);
 }
 [data-theme="wedding_hindu"][data-stage="pheras"] {
   --accent: #e11d48;
-  --accent-glow: rgba(225, 29, 72, 0.25);
+  --accent-glow: rgba(225, 29, 72, 0.3);
 }
 [data-theme="wedding_hindu"][data-stage="reception"] {
   --accent: #d4af6a;
-  --accent-glow: rgba(212, 175, 106, 0.25);
+  --accent-glow: rgba(212, 175, 106, 0.3);
 }

@@ -2,6 +2,7 @@
 
 import { Sparkles, Camera, User } from "lucide-react";
 import type { ElementType } from "react";
+import { useHaptics } from "@/lib/useHaptics";
 
 export type JoinTab = "event" | "camera" | "me";
 
@@ -18,14 +19,19 @@ export function TabBar({
   active: JoinTab;
   onChange: (tab: JoinTab) => void;
 }) {
+  const { tapHaptic } = useHaptics();
+
+  const handleTabChange = (tabId: JoinTab) => {
+    tapHaptic();
+    onChange(tabId);
+  };
+
   return (
     <div className="fixed inset-x-0 bottom-4 z-40 px-4 flex justify-center pointer-events-none">
       <nav
-        className="pointer-events-auto flex items-center justify-between gap-1 px-3 py-2 rounded-full glass-pill max-w-md w-full shadow-2xl"
-        style={{
-          background: "rgba(23, 16, 20, 0.88)",
-          borderColor: "rgba(212, 175, 106, 0.3)",
-        }}
+        role="tablist"
+        aria-label="Main navigation"
+        className="pointer-events-auto flex items-center justify-between gap-1 p-1.5 rounded-full glass-pill max-w-md w-full shadow-2xl backdrop-blur-2xl bg-slate-950/80 border border-white/10"
       >
         {TABS.map((tab) => {
           const isActive = tab.id === active;
@@ -37,16 +43,18 @@ export function TabBar({
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => onChange(tab.id)}
-                className="relative -top-3 flex flex-col items-center justify-center p-3 rounded-full btn-primary text-black shadow-lg hover:scale-105 active:scale-95 transition-transform"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => handleTabChange(tab.id)}
+                className="relative -top-3 flex flex-col items-center justify-center p-3.5 rounded-full btn-glow text-slate-950 shadow-2xl hover:scale-105 active:scale-95 transition-all duration-300 cursor-pointer"
                 style={{
                   width: "56px",
                   height: "56px",
                   background: "linear-gradient(135deg, var(--accent) 0%, var(--accent-soft) 100%)",
                 }}
-                aria-label="Open Camera"
+                aria-label="Open Camera and Capture Photo"
               >
-                <Icon className="w-6 h-6 stroke-[2.2]" />
+                <Icon className="w-6 h-6 stroke-[2.4]" />
               </button>
             );
           }
@@ -55,19 +63,27 @@ export function TabBar({
             <button
               key={tab.id}
               type="button"
-              onClick={() => onChange(tab.id)}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-3 rounded-full transition-all duration-200 ${
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => handleTabChange(tab.id)}
+              className={`relative flex-1 flex flex-col items-center justify-center gap-1 py-2 px-3 rounded-full transition-all duration-200 min-h-[44px] active:scale-[0.96] cursor-pointer ${
                 isActive
-                  ? "text-[var(--accent)] bg-white/5 font-semibold"
-                  : "text-[var(--ink-muted)] hover:text-[var(--ivory)]"
+                  ? "text-white font-semibold"
+                  : "text-[var(--text-secondary)] hover:text-white"
               }`}
             >
+              {isActive && (
+                <span
+                  className="absolute inset-0 rounded-full bg-white/10 border border-white/15 shadow-sm transition-all duration-300"
+                  aria-hidden
+                />
+              )}
               <Icon
-                className={`w-5 h-5 transition-transform ${
-                  isActive ? "scale-110 stroke-[2.2]" : "stroke-[1.8]"
+                className={`relative z-10 w-5 h-5 transition-transform duration-200 ${
+                  isActive ? "scale-110 text-[var(--accent)] stroke-[2.2]" : "stroke-[1.8]"
                 }`}
               />
-              <span className="text-[11px] tracking-wide">{tab.label}</span>
+              <span className="relative z-10 text-[11px] tracking-wide font-medium">{tab.label}</span>
             </button>
           );
         })}

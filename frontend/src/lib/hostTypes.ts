@@ -2,6 +2,12 @@
 // Kept in its own file rather than growing lib/types.ts: the host console is a separate surface
 // (spec 12 §8) with its own code-split bundle, and nothing here is read by the guest PWA or kiosk.
 
+// The one exception to "nothing shared": `GuardianVerdict` is a backend enum
+// (`schemas/common.py::GuardianVerdict`) that both surfaces read, and a second copy of a
+// four-member union is a second thing to forget when the enum grows. A type-only import erases at
+// compile time, so the code-split bundle is unaffected.
+import type { GuardianVerdict } from "./types";
+
 export type EventStatus = "draft" | "live" | "paused" | "wrapping" | "wrapped";
 
 export type EventTemplateId =
@@ -33,6 +39,28 @@ export interface RequiredMoment {
   tierWeight?: number;
 }
 
+/** The closed scene vocabulary — mirrors `backend/schemas/common.py::SceneSetting`.
+ *
+ * The host only ever declares the six that describe a *place*. `closeup_detail`, `screen_or_document`
+ * and `unknown` exist in the backend enum because the Curator needs to be able to say them about a
+ * photo, but "this stage happens in a closeup" is not a thing a host can mean. */
+export type ExpectedSetting =
+  | "indoor_venue"
+  | "outdoor_venue"
+  | "outdoor_nature"
+  | "domestic_interior"
+  | "vehicle"
+  | "street";
+
+export const EXPECTED_SETTING_LABELS: Record<ExpectedSetting, string> = {
+  indoor_venue: "Indoors — a hall or marquee",
+  outdoor_venue: "Outdoors — a lawn or terrace",
+  outdoor_nature: "Out in nature",
+  domestic_interior: "A home or hotel room",
+  vehicle: "In or around a vehicle",
+  street: "On a street or road",
+};
+
 export interface EventStageDoc {
   stageId: string;
   label: string;
@@ -40,6 +68,13 @@ export interface EventStageDoc {
   endsAt?: string | null;
   requiredMoments: RequiredMoment[];
   theme?: string | null;
+  /** Where the host says this stage happens. Optional, and empty is the common answer.
+   *
+   * It is the kiosk's cold-start prior for relevance: without it, a wedding that starts indoors and
+   * moves outdoors for the baraat has `outdoor_venue` at 0% of the corpus when the baraat begins, so
+   * the most important sequence of the day would read as an outlier and be demoted on the wall.
+   * Declared by the host rather than guessed, so it cannot be a wrong assumption about their event. */
+  expectedSetting?: ExpectedSetting | null;
 }
 
 export interface SensitivityProfile {
@@ -84,6 +119,9 @@ export interface ParsedStage {
   orderIndex: number;
   timeHint: string;
   requiredMoments: ParsedMoment[];
+  /** Already coerced to the vocabulary (or "") by `api/host.py::parse_itinerary`, so anything the
+   * model invented has been dropped before it reaches the review table. A proposal, not a decision. */
+  expectedSetting?: ExpectedSetting | "";
 }
 
 export interface ItineraryParseOut {
@@ -148,6 +186,35 @@ export interface ConsoleSummary {
   costSoFarUsd: number;
   publicFrozen: boolean;
   liveEventCount?: number | null;
+  /** Photos waiting on the host's decision, and photos the explicit-content gate blocked. Both come
+   * from the same predicate the review-queue endpoint lists by, so the badge cannot show a count the
+   * panel then fails to produce. */
+  reviewCount: number;
+  blockedCount: number;
+}
+
+/** One row of `GET …/media/review-queue` — see `backend/schemas/moderation.py::ReviewQueueItem`.
+ * `modelVerdict` is what the Guardian said; a host decision is written to a *separate* field, so the
+ * two stay side by side on the record. */
+export interface ReviewQueueItem {
+  mediaId: string;
+  kind: "photo" | "video";
+  modelVerdict: GuardianVerdict | null;
+  reasons: string[];
+  note: string | null;
+  ritualEmotion: boolean;
+  caption: string | null;
+  aestheticScore: number;
+  visibility: string | null;
+  uploadedAt: string | null;
+  offTopicNote: string | null;
+}
+
+export interface ReviewQueueResponse {
+  eventId: string;
+  verdict: GuardianVerdict;
+  items: ReviewQueueItem[];
+  truncated: boolean;
 }
 
 /** Full event doc, as the host reads it directly via `onSnapshot` (rules: `allow read: if

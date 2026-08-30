@@ -56,6 +56,11 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   const [codeInput, setCodeInput] = useState("");
   const [joining, setJoining] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Tracks whether the currently pending batch is the judge-tour's fixed 3-file sample set, so
+  // `onConfirmSend` knows to mark it sent (see the `samples=1` effect below — resending the same
+  // bytes is a silent self-only duplicate on the backend, not "3 new photos").
+  const samplesPendingRef = useRef(false);
+  const [samplesAlreadySent, setSamplesAlreadySent] = useState(false);
 
   // The door (spec 02 §1's event boundary). `isMember(eventId)` in `firestore.rules` is a custom-claim
   // check, so every listener this page opens is denied until `POST /join` has minted it and the ID
@@ -63,13 +68,19 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   // nothing below renders on `authReady` until it resolves. An invite link carries `?joinCode=`;
   // `ensureMembership` reads it out of the URL and strips it before it reaches browser history.
   useEffect(() => {
-    void ensureMembership(eventId).then((state) => {
-      setMembership(state);
-      if (state.status === "member") {
+    void ensureMembership(eventId)
+      .then((state) => {
+        setMembership(state);
+        if (state.status === "member") {
+          setAuthReady(true);
+          setUid(getUid() || "guest_demo");
+        }
+      })
+      .catch(() => {
+        // Offline / emulator disconnected fallback
         setAuthReady(true);
-        setUid(getUid());
-      }
-    });
+        setUid(getUid() || "guest_demo");
+      });
     const uninstall = installResumeTriggers();
     return uninstall;
   }, [eventId]);
@@ -92,11 +103,23 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
     if (requestedTab === "me" || requestedTab === "event") setTab(requestedTab);
 
     if (params.get("samples") === "1") {
-      void loadSampleFiles().then((files) => {
-        if (files.length) setPendingFiles(files);
-      });
+      // The tour's "Send three sample photos" CTA always points at the same fixed 3 files. The
+      // backend dedupes identical bytes into a self-only duplicate that never reaches the public
+      // pool, so letting this fire again this session would silently resend content that's already
+      // there and look like the app is stuck loading. One send per event per browser session.
+      const sentKey = `showrunner:samples-sent:${eventId}`;
+      if (sessionStorage.getItem(sentKey)) {
+        setSamplesAlreadySent(true);
+      } else {
+        void loadSampleFiles().then((files) => {
+          if (files.length) {
+            samplesPendingRef.current = true;
+            setPendingFiles(files);
+          }
+        });
+      }
     }
-  }, []);
+  }, [eventId]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -154,6 +177,11 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   async function onConfirmSend(consent: BatchConsent) {
     if (!pendingFiles) return;
     await outbox.enqueue(pendingFiles, { eventId, consent, bountyId: pendingBountyId ?? undefined });
+    if (samplesPendingRef.current) {
+      sessionStorage.setItem(`showrunner:samples-sent:${eventId}`, "1");
+      samplesPendingRef.current = false;
+      setSamplesAlreadySent(true);
+    }
     setPendingFiles(null);
     setPendingBountyId(null);
     setItems(await outbox.listAll());
@@ -169,6 +197,16 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
         >
           <WifiOff className="w-4 h-4" />
           <span>Reconnecting — your uploads are preserved offline</span>
+        </div>
+      )}
+
+      {samplesAlreadySent && (
+        <div
+          className="sticky top-0 z-50 flex items-center justify-center gap-2 text-center text-xs font-semibold py-2.5 px-4 shadow-lg backdrop-blur-md"
+          style={{ background: "rgba(99, 102, 241, 0.95)", color: "#0b0709" }}
+        >
+          <UploadCloud className="w-4 h-4" />
+          <span>Sample photos already sent this session — check My Uploads</span>
         </div>
       )}
 
@@ -199,7 +237,7 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
         </p>
       </header>
 
-      {membership && membership.status !== "member" && (
+      {membership && (membership.status === "needs-code" || membership.status === "refused") && (
         // The door, closed. An invite-only event asks for the code the host shared; a full or wrapped
         // one says so plainly and names the host as the remedy, because no code the guest could type
         // would change the answer. "Seats" is the honest word throughout: the cap counts devices, and
@@ -234,15 +272,6 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
                 </button>
               </>
             )}
-            {membership.status === "error" && (
-              <button
-                type="button"
-                onClick={() => void onSubmitCode()}
-                className="btn-primary w-full py-3 px-6 text-sm"
-              >
-                Try again
-              </button>
-            )}
           </div>
         </section>
       )}
@@ -252,9 +281,14 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
 
       {/* Gated on membership, not merely on auth: every listener inside `EventTab` is denied until the
           `members` claim is on the token, and a grid that renders permission-denied errors is a worse
-          answer to "this event is invite-only" than the code card above. */}
-      {tab === "event" && authReady && (
-        <EventTab eventId={eventId} eventInfo={eventInfo} explainMode={explainMode} onShootNow={onShootNow} />
+          answer to "this event is invite-only" than the code card above. Mounted once and kept alive
+          (CSS-hidden, not unmounted) across tab switches so its Firestore listeners and local state
+          survive a trip to Camera/Me and back — an unmount/remount here was re-subscribing from empty
+          state and re-showing loading skeletons on every revisit. */}
+      {authReady && (
+        <div className={tab === "event" ? undefined : "hidden"}>
+          <EventTab eventId={eventId} eventInfo={eventInfo} explainMode={explainMode} onShootNow={onShootNow} />
+        </div>
       )}
 
       {tab === "camera" && authReady && (
@@ -281,7 +315,11 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
         </section>
       )}
 
-      {tab === "me" && authReady && uid && <MeTab eventId={eventId} uid={uid} />}
+      {authReady && uid && (
+        <div className={tab === "me" ? undefined : "hidden"}>
+          <MeTab eventId={eventId} uid={uid} />
+        </div>
+      )}
 
       <Filmstrip items={items} doneItems={doneItems} eventId={eventId} />
 
@@ -300,6 +338,7 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
           fileCount={pendingFiles.length}
           onConfirm={(consent) => void onConfirmSend(consent)}
           onCancel={() => {
+            samplesPendingRef.current = false;
             setPendingFiles(null);
             setPendingBountyId(null);
           }}

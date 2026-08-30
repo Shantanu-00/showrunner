@@ -2,6 +2,7 @@
 // Kept apart from lib/api.ts for the same reason as hostTypes.ts: a separate, code-split surface.
 
 import { ApiError, authedJson } from "./api";
+import type { GuardianVerdict } from "./types";
 import type {
   ConsoleSummary,
   CreateEventResponse,
@@ -13,6 +14,7 @@ import type {
   LifecycleResponse,
   RedeemHostResponse,
   RequiredMoment,
+  ReviewQueueResponse,
   SensitivityProfile,
   WrapReport,
 } from "./hostTypes";
@@ -108,4 +110,30 @@ export async function setFreeze(
 
 export async function getConsoleSummary(eventId: string): Promise<ConsoleSummary> {
   return authedJson(`/v1/events/${eventId}/console`, { method: "GET" });
+}
+
+/** Photos still waiting on the host. `verdict: "blocked"` lists what the explicit-content gate
+ * stopped — those are findable but not releasable (see `decideMedia`). */
+export async function getReviewQueue(
+  eventId: string,
+  verdict: "host_review" | "blocked" = "host_review"
+): Promise<ReviewQueueResponse> {
+  return authedJson(`/v1/events/${eventId}/media/review-queue?verdict=${verdict}`, {
+    method: "GET",
+  });
+}
+
+/** The host's call on one held photo. Writes `guardian.hostDecision` — never `guardian.verdict`, and
+ * never `visibility`, which only `recompute_visibility` may write. `blocked` is not offered: it is the
+ * SafeSearch gate's verdict, and the backend rejects it. */
+export async function decideMedia(
+  eventId: string,
+  mediaId: string,
+  decision: Exclude<GuardianVerdict, "blocked">,
+  note?: string
+): Promise<{ mediaId: string; verdict: GuardianVerdict; visibility: string | null }> {
+  return authedJson(`/v1/events/${eventId}/media/${mediaId}/review`, {
+    method: "POST",
+    body: JSON.stringify({ decision, note: note ?? null }),
+  });
 }
