@@ -101,6 +101,30 @@ export async function getWrapReport(eventId: string): Promise<WrapReport> {
   return authedJson(`/v1/events/${eventId}/wrap-report`, { method: "GET" });
 }
 
+/** `POST /v1/events/{eventId}/reels` (`backend/api/reels.py::commission_reel`) — the host's
+ * commission button. Used by the wrap panel's "Regenerate recap" for the `event_recap` persona;
+ * eligibility, the aesthetic/VIP floors and the in-flight/daily caps are all decided server-side
+ * by `directors/reel/commission.py`, identically to a director-initiated commission. */
+export async function commissionReel(
+  eventId: string,
+  body: { persona: string; stageId?: string; personId?: string; reason?: string }
+): Promise<{ reelId: string; status: string; note?: string }> {
+  return authedJson(`/v1/events/${eventId}/reels`, { method: "POST", body: JSON.stringify(body) });
+}
+
+/** `GET {API}/v1/events/{eventId}/reels/{reelId}/video` (`backend/api/reels.py::reel_video`) — a
+ * relative path, not a fetch: hand it to `useAuthedBlobUrl` (it prefixes the API origin and
+ * attaches the host's bearer itself). The host console always fetches this authed rather than
+ * branching on the reel's publish state or the event's access mode the way `ReelSlot` does,
+ * because a host previewing an unpublished/failed reel needs the bearer regardless, and sending
+ * it on an already-public, open-event reel is harmless — the endpoint only inspects the token on
+ * the branches that need one. `download=true` only changes the signed URL's
+ * content-disposition server-side; the panel doesn't need it because it re-uses the same
+ * already-fetched blob for its "Download film" link instead of a second request. */
+export function reelVideoPath(eventId: string, reelId: string, download = false): string {
+  return `/v1/events/${eventId}/reels/${reelId}/video${download ? "?download=1" : ""}`;
+}
+
 export async function setStageOverride(
   eventId: string,
   stageId: string | null

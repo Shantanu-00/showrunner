@@ -266,7 +266,7 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
 
       <SettingsPanel event={event} eventId={eventId} />
 
-      {event.wrapReport && <WrapReportPanel report={event.wrapReport} />}
+      {event.wrapReport && <WrapReportPanel report={event.wrapReport} eventId={eventId} />}
     </div>
   );
 }

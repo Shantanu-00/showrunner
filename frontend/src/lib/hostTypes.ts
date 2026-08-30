@@ -253,6 +253,11 @@ export interface StageGap {
   stageLabel: string;
   momentId: string;
   momentLabel: string;
+  /** Which of the two honest reasons this gap has, in the host's language — "a bounty asked for
+   * this and expired unfilled" or "the stage ended with this still under-covered" — or "" when
+   * the backend has nothing further to say. The dignified, un-apologetic second line under the
+   * gap (spec: wrap-report richness). */
+  detail: string;
 }
 
 export interface StageReportRow {
@@ -261,6 +266,10 @@ export interface StageReportRow {
   photoCount: number;
   highlightCount: number;
   meanAesthetic: number;
+  /** "Day 3" (or "" on an undated event/stage) — prefixed onto `label` in the panel. */
+  dayLabel: string;
+  /** Up to 3 mediaIds — the stage's best photos, for the small thumbnail strip under its row. */
+  bestMediaIds: string[];
 }
 
 export interface Contributor {
@@ -279,6 +288,10 @@ export interface WrapReport {
   perStage: StageReportRow[];
   honestGaps: StageGap[];
   topContributors: Contributor[];
+  /** The whole-event recap film the system autonomously commissions at wrap (`event_recap`
+   * persona) — `null` until one exists. `events/{eventId}/reels/{recapReelId}` is the live doc
+   * to listen on; nothing here is a snapshot of its state. */
+  recapReelId: string | null;
 }
 
 /** `ledger/directorState` (spec 05 §1) — read live, host-only, purely for the next-tick

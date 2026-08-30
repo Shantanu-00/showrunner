@@ -435,6 +435,24 @@ def live_half(api: str) -> None:
         }
     )
 
+    # Seed the lapsed stage's coverage shard directly (the exact field names `coverage.read`
+    # expects): the diary distills *counts*, and counts written here are indistinguishable from
+    # counts bumped by the indexing transaction — without making this smoke depend on the
+    # Curator's visual attribution of a fixture portrait to a stage named "dinner".
+    fs.coverage_stage_shard_ref(event_id, "day1_dinner").set(
+        {
+            "stageId": "day1_dinner",
+            "photoCount": 2,
+            "publicCount": 1,
+            "highlightCount": 1,
+            "aestheticSum": 1.5,
+            "moments": {},
+            "scenes": {"indoor_venue": 2},
+            "peopleBuckets": {"p2_3": 1},
+            "updatedAt": now,
+        }
+    )
+
     token = mint_host_token(event_id, api_key)
     resp = requests.post(
         f"{api}/internal/tick",
@@ -467,6 +485,63 @@ def live_half(api: str) -> None:
     if not lapsed_records:
         fail("the lapsed stage's uncovered moment did not reach permanentGaps")
     print("  ok  live: the lapse is archived once into directorState.permanentGaps")
+
+    diary_doc = fs.ledger_ref(event_id, "diary_day1_dinner").get().to_dict() or {}
+    if not (diary_doc.get("memo") or "").strip():
+        fail(f"the lapsed chapter got no diary memo: {diary_doc}")
+    print(f"  ok  live: the Event Diary wrote the chapter's memo ({len(diary_doc['memo'])} chars)")
+
+    # --- the wrap: the first `wrapping` tick commissions the recap film, deterministically,
+    # and finalize produces the upgraded report — day labels, gap details, the recap's id.
+    fs.event_ref(event_id).update({"status": "wrapping"})
+    resp = requests.post(
+        f"{api}/internal/tick",
+        params={"eventId": event_id},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=180,
+    )
+    if resp.status_code != 200:
+        fail(f"wrapping tick failed ({resp.status_code}): {resp.text[:200]}")
+    state = fs.director_state_ref(event_id).get().to_dict() or {}
+    recap_entries = [
+        c for c in (state.get("commissions") or []) if c.get("persona") == "event_recap"
+    ]
+    if not recap_entries:
+        fail("the wrapping tick did not commission an event_recap")
+    print(
+        f"  ok  live: the wrapping tick commissioned the recap autonomously "
+        f"(status={recap_entries[0].get('status')})"
+    )
+
+    resp = requests.post(
+        f"{api}/v1/events/{event_id}/lifecycle/finalize",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=120,
+    )
+    if resp.status_code != 200:
+        fail(f"finalize failed ({resp.status_code}): {resp.text[:300]}")
+    report = resp.json()
+    rows = {r["stageId"]: r for r in report.get("perStage") or []}
+    # The expected label comes from the same calendar the backend derives from — the smoke's own
+    # fixture anchors `startsOn` to the UTC date while the event runs in Asia/Tokyo, so a
+    # hardcoded "Day 1" here would be asserting the off-by-one the calendar exists to prevent.
+    expected_label = EventCalendar.of(fs.get_event(event_id) or {}).day_label(
+        yesterday - dt.timedelta(hours=1)
+    )
+    got_label = rows.get("day1_dinner", {}).get("dayLabel")
+    if not expected_label or got_label != expected_label:
+        fail(f"wrap report day label {got_label!r}, calendar says {expected_label!r}")
+    detailed = [
+        g for g in (report.get("honestGaps") or [])
+        if g.get("targetStage", g.get("stageId")) == "day1_dinner" and g.get("detail")
+    ]
+    if not detailed:
+        fail(f"the honest gap carries no detail: {report.get('honestGaps')}")
+    if "recapReelId" not in report:
+        fail("the wrap report has no recapReelId field")
+    if recap_entries[0].get("status") == "producing" and report.get("recapReelId") != recap_entries[0].get("reelId"):
+        fail(f"recapReelId does not match the commission: {report.get('recapReelId')}")
+    print("  ok  live: the wrap report carries day labels, gap details and the recap's id")
 
     # --- event B: nothing scheduled for days → the tick reports idle and records no session line
     idle_id = f"dev_idle_{new_ulid().lower()[:8]}"
