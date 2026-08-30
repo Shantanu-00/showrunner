@@ -4,8 +4,35 @@ import { useEffect, useRef, useState } from "react";
 import type { EventPublicInfo, KioskPlaylist } from "@/lib/types";
 import { countPublicIndexed, listenKioskPlaylist } from "@/lib/firestore";
 import { joinUrl, slotHoldSec } from "@/lib/kiosk";
+import { dayLabelFromIndex } from "@/lib/eventTime";
 import { SlotRenderer } from "./SlotRenderer";
 import { MonogramAndQr, LiveStatusGlyph } from "./Overlays";
+
+/** Old seeded events wrote the kiosk playlist's `theme` field with wedding-stage names; new
+ * events (and the host wizard's stage editor) write one of the 8 palette names directly (see
+ * `tokens.css`'s `[data-stage-theme]` blocks). This map is the only place that legacy naming is
+ * known — everything downstream only ever sees the 8 new names. */
+const LEGACY_STAGE_THEME_MAP: Record<string, string> = {
+  turmeric: "gold",
+  night: "violet",
+  dawn: "sunrise",
+};
+const STAGE_THEMES = new Set([
+  "gold",
+  "violet",
+  "crimson",
+  "ocean",
+  "forest",
+  "neon",
+  "slate",
+  "sunrise",
+]);
+
+function resolveStageTheme(theme: string | null | undefined): string | null {
+  if (!theme) return null;
+  const mapped = LEGACY_STAGE_THEME_MAP[theme] ?? theme;
+  return STAGE_THEMES.has(mapped) ? mapped : null;
+}
 
 /** The fullscreen show (spec 04 §4, spec 12 §6). A dumb client: it only ever renders what the
  * publisher already decided in `kiosk/playlist`, crossfading between the slots it lists. */
@@ -76,13 +103,28 @@ export function KioskShow({
   const slots = shown?.slots ?? [];
   const activeSlot = slots.length > 0 ? slots[slotIndex % slots.length] : null;
 
-  const stageLabel = eventInfo?.stages?.find((s) => s.stageId === shown?.activeStageId)?.label;
+  const activeStageInfo = eventInfo?.stages?.find((s) => s.stageId === shown?.activeStageId);
+  const activeDayLabel = dayLabelFromIndex(activeStageInfo?.day);
+  const stageLabel = activeStageInfo
+    ? activeDayLabel
+      ? `${activeDayLabel} — ${activeStageInfo.label}`
+      : activeStageInfo.label
+    : undefined;
 
   // Spec 04 §4 acceptance: stage change re-themes the kiosk ≤5s — driven live by the playlist
   // itself (the publisher flushes slots on stage change), not by the one-shot event bootstrap.
+  // `data-stage-theme` (mapped from the playlist's free-string `theme`, legacy names included —
+  // see the map above) is what `tokens.css` actually retunes on; `data-stage` is kept too since
+  // other surfaces read the raw stage id.
   useEffect(() => {
     if (shown?.activeStageId) document.documentElement.dataset.stage = shown.activeStageId;
-  }, [shown?.activeStageId]);
+    const stageTheme = resolveStageTheme(shown?.theme);
+    if (stageTheme) {
+      document.documentElement.dataset.stageTheme = stageTheme;
+    } else {
+      delete document.documentElement.dataset.stageTheme;
+    }
+  }, [shown?.activeStageId, shown?.theme]);
 
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ background: "var(--bg-0)" }}>
