@@ -21,6 +21,11 @@ export function KioskShow({
   const [publicCount, setPublicCount] = useState<number | null>(null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const cachedPlaylist = useRef<KioskPlaylist | null>(null);
+  // B1: the show used to rewind to slot 0 on every playlist snapshot, so a busy event's tail hero
+  // slots could go unreached forever. Reset now tracks `leadKey` — the publisher only sets it for an
+  // actual interrupt (a reel premiere or a bounty takeover) — so a tail-only rebuild (a new photo
+  // entering the pool, recency reordering) leaves the viewer's position alone.
+  const lastLeadKey = useRef<string | null>(null);
 
   useEffect(() => {
     return listenKioskPlaylist(
@@ -32,7 +37,11 @@ export function KioskShow({
           setUpdatedAt(Date.now());
         }
         setPlaylist(pl);
-        setSlotIndex(0);
+        const leadKey = pl?.leadKey ?? null;
+        if (leadKey !== null && leadKey !== lastLeadKey.current) {
+          setSlotIndex(0);
+        }
+        lastLeadKey.current = leadKey;
       },
       () => setConnected(false)
     );

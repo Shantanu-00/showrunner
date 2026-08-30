@@ -263,6 +263,10 @@ export interface KioskPlaylist {
   theme?: string | null;
   slots: KioskSlot[];
   updatedAt?: string | null;
+  /** Non-null only when slot 0 is a reel premiere or bounty takeover (`publisher/program.py`'s
+   * `_lead_key`, B1). The kiosk resets to slot 0 when this changes; every other rebuild — a new photo
+   * entering the hero pool, pure recency reordering — leaves the viewer's position alone. */
+  leadKey?: string | null;
 }
 
 export interface LeaderboardEntry {

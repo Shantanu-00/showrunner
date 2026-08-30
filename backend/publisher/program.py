@@ -95,17 +95,33 @@ class Program:
     #: rewrite the kiosk client can see costs a visible restart of the show (it resets to slot 0 on
     #: every snapshot). So the fingerprint is what decides whether a rebuild is worth a revision.
     fingerprint: str = ""
+    #: The identity of slot 0 when — and only when — it is a reel premiere or a bounty takeover;
+    #: `None` otherwise (B1). A hero-only rebuild changes `fingerprint` on almost every tick (a new
+    #: photo enters the pool, recency reorders the top of the list), and the client used to treat every
+    #: one of those as "the lead changed" and restart the show from slot 0. That is only correct for an
+    #: actual interrupt — the client resets **only** when `leadKey` itself changes, so a tail-only
+    #: rebuild leaves the viewer's position alone.
+    lead_key: str | None = None
 
 
 # ---------------------------------------------------------------- the score
 
 
-def recency_decay(captured_at: dt.datetime | None, now: dt.datetime) -> float:
-    """`0.5 ** (age / 20 min)` (spec 04 §4). A missing timestamp is treated as now: intake always
-    writes one (EXIF or arrival), so the only way to get here is a hand-seeded document."""
-    if captured_at is None:
-        return 1.0
-    age_min = max(0.0, (now - captured_at).total_seconds() / 60.0)
+def recency_decay(
+    captured_at: dt.datetime | None, uploaded_at: dt.datetime | None, now: dt.datetime
+) -> float:
+    """`0.5 ** (age / 20 min)` (spec 04 §4), taken over the **younger** of `capturedAt` and
+    `uploadedAt` (B2). A forwarded photo can be public and brand new while its EXIF capture time is
+    hours or days old — `capturedAt` alone decays it to near zero before it ever reaches a hero slot,
+    which defeats the exact "your photo is on the wall" guarantee `store.RECENT_LIMIT`'s query exists
+    to serve. Missing timestamps are dropped from the comparison rather than forced to either extreme;
+    if both are missing the age is treated as zero, matching the old "missing means now" behaviour —
+    intake always writes both (EXIF/arrival and server time), so the only way to get here is a
+    hand-seeded document."""
+    ages = [
+        max(0.0, (now - t).total_seconds() / 60.0) for t in (captured_at, uploaded_at) if t is not None
+    ]
+    age_min = min(ages) if ages else 0.0
     return 0.5 ** (age_min / KIOSK_RECENCY_HALF_LIFE_MIN)
 
 
@@ -124,7 +140,7 @@ def _base_factors(
 ) -> dict[str, float]:
     return {
         "aesthetic": float(c.aesthetic or 0.0),
-        "recency": recency_decay(c.captured_at, now),
+        "recency": recency_decay(c.captured_at, c.uploaded_at, now),
         "stageMatch": stage_match(c.stage_id, active, previous),
         "vipWeight": float(c.vip_weight or 1.0),
     }
@@ -237,9 +253,10 @@ def build(
 ) -> Program:
     """Assemble the slot list. Ordering rules, in the order they win:
 
-    1. **A reel premiere takes over the screen** (spec 04 §4). It leads the program, and because the
-       client resets to slot 0 whenever the playlist changes, "leads" and "interrupts" are the same
-       thing — there is no need to inject anything mid-render, which spec 06 §7 forbids anyway.
+    1. **A reel premiere takes over the screen** (spec 04 §4). It leads the program, and the client
+       resets to slot 0 exactly when `Program.lead_key` changes (B1) — so "leads" and "interrupts" are
+       the same thing for a premiere or a takeover, with no need to inject anything mid-render (which
+       spec 06 §7 forbids anyway), while an ordinary hero-only rebuild leaves the viewer's place alone.
     2. **An escalated bounty is a full-screen mission.** The Story Director escalates precisely
        because the ordinary banner did not work, so it goes in front of the show, not into it.
     3. **`just_in` leads whenever something just went public.** Spec 04 §4 calls that strip the
@@ -299,7 +316,23 @@ def build(
         theme=theme,
         hero_count=len(heroes),
         fingerprint=fingerprint(slots, active_stage_id, theme),
+        lead_key=_lead_key(slots),
     )
+
+
+def _lead_key(slots: list[dict[str, Any]]) -> str | None:
+    """The identity of slot 0, but **only** when it is a takeover (B1) — a reel premiere or an
+    escalated bounty. Every other slot 0 (a `just_in` strip, an ordinary hero) is `None`, because those
+    are not interrupts and must not cost the viewer their place in the show. The client resets to slot
+    0 exactly when this string changes to a new, non-`None` value."""
+    if not slots:
+        return None
+    lead = slots[0]
+    if lead.get("type") == "reel":
+        return f"reel:{lead.get('reelId')}"
+    if lead.get("type") == "bounty_call":
+        return f"bounty:{lead.get('bountyId')}"
+    return None
 
 
 def pick_takeover(bounties: list[dict[str, Any]], now: dt.datetime) -> str | None:

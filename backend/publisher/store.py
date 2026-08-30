@@ -242,9 +242,10 @@ def _publish(
     revision = int(current.get("revision") or 0)
 
     if snap.exists and current.get("fingerprint") == built.fingerprint and not premiered:
-        # Nothing the viewer could see has changed. Skipping the write is not just thrift: the kiosk
-        # client restarts the program from slot 0 on every snapshot, so a revision bump for identical
-        # content would visibly reset the show — once every fallback interval, forever.
+        # Nothing the viewer could see has changed. Skipping the write is not just thrift: even though
+        # B1 made the client's slot-0 reset conditional on `leadKey`, a snapshot still costs the client
+        # a fresh render pass, so a revision bump for identical content is still churn worth avoiding
+        # — once every fallback interval, forever.
         transaction.set(ref, {"checkedAt": fs.SERVER_TIMESTAMP}, merge=True)
         return Written(False, revision, built.fingerprint)
 
@@ -264,6 +265,9 @@ def _publish(
             # Operational, not sensitive — this document is world-readable (spec 09 §3), so it
             # carries the show and the reason for it and nothing about a person.
             "fingerprint": built.fingerprint,
+            # B1: non-null only when slot 0 is a reel premiere or bounty takeover. The client resets to
+            # slot 0 exactly when this changes, instead of on every revision (see `program._lead_key`).
+            "leadKey": built.lead_key,
             "trigger": trigger,
             "heroCount": built.hero_count,
             "slotCount": len(built.slots),

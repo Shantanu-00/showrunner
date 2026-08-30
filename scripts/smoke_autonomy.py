@@ -164,6 +164,34 @@ def check_program() -> None:
             fail(f"program: {label} → {got}, expected {expected}")
         print(f"  ok  {' → '.join(got):<34} {label}")
 
+    # --- B2: recency has to run over the *younger* of capturedAt and uploadedAt. A forward has an
+    # old EXIF capture time but a brand-new uploadedAt, and it must not sink below a photo that is
+    # stale on both — `capturedAt` alone decays it to near zero before this comparison is applied.
+    forwarded = program.Candidate(
+        media_id="forwarded",
+        aesthetic=0.5,
+        captured_at=now - dt.timedelta(hours=3),
+        uploaded_at=now - dt.timedelta(minutes=1),
+        stage_id="sangeet",
+        dedupe_keys=frozenset({"face:a"}),
+    )
+    stale_both = program.Candidate(
+        media_id="stale",
+        aesthetic=0.5,
+        captured_at=now - dt.timedelta(hours=3),
+        uploaded_at=now - dt.timedelta(hours=3),
+        stage_id="sangeet",
+        dedupe_keys=frozenset({"face:b"}),
+    )
+    got = _hero_ids(program.build([forwarded, stale_both], now=now, active_stage_id="sangeet"))
+    if got != ["forwarded", "stale"]:
+        fail(
+            f"program: a photo uploaded 1 minute ago with 3-hour-old EXIF lost to one stale on both "
+            f"timestamps → {got}, expected ['forwarded', 'stale'] (recency must use "
+            "min(capturedAt age, uploadedAt age))"
+        )
+    print(f"  ok  {' → '.join(got):<34} recency: uploadedAt rescues a stale-EXIF forward")
+
     # --- spec 04 §6: no face cluster twice in any five consecutive hero slots, loop included.
     #
     # The criterion is arithmetic before it is code: five consecutive distinct clusters need at least
@@ -224,6 +252,28 @@ def check_program() -> None:
     if types[:4] != ["reel", "bounty_call", "just_in", "hero"]:
         fail(f"program: takeover order is {types[:4]}, expected reel → bounty_call → just_in → hero")
     ok("takeovers lead: a reel premiere, then an escalated bounty, then the just-in strip")
+
+    # --- B1: leadKey names an interrupt (reel/bounty) and only an interrupt, so the kiosk client
+    # resets to slot 0 for those and nowhere else — a tail-only rebuild must not rewind the show.
+    if built.lead_key != "reel:R1":
+        fail(f"program: a reel premiere in slot 0 produced lead_key={built.lead_key!r}, expected 'reel:R1'")
+    takeover_only = program.build(
+        [_candidate("a", aesthetic=0.9, age_min=0, keys={"face:a"}, now=now)],
+        now=now,
+        takeover_bounty_id="B9",
+    )
+    if takeover_only.lead_key != "bounty:B9":
+        fail(f"program: a bounty takeover in slot 0 produced lead_key={takeover_only.lead_key!r}")
+    ordinary = program.build(
+        [
+            _candidate("a", aesthetic=0.9, age_min=1, keys={"face:a"}, now=now),
+            _candidate("b", aesthetic=0.5, age_min=1, keys={"face:b"}, now=now),
+        ],
+        now=now,
+    )
+    if ordinary.lead_key is not None:
+        fail(f"program: an ordinary hero-led program produced lead_key={ordinary.lead_key!r}, expected None")
+    ok("leadKey: set for a reel premiere or bounty takeover, None for an ordinary hero-led program")
 
     # --- which bounty earns the screen, and for how long (S14)
     #
