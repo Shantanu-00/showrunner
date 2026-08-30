@@ -31,8 +31,12 @@ Each tick (a `SequentialAgent`: Ledger → Reason → Act):
      ≤ 2 new bounties/tick, ≤ 6 active total; no duplicate bounty per (moment, vip);
      points = clamp(basePoints × vipWeight(targetVip), 50, 300) — the guardrail band is the
      ceiling, tier (spec 11 §3.3) is the reason a bride's-mother bounty outpays a generic one;
-     stage advance auto-applies only if confidence ≥ 0.8
-     AND scheduled window agrees ±45 min — else it becomes a host-console suggestion card.
+     stage advance auto-applies only if confidence ≥ 0.8 AND (the scheduled window agrees, OR
+     the drift signal has named that same stage for DRIFT_ADVANCE_TICKS consecutive ticks —
+     spec 13's evidence leg); else it becomes a host-console suggestion card. The window is
+     max(45 min, 0.25 × minutes to the nearest neighbouring stage) — a wedding scheduled in
+     30-minute beats keeps the literal ±45, a trip in 4-hour blocks gets a window sized to
+     its own grain (revised with spec 13; previously a flat ±45).
 ```
 
 **Tier also orders which gap gets acted on, not just how it's paid.** When the REASON step has multiple candidate gaps of similar statistical severity, it ranks by `vipWeight(targetVip)` first — a tier-0 gap (the couple) outranks a tier-3 gap (a random guest cluster) of equal photoCount deficit. Tier is deterministic metadata read at reasoning time, never something the LLM is trusted to infer or remember on its own (spec 11 §4).
@@ -46,7 +50,9 @@ Weddings run late. Three inputs, fused:
 - **Visual evidence** = Curator's per-photo raw stage distributions; a run of high-confidence off-schedule classifications (e.g. 12 of last 20 photos look like Pheras during the Sangeet window) is the drift signal computed in the ledger step.
 - **Host override** = the host console's big "Now: ▶ Pheras" button (and MC shortcut) always wins instantly.
 
-`PROPOSE_STAGE_ADVANCE` applies the guardrail above. Stage change fans out: kiosk re-theme, **immediate arming of the new stage's required-moment bounty templates**, `ANNOUNCE` slot, temporal prior update for the Curator context block.
+`PROPOSE_STAGE_ADVANCE` applies the guardrail above. The drift signal's *streak* (how many consecutive ticks it has named the same target, persisted on the director state) is what licenses an advance the schedule disagrees with: one tick's drift can be a burst of forwarded photos from this morning, two consecutive ticks against fresh uploads is a place (spec 13). The host's override still beats any amount of evidence, instantly. Stage change fans out: kiosk re-theme, **immediate arming of the new stage's required-moment bounty templates**, `ANNOUNCE` slot, temporal prior update for the Curator context block.
+
+**Gap lifecycle (spec 13):** a stage whose `endsAt` is more than `STAGE_GAP_GRACE_MINUTES` past emits no live gaps — nobody can photograph it any more, and on a multi-day event Day 1's misses must not crowd Day 4's live gaps out of the prompt and the bounty budget. Its uncovered moments are archived exactly once into `directorState.permanentGaps` (beside the expired-bounty records), which is what the wrap report reads. **Idle ticks (spec 13):** when nothing is scheduled within `TICK_IDLE_LOOKAHEAD_MINUTES` (nor within the grace window behind), nobody has uploaded, no bounty is open and the host holds no override, the tick runs only its deterministic steps (Validate/Expire — awards never wait) and skips the REASON model call entirely, reporting `mode: "idle"` and leaving no session line. A 5-day trip is ~3,600 ticks; without this every overnight tick is a paid model call.
 
 **Two coverage mechanisms, deliberately split:** *scheduled arming* for predictable moments — a varmala or bouquet toss lasts under a minute, and reactive detection can only notice the absence after it's over, so those bounties go live from the timeline prior the second their stage begins; *reconciliation* (the 2-min tick) for statistical gaps that only aggregate evidence reveals ("40 minutes into the Haldi, zero photos of the grandmother"). Anticipate the predictable, reconcile the statistical.
 
@@ -71,6 +77,6 @@ Max 1 banner per guest per 10 min (client-side gate on the listener); bounty aud
 
 - [ ] Seeded scenario "Pheras active, zero bride's-mother photos" → within one tick a correctly-worded bounty exists and banners appear on connected clients (no human input anywhere).
 - [ ] A submitted photo matching the moment+VIP fulfills the bounty and awards points transactionally (no double-award under concurrent submissions).
-- [ ] Stage-drift scenario (Sangeet window, Pheras-looking photos) → proposal card appears on host console; confidence ≥ 0.8 + window agreement → auto-advance.
+- [ ] Stage-drift scenario (Sangeet window, Pheras-looking photos) → proposal card appears on host console; confidence ≥ 0.8 + window agreement → auto-advance; confidence ≥ 0.8 + the same drift target two ticks running → auto-advance even outside the window (spec 13); a lapsed stage's uncovered moments archive once and stop appearing as gaps; a quiet multi-day night ticks `mode: "idle"` with zero model spend.
 - [ ] Guardrails hold under adversarial LLM output (action fuzz test: invalid actions are rejected and logged, never applied).
 - [ ] Two consecutive ticks with no changes → `NO_OP` with reasoning (no bounty spam).

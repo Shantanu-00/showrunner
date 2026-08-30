@@ -39,14 +39,31 @@ The button enables only when: timeline reviewed (§3), ≥1 stage, event.timezon
 3. All renders published → **wrap-up report** generated (3.7-flash): coverage summary per stage, honest gaps ("no photos of the priest during Kanyadaan — bounty expired unfilled"), top contributors, stats. Written to the host console + kiosk finale slide ("2,314 photos · 11 reels · 47 photographers — thank you ❤").
 4. Status → `wrapped`, in the same transaction that decrements `platform/liveEventCount` (spec 11 §1 — the slot is freed the instant the event stops actually consuming resources, not before). Retention clock (spec 02 §5) starts.
 
-## 3. Event creation wizard (draft state)
+## 3. Event creation wizard (draft state) — **revised by spec 13: itinerary-led, not template-led**
 
-1. **Details:** name, date(s), **timezone (required — EXIF interpretation depends on it, spec 03 §5.1)**.
-2. **Event Type Profile (spec 11 §2):** host picks a template (Wedding — Generic/Hindu/Christian, Bachelor(ette) Party, Birthday, Graduation, Corporate Offsite, Custom) → wizard pre-fills `vipTopology` + `sensitivityProfile` dials (PDA/alcohol/attire) + `culturalGlossary` from that template, all shown as **editable, not silently authoritative** — same discipline as the timeline review one step later. This single choice is what makes the rest of the pipeline behave correctly for *this* event without any hardcoded per-culture branch anywhere in the codebase.
-3. **Timeline paste → parse → REVIEW:** host pastes unstructured itinerary (pre-filled with the template's `requiredMomentsTemplate` as a starting table) → Model Armor sanitize → Gemini structured parse merges in → **editable review table** (stage names, windows, required moments, VIP tags). The host confirms or fixes before anything downstream trusts it — an LLM parse of a WhatsApp itinerary forward is never silently authoritative. Re-parse and manual add both supported.
-4. **VIP enrollment & tiering (spec 11 §3):** upload reference photos per VIP → face pipeline enrolls them as protected persons (impersonation guard, spec 02 §3), each assigned a `tier` (0–2). Under `vipTopology: pyramid` the wizard defaults every enrolled person to tier 3 and the host promotes explicitly; under `flat` it offers a one-tap "mark everyone as inner circle" bulk action and the host demotes exceptions instead. Guest self-enrollment (spec 02) always defaults to tier 3 regardless of topology — this step only sets the *host-enrolled* default.
-5. **QR + links:** printable guest QR (deep link with eventId), kiosk URL, host magic links.
-6. **Access & seats:** open or invite-only, the seat cap, and — in invite mode — the invite code, which rides on the QR's deep link as `?joinCode=` so scanning the printed QR is still a one-step arrival. Defaults to `open`, because a wizard that stops to ask a security question before the event exists is a wizard people abandon; changeable at any time afterwards from the console.
+1. **Details:** name, **date range** (`startDate`/`endDate`, local dates — spec 13 §1), **timezone
+   (required — EXIF interpretation depends on it, spec 03 §5.1)**, **expected participants**
+   (spec 13 §1 — feeds group coverage and the invite seat default), and **access mode** (open /
+   invite; invite mints the join code inside the creation request and shows it exactly once).
+2. **Itinerary — paste / PDF / screenshot → parse → REVIEW (spec 13 §3):** Model Armor sanitize →
+   Gemini structured parse → **editable, day-grouped review table** (stage names, windows —
+   prefilled from the parse's dated proposals, required moments, theme, expected setting). The
+   host confirms or fixes before anything downstream trusts it — an LLM parse is never silently
+   authoritative, whatever it was parsed from. Re-parse and manual add both supported; skippable.
+3. **People (spec 13 §7):** optionally add participants with reference photos
+   (`POST …/people/host-enroll` — the host is the approver, no uid link is ever created here)
+   and tiers per spec 11 §3's topology defaults. Guest self-enrollment (spec 02) always defaults
+   to tier 3 regardless.
+4. **QR + links:** printable guest QR (deep link with eventId, `?joinCode=` in invite mode),
+   kiosk URL, host magic links, the recovery code, the once-only invite code.
+
+**The Event Type Profile (spec 11 §2) is no longer a wizard step.** Every event is created
+`custom` (neutral dials, empty glossary); the templates survive as *presets* behind a quiet
+select in the console's **Settings panel**, host-reviewed as ever. Mutability split: the
+sensitivity dials are editable while `draft|live|paused` (they are ceilings — tightening
+mid-event is a safety action, and verdicts are stored per-photo so loosening only affects future
+ones); `culturalGlossary`/`requiredMomentsTemplate`/`vipTopology` stay draft-only (they feed
+per-photo prompts and bounty arming).
 
 ### Access mode — who may read this event
 
