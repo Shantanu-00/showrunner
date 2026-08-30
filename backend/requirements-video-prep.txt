@@ -1,0 +1,13 @@
+# worker-video-prep only (backend/docker/Dockerfile.video-prep).
+#
+# Deliberately NOT requirements-render.txt, whose header claims to serve "reel renderer + video prep":
+# that file pulls librosa (and with it SciPy and numba, ~400 MB) for beat tracking, which this worker
+# never does. The renderer is a Cloud Run *Job* that runs once per commission and can afford a fat
+# image; this is a *service* that scales 0→5 on a burst of uploads, where every 100 MB is cold-start
+# latency a guest waits through.
+#
+# ffmpeg and ffprobe are apt packages, not pip ones — see the Dockerfile. Pillow arrives via
+# requirements.txt and is used for two things here: the poster's sharpness measure, and reusing
+# `intake/images.py::render_variants` so a clip's poster produces exactly the thumb/classify/display
+# triple a photo does.
+-r requirements.txt

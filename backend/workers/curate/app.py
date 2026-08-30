@@ -27,7 +27,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from google.api_core import exceptions as gexc
 
-from schemas.common import Stage
+from schemas.common import SceneSetting, Stage
 from schemas.curator_out import CuratorOut
 from schemas.media import CuratorBlock, Quality
 from services import gemini
@@ -179,8 +179,28 @@ def _fuse(out: CuratorOut, media: dict[str, Any], event: dict[str, Any]) -> Cura
         caption=out.caption or None,
         culturalElements=_glossary_filter(out.culturalElements, event),
         peopleCountEstimate=out.peopleCountEstimate,
+        sceneSetting=_scene_setting(out.sceneSetting),
         needsReview=False,
     )
+
+
+def _scene_setting(raw: str) -> SceneSetting:
+    """Coerce the model's string to the closed vocabulary; anything else becomes `unknown`.
+
+    Same posture as `_glossary_filter` below and for the same reason: the instruction lists the nine
+    values, but "the model was told to" is not a guarantee, and here the cost of a stray value is
+    specific — every scene tag becomes a Firestore map key on a coverage shard
+    (`shared/coverage.py::bump`), so an invented setting would silently create a new bucket and quietly
+    dilute the distribution the world model reasons from. Falling back to `unknown` is safe because
+    `unknown` is already defined as "no information", not as a low score.
+    """
+    candidate = (raw or "").strip().lower()
+    try:
+        return SceneSetting(candidate)
+    except ValueError:
+        if candidate:
+            log.warn("scene_setting_dropped", offered=candidate[:64])
+        return SceneSetting.UNKNOWN
 
 
 def _glossary_filter(elements: list[str], event: dict[str, Any]) -> list[str]:

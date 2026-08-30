@@ -1,4 +1,5 @@
 .PHONY: up down dev-event smoke smoke-faces smoke-safety smoke-autonomy smoke-director smoke-reel \
+        smoke-dlq check \
         seed eval demo-reset rules-test \
         deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
         deploy-video-prep deploy-render deploy-publisher deploy-hosting
@@ -51,6 +52,19 @@ smoke-director:
 smoke-reel:
 	$(PY) scripts/smoke_reel.py
 
+# Budget exhaustion end to end: injects enough failures to exhaust MAX_STAGE_ATTEMPTS, confirms
+# `quarantined` + an `ops/` alert at error severity, then replays and confirms recovery. The
+# `--chaos` flag on smoke_upload/smoke_safety tests retries *winning*; this is the one script that
+# tests them losing. Needs a live deployment and ~5-7 min against real Cloud Tasks backoff.
+smoke-dlq:
+	$(PY) scripts/smoke_dlq.py
+
+# No unit tests in this project (CLAUDE.md) — but a static/build check that never touches Firestore
+# or spends a cent is exactly what `tsc`/`next build` already are, so there is no reason for a
+# frontend regression to be caught only by a human staring at a deploy. Run before `deploy-hosting`.
+check:
+	cd frontend && npx tsc --noEmit && npm run build
+
 seed:
 	$(PY) backend/seed.py --event demo
 
@@ -95,8 +109,14 @@ deploy-safety:
 	gcloud run deploy worker-safety --source backend --region $(REGION) \
 	  --update-env-vars SERVICE=worker-safety
 
+# Same shape as deploy-face and for the same reason: ffmpeg/ffprobe do not ride the common image,
+# so `--source` would build backend/Dockerfile — which has no ffmpeg and whose main.py raises on
+# SERVICE=worker-video-prep, producing a revision that never becomes ready rather than an error.
 deploy-video-prep:
-	gcloud run deploy worker-video-prep --source backend --region $(REGION) \
+	$(eval VIDEO_PREP_IMAGE := $(REGION)-docker.pkg.dev/$(shell gcloud config get-value project)/showrunner/worker-video-prep:$(shell git rev-parse --short HEAD))
+	gcloud builds submit backend --config backend/docker/cloudbuild.video-prep.yaml \
+	  --substitutions _IMAGE=$(VIDEO_PREP_IMAGE)
+	gcloud run deploy worker-video-prep --image $(VIDEO_PREP_IMAGE) --region $(REGION) \
 	  --update-env-vars SERVICE=worker-video-prep
 
 # The reel renderer needs ffmpeg + fonts + librosa, so it has its own Dockerfile and cannot use

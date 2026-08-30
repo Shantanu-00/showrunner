@@ -40,6 +40,7 @@ from shared.settings import (
     PHOTO_CONTENT_TYPES,
     settings,
 )
+from shared.visibility import recompute_visibility
 
 from . import images
 
@@ -405,13 +406,32 @@ def process(data: dict[str, Any]) -> dict[str, Any]:
                 log.info("gps_stripped", event_id=event_id, media_id=media_id)
 
     if canonical:
-        # Byte-identical to media already in this event. It keeps its own renders (so the
-        # uploader's own album is complete) but buys no perception: spec 04 gives a dupe
-        # `visibility='self'`, and B2 copies the canonical's results when they land.
+        # Byte-identical to media already in this event. It keeps its own renders (so the uploader's
+        # own album is complete) but buys no perception: spec 04 gives a dupe `visibility='self'`.
+        #
+        # Committed through `recompute_visibility` rather than a bare `update`, even though `decide()`
+        # is guaranteed to return `self` here (it checks `duplicateOf` before anything else). Two
+        # reasons, and neither is about this item's exposure. Spec 04 §6's acceptance criterion is a
+        # *grep* — exactly one writer of `visibility` — and a path that reaches a terminal `status`
+        # without ever consulting that writer is a hole in the property even when the answer would
+        # have been right. And a dupe used to end up with no `visibility` field at all, which is not
+        # the same thing as `self`: it happens to be excluded by every query that matters, so nothing
+        # leaked, but "correct because of how the queries are phrased" is a weaker guarantee than
+        # "correct because the one function that decides exposure decided it".
         updates["duplicateOf"] = canonical
-        updates["status"] = MediaStatus.INDEXED.value
-        fs.media_ref(event_id, media_id).update(updates)
-        log.info("duplicate_of", event_id=event_id, media_id=media_id, canonical=canonical)
+        visibility = recompute_visibility(
+            event_id, media_id, event=event, extra=updates, derive=lambda _media: {
+                "status": MediaStatus.INDEXED.value,
+                "indexedAt": fs.SERVER_TIMESTAMP,
+            }
+        )
+        log.info(
+            "duplicate_of",
+            event_id=event_id,
+            media_id=media_id,
+            canonical=canonical,
+            visibility=visibility,
+        )
         return {"ok": True, "action": "duplicate", "duplicateOf": canonical}
 
     bounty_id = doc.get("bountyId")

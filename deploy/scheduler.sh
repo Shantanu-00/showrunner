@@ -13,11 +13,11 @@
 #                                       + the handler enqueues one Cloud Task at +30 s hitting the
 #                                       same endpoint, so the effective demo cadence is 30 s
 #                                       (Scheduler's cron floor is 1 minute — spec 09 §2/§5).
-#
-# `orphan-sweep` (spec 09 §2's third job) is deliberately NOT created here. Its target,
-# `/internal/sweep`, does not exist yet; a Scheduler job pointing at a 404 would show `Result: failed`
-# on the exact console page the video points a camera at. The session that builds the sweep handler
-# adds the job in the same commit.
+#   orphan-sweep        hourly        → POST {api}/internal/sweep           (every event)
+#                                       stranded pending stages · face-cluster reconciliation ·
+#                                       orphan raw-bucket objects · abandoned upload intents ·
+#                                       stuck-at-uploaded redrive · public-class TTL auto-wrap and
+#                                       cost-ceiling enforcement (spec 09 §2, spec 11 §1.3/§1.4).
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SCHEDULER_SA="$(sa_email "${SA_SCHEDULER}")"
@@ -68,8 +68,15 @@ ensure_job "director-tick-demo" "* * * * *" \
   "${API_URL}/internal/tick?demo=1" \
   "Demo-event tick; the handler interleaves a +30s Cloud Task (spec 09 §5)"
 
+# The hourly reconciliation sweep (spec 09 §2's third job). Retries capped at 1 for the same reason
+# as the tick jobs above: the sweep is leased (`api/sweep.py`'s `sweeps/global` document) and runs
+# again in an hour regardless, so a retry storm buys nothing a missed hour wouldn't already fix.
+ensure_job "orphan-sweep" "0 * * * *" \
+  "${API_URL}/internal/sweep" \
+  "Orphan/stranded reconciliation + public-event TTL and cost-ceiling enforcement (spec 09 §2)"
+
 step "Verify"
-for job in director-tick director-tick-demo; do
+for job in director-tick director-tick-demo orphan-sweep; do
   gcloud scheduler jobs describe "${job}" --location "${REGION}" --project "${PROJECT_ID}" \
     --format='value[separator="  ·  "](name.basename(),state,schedule,lastAttemptTime)' \
     | sed 's/^/   /'

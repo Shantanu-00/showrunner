@@ -1,8 +1,18 @@
-"""Host moderation and surgical replay — the two human levers on the perception pipeline.
+"""Host moderation and surgical replay — the human levers on the perception pipeline.
 
-Both endpoints exist because the pipeline is allowed to be wrong. The Guardian routes what it cannot
+These endpoints exist because the pipeline is allowed to be wrong. The Guardian routes what it cannot
 judge to `host_review` (spec 03 §5.3) and a transient-exhausted stage quarantines an item (spec 03
 §6); neither is a dead end, because a host can overrule the first and re-run the second.
+
+**Why the listing endpoint matters as much as the deciding one.** Every conservative default in this
+system routes to `host_review`: a Guardian refusal, a model that never answered, the deterministic
+`minor_prominent` rule in `workers/safety/gate.py` (a child as the main subject — "hosts know whose
+kids are whose; we don't"), and any dial the host themselves declared. All of those park at `pool`
+and wait. `workers/safety/app.py` raises an `ops/` alert for each one precisely because "a silent
+queue is a queue nobody clears" — but an alert feed is a log, not a work surface, and until this
+endpoint existed there was no way to enumerate what was waiting. A conservative default with no
+reachable escape hatch is not caution, it is a silent suppression, which is the one thing spec 04 §1
+forbids. So the queue is part of the safety mechanism, not a convenience on top of it.
 
 The shape of the override is the part worth reading closely. A host decision does **not** write
 `visibility`, and it does not overwrite the model's verdict either — it writes
@@ -23,15 +33,27 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Path, Query
+from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
-from schemas.common import GuardianVerdict, MediaStatus, Stage, StageState
-from schemas.moderation import ReplayResponse, ReviewDecision, ReviewResponse
+from schemas.common import GuardianVerdict, MediaKind, MediaStatus, Stage, StageState
+from schemas.moderation import (
+    ReplayResponse,
+    ReviewDecision,
+    ReviewQueueItem,
+    ReviewQueueResponse,
+    ReviewResponse,
+)
 from shared import errors, fs, log, tasks
 from shared.auth import Principal, caller
-from shared.settings import settings
+from shared.settings import REVIEW_QUEUE_LIMIT, REVIEW_QUEUE_SCAN, settings
 from shared.visibility import recompute_visibility
 
 router = APIRouter(prefix="/v1/events/{eventId}", tags=["moderation"])
+
+#: The only two verdicts that describe unfinished business. `public_ok` and `private_only` are settled
+#: answers and have no queue; asking for one is a client bug, so it is a 400 rather than an empty list.
+QUEUEABLE_VERDICTS = (GuardianVerdict.HOST_REVIEW, GuardianVerdict.BLOCKED)
 
 #: Which queue and target service each replayable stage belongs to. `thumb` is absent on purpose:
 #: intake's renders are not a Cloud Tasks stage, and re-running them means replaying the object
@@ -60,6 +82,118 @@ def _media(event_id: str, media_id: str) -> dict[str, Any]:
     if not snap.exists:
         raise errors.not_found("NO_MEDIA", "unknown media")
     return snap.to_dict() or {}
+
+
+def _is_pending(doc: dict[str, Any]) -> bool:
+    """Still waiting on a human. The one definition of "in the queue", shared by the listing endpoint
+    and the console badge — a badge computed from a different predicate than the list it points at is
+    a badge that says 3 over an empty page, and a host stops believing the next one."""
+    return not (doc.get("guardian") or {}).get("hostDecision") and not doc.get("deleted")
+
+
+def _queue_query(event_id: str, verdict: GuardianVerdict) -> firestore.Query:
+    """Newest first, bounded. Served by the existing `guardian.verdict + uploadedAt` composite index
+    (`firestore.indexes.json`) — this endpoint added no index."""
+    return (
+        fs.media_col(event_id)
+        .where(filter=FieldFilter("guardian.verdict", "==", verdict.value))
+        .order_by("uploadedAt", direction=firestore.Query.DESCENDING)
+        .limit(REVIEW_QUEUE_SCAN)
+    )
+
+
+def pending_review_count(
+    event_id: str, verdict: GuardianVerdict = GuardianVerdict.HOST_REVIEW
+) -> int:
+    """Count for the console badge (`api/host.py::console_summary`).
+
+    A bounded scan rather than a Firestore `.count()` aggregation, because the aggregation cannot
+    apply `_is_pending`: a decided photo keeps `guardian.verdict == 'host_review'` forever, so an
+    aggregate would count it again on every load and the badge would climb monotonically no matter how
+    diligently the host cleared it. Saturates at `REVIEW_QUEUE_SCAN`, which is honest — past that point
+    the exact number stops being the useful fact.
+    """
+    try:
+        return sum(1 for snap in _queue_query(event_id, verdict).stream() if _is_pending(snap.to_dict() or {}))
+    except Exception as exc:  # noqa: BLE001 - a KPI header must not 500 over a badge
+        log.warn("review_count_failed", event_id=event_id, err=str(exc))
+        return 0
+
+
+@router.get("/media/review-queue", response_model=ReviewQueueResponse)
+async def review_queue(
+    eventId: str = Path(min_length=1, max_length=128),
+    verdict: GuardianVerdict = Query(
+        default=GuardianVerdict.HOST_REVIEW, description="host_review | blocked"
+    ),
+    principal: Principal = Depends(caller),
+) -> ReviewQueueResponse:
+    """Everything at this event still waiting on the host, newest first.
+
+    Two things about the query are deliberate.
+
+    **`hostDecision` is filtered in Python, not in the query.** A decided photo keeps its original
+    `guardian.verdict` forever — that is the whole point of `review_media` writing to a separate field
+    — so "already decided" cannot be expressed as an equality on the indexed field. It could be a
+    second composite index, but `hostDecision` is absent from all but a handful of documents at any
+    moment, and an index that exists to serve a query returning almost nothing is a cost with no
+    reader. Same trade, same reasoning as `directors/story/validate.py::_pending`.
+
+    **`blocked` is listable but not reviewable.** `review_media` below refuses to release a
+    SafeSearch-blocked item, and that stands. What a host still needs is to *find* those items, because
+    the only available action — deleting them — requires knowing they exist. A queue that hides its
+    most serious entries would leave the host unable to act on the one category the system itself
+    escalated at `error` severity.
+    """
+    _require_host(principal, eventId)
+    if verdict not in QUEUEABLE_VERDICTS:
+        raise errors.bad_request(
+            "NOT_A_QUEUE",
+            f"{verdict.value} is a settled verdict, not a queue",
+            queueable=[v.value for v in QUEUEABLE_VERDICTS],
+        )
+
+    items: list[ReviewQueueItem] = []
+    scanned = 0
+    for snap in _queue_query(eventId, verdict).stream():
+        scanned += 1
+        doc = snap.to_dict() or {}
+        if not _is_pending(doc):
+            continue
+        if len(items) >= REVIEW_QUEUE_LIMIT:
+            break
+        guardian = doc.get("guardian") or {}
+        curator = doc.get("curator") or {}
+        items.append(
+            ReviewQueueItem(
+                mediaId=snap.id,
+                kind=MediaKind(doc.get("kind") or MediaKind.PHOTO.value),
+                modelVerdict=guardian.get("verdict"),
+                reasons=[str(r) for r in (guardian.get("reasons") or [])],
+                note=guardian.get("note") or None,
+                ritualEmotion=bool(guardian.get("ritualEmotion")),
+                caption=curator.get("caption") or None,
+                aestheticScore=round(float(curator.get("aestheticScore") or 0.0), 2),
+                visibility=doc.get("visibility"),
+                uploadedAt=doc.get("uploadedAt"),
+                offTopicNote=doc.get("offTopicNote") or None,
+            )
+        )
+
+    log.info(
+        "review_queue_served",
+        event_id=eventId,
+        verdict=verdict.value,
+        returned=len(items),
+        scanned=scanned,
+        by=principal.uid,
+    )
+    return ReviewQueueResponse(
+        eventId=eventId,
+        verdict=verdict,
+        items=items,
+        truncated=scanned >= REVIEW_QUEUE_SCAN,
+    )
 
 
 @router.post("/media/{mediaId}/review", response_model=ReviewResponse)

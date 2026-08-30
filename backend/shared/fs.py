@@ -222,6 +222,29 @@ def director_state_ref(event_id: str) -> firestore.DocumentReference:
     return ledger_ref(event_id, "directorState")
 
 
+def world_model_ref(event_id: str) -> firestore.DocumentReference:
+    """`ledger/worldModel` — the event's accumulated physical setting (spec 03 §5.1's `sceneSetting`).
+
+    Two layers live in two places on purpose, and the split is the whole design.
+
+    The **hard layer** — the actual `sceneSetting` counts — is *not* here. It rides the per-stage
+    coverage shards below, because those are already incremented inside the transaction that flips
+    `status='indexed'`, which makes them exactly-once by construction. A second counter here would need
+    either a second write in that transaction or one outside it, and the second is a distribution that
+    can silently disagree with the media it claims to describe.
+
+    What *is* here is the **soft layer**: a short prose description of the venue, distilled from those
+    counts by `directors/story/world.py`, plus the watermark that decides when to redistil. It is read
+    for reasoning and explanation only — the Story Director's prompt, a host-facing line — and never by
+    anything that decides an outcome. Same division `taste.py` already draws between a deterministic
+    affinity vector and the Gemma memo written from it.
+
+    Needs no `firestore.rules` change: the recursive `match /ledger/{document=**}` rule already grants
+    host read and denies every client write.
+    """
+    return ledger_ref(event_id, "worldModel")
+
+
 def coverage_stage_shards_col(event_id: str) -> firestore.CollectionReference:
     """`ledger/coverageShards/stages/{stageId}` — the incremental coverage ledger (spec 05 §1).
 

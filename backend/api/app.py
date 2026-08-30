@@ -31,6 +31,7 @@ from .media import router as media_router
 from .membership import _join_code_router as join_code_router, router as membership_router
 from .moderation import router as moderation_router
 from .reels import router as reels_router
+from .sweep import router as sweep_router
 from .uploads import router as uploads_router
 
 log.configure("api")
@@ -67,6 +68,9 @@ app.include_router(reels_router)
 # Cloud Scheduler's target (spec 09 §2). Not under /v1: it is infrastructure calling infrastructure,
 # and it authenticates its caller itself because `api` is the one service deployed public.
 app.include_router(internal_router)
+# `POST /internal/sweep` — the hourly orphan-sweep (spec 09 §2). Same posture as the router above:
+# infrastructure calling infrastructure, authenticated in the handler (`api/sweep.py::_authorize`).
+app.include_router(sweep_router)
 # The `/judge` page's labelled manual override. Under /v1 and guest-authenticated, unlike the
 # Scheduler's own endpoint above — but scoped to `class=='protected_demo'` and rate-limited, so it can
 # never touch a real event (backend/api/internal.py::force_demo_tick).

@@ -14,6 +14,7 @@ INTAKE_SA="$(sa_email "${SA_INTAKE}")"
 CURATE_SA="$(sa_email "${SA_CURATE}")"
 FACE_SA="$(sa_email "${SA_FACE}")"
 SAFETY_SA="$(sa_email "${SA_SAFETY}")"
+VIDEO_PREP_SA="$(sa_email "${SA_VIDEO_PREP}")"
 RENDER_SA="$(sa_email "${SA_RENDER}")"
 
 CORS_DIR="$(mktemp -d)"
@@ -110,6 +111,15 @@ grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${FACE_SA}" "roles/storage
 # pixel, so the small render is the right one). No raw grant either — the item most likely to be
 # genuinely sensitive is the one this worker looks at, and it still never sees the original.
 grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${SAFETY_SA}" "roles/storage.objectViewer"
+# worker-video-prep: **the one exception to the no-raw-grant posture above**, and it is worth being
+# explicit about why rather than letting it look like an oversight. Every other B2 worker consumes a
+# render; this one produces them, and there is no way to produce a poster, a keyframe grid or a proxy
+# without decoding the original (spec 03 §4). `objectViewer`, not `objectAdmin`: it reads the original
+# and never rewrites it — the GPS strip that *does* rewrite a raw object is intake's, and only for
+# JPEGs. It creates in `derived` like intake does, for the same objects the photo path writes plus the
+# keyframes and the proxy.
+grant_bucket_role "${RAW_BUCKET}" "serviceAccount:${VIDEO_PREP_SA}" "roles/storage.objectViewer"
+grant_bucket_role "${DERIVED_BUCKET}" "serviceAccount:${VIDEO_PREP_SA}" "roles/storage.objectCreator"
 # render: the only identity in the project that WRITES the curated bucket (spec 09 §4). It reads
 # display_1600 for every shot and has no raw grant either — a reel is assembled from the same 1600 px
 # render the gallery serves. `objectCreator`, not `objectAdmin`: a reel is immutable once written, and a

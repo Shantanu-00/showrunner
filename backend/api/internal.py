@@ -44,9 +44,11 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from directors.story import director
+from directors.story import resolve as resolve_mod
 from directors.story import taste as taste_mod
+from directors.story import world as world_mod
 from schemas.event import EventClass, EventStatus
-from shared import errors, fs, internal, leases, log, oidc, tasks
+from shared import coverage, errors, fs, internal, leases, log, oidc, tasks
 from shared.auth import Principal, caller, verify_bearer
 from shared.settings import DEMO_INTERLEAVE_SECONDS, TICK_LEASE_MINUTES, settings
 from shared.ulid import new_ulid
@@ -194,6 +196,32 @@ async def _do_work(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
     except Exception as exc:  # noqa: BLE001 - a taste-memo cycle failing must not affect the director or the wall
         log.warn("tick_taste_memo_failed", event_id=event_id, tick_id=tick_id, err=str(exc))
         report["taste"] = {"status": "failed", "error": str(exc)[:200]}
+
+    # The world model, last and for the same reasons as the taste memos above: it explains rather than
+    # decides, so a slow or failed distillation must not delay the wall refresh or the bounty budget
+    # that have already landed. It reads the coverage shards the director's own LEDGER step just
+    # fetched — one extra read, not a second aggregation — and only calls a model once every
+    # `WORLD_MODEL_EVERY_N_PHOTOS` photos, so most ticks it is a single document read and a comparison.
+    try:
+        snap = await world_mod.run_if_due(event_id, event, coverage.read(event_id))
+        report["world"] = (
+            {"distilled": True, "photos": snap.total, "settings": len(snap.scenes)}
+            if snap
+            else {"distilled": False}
+        )
+    except Exception as exc:  # noqa: BLE001 - see above; `run_if_due` already swallows, this is belt-and-braces
+        log.warn("tick_world_model_failed", event_id=event_id, tick_id=tick_id, err=str(exc))
+        report["world"] = {"status": "failed", "error": str(exc)[:200]}
+
+    # The off-topic resolver (`directors/story/resolve.py`) — last of all, and for the same reason as
+    # the two steps above: it only ever explains a photo the ranking has already ranked, so nothing
+    # about the wall or the director's own guardrails may wait on it.
+    try:
+        resolved = await resolve_mod.run_pending(event_id)
+        report["resolve"] = {"checked": resolved.checked, "noted": len(resolved.noted)}
+    except Exception as exc:  # noqa: BLE001 - must not fail the tick
+        log.warn("tick_resolve_failed", event_id=event_id, tick_id=tick_id, err=str(exc))
+        report["resolve"] = {"status": "failed", "error": str(exc)[:200]}
     return report
 
 

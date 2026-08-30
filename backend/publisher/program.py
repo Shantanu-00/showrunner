@@ -30,6 +30,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from schemas.common import UNINFORMATIVE_SETTINGS
 from shared.settings import (
     KIOSK_DIVERSITY_PENALTY,
     KIOSK_DIVERSITY_WINDOW,
@@ -44,6 +45,10 @@ from shared.settings import (
     KIOSK_STAGE_MATCH_PREVIOUS,
     KIOSK_TAKEOVER_FRESH_MINUTES,
     VIP_WEIGHT_BY_TIER,
+    WORLD_MIN_CORPUS,
+    WORLD_ONTOPIC_COMMON_SHARE,
+    WORLD_ONTOPIC_RARE_SHARE,
+    WORLD_ONTOPIC_WEIGHTS,
 )
 
 #: How long the non-hero slots occupy, mirroring `frontend/src/lib/kiosk.ts::slotHoldSec`. The client
@@ -80,6 +85,39 @@ class Candidate:
     #: not repeat inside the diversity window. Kept as one key set because the rule is one rule.
     dedupe_keys: frozenset[str] = frozenset()
     vip_weight: float = 1.0
+    #: The Curator's `sceneSetting` (spec 03 §5.1), or `None` for a hand-seeded fixture that never
+    #: went through the Curator. Feeds `onTopic` below and nothing else — this field is never
+    #: compared for equality against anything that decides exposure.
+    scene_setting: str | None = None
+
+
+@dataclass(frozen=True)
+class SceneContext:
+    """The world model's hard layer (spec 03 §5.1), shaped for the ranking rather than for the
+    Story Director's prompt — that shaping lives in `directors/story/world.py::WorldSnapshot`, a
+    different dataclass built from the same `shared/coverage.py` counts, because `program.py` is the
+    kiosk's pure ranking core and must not import a director-agent module. `store.py` builds this one
+    directly from the coverage shards it already has in hand.
+
+    `enabled` is the whole feature's kill switch, and it is off by construction whenever a caller does
+    not pass one — every existing call site in `scripts/smoke_autonomy.py` and every prior behaviour
+    is therefore unchanged unless `store.py` explicitly opts an event in.
+    """
+
+    #: `sceneSetting → count`, summed across the event's stages (`coverage.scene_totals`).
+    totals: dict[str, int] = field(default_factory=dict)
+    #: Total photos with an *informative* setting — the denominator `_on_topic` shares against.
+    #: Excludes `closeup_detail`/`unknown`, so a stage of nothing but ring shots cannot dilute every
+    #: real setting into looking artificially common.
+    informative_total: int = 0
+    #: `stageId → the host-declared expected setting` (`EventStage.expectedSetting`). The cold-start
+    #: prior: a photo matching its own stage's declared setting is never demoted, even at zero corpus.
+    expected_by_stage: dict[str, str] = field(default_factory=dict)
+    #: Gated on `access.mode == 'open' and access.kioskPublic` (`store.py::scene_context`). On an
+    #: invite-only or kiosk-private event, Ring 2 already resolves to "the people in this event," not
+    #: the internet — an off-topic photo there is a non-problem, and it is also exactly the small,
+    #: low-corpus event where this mechanism has no reliable signal anyway.
+    enabled: bool = False
 
 
 @dataclass
@@ -135,19 +173,74 @@ def stage_match(stage_id: str | None, active: str | None, previous: str | None) 
     return KIOSK_STAGE_MATCH_OTHER
 
 
+def on_topic(candidate: Candidate, scenes: SceneContext) -> float:
+    """A **demotion**, never a gate — this is the whole reason it lives here and not in
+    `shared/visibility.py::decide`. At a plausible 95% precision on a 2,000-photo event where 1% is
+    genuinely off-topic, the arithmetic is ~19 true positives against ~99 false positives: as a ranking
+    factor a false positive costs one hero slot and nothing else — the photo keeps its gallery entry,
+    its albums, its reel eligibility and its owner. As an exposure gate the same error would suppress
+    99 legitimate photos with no way to release them.
+
+    Every early-return below is "no opinion", not "on topic" — the two read the same as a 1.0
+    multiplier, but the reasons are different and worth keeping distinct in the comments even though
+    the code cannot tell them apart:
+
+    - the mechanism is off for this event (`enabled=False` — an invite-only or kiosk-private event, or
+      one `store.py` has not opted in);
+    - the corpus is too small for a share to mean anything (`WORLD_MIN_CORPUS`, mirroring
+      `STAGE_PRIOR_FLAT`'s "a flat prior contributes no ordering information" in
+      `workers/curate/fusion.py`);
+    - the photo itself carries no location information (`closeup_detail`/`unknown` — punishing the
+      absence of evidence would be the same mistake fusion.py avoids for missing EXIF);
+    - the photo matches its own stage's host-declared `expectedSetting` — the cold-start prior that
+      keeps a hill-station wedding's baraat from reading as an outlier the moment it starts, before the
+      observed distribution has any evidence at all.
+
+    Only once none of those apply does the observed share actually demote anything.
+    """
+    if not scenes.enabled:
+        return 1.0
+    if scenes.informative_total < WORLD_MIN_CORPUS:
+        return 1.0
+    setting = candidate.scene_setting
+    if not setting or setting in UNINFORMATIVE_SETTINGS:
+        return 1.0
+    if candidate.stage_id and scenes.expected_by_stage.get(candidate.stage_id) == setting:
+        return 1.0
+
+    share = scenes.totals.get(setting, 0) / scenes.informative_total
+    full, mid, low = WORLD_ONTOPIC_WEIGHTS
+    if share >= WORLD_ONTOPIC_COMMON_SHARE:
+        return full
+    if share >= WORLD_ONTOPIC_RARE_SHARE:
+        return mid
+    return low
+
+
 def _base_factors(
-    c: Candidate, now: dt.datetime, active: str | None, previous: str | None
+    c: Candidate,
+    now: dt.datetime,
+    active: str | None,
+    previous: str | None,
+    scenes: SceneContext,
 ) -> dict[str, float]:
     return {
         "aesthetic": float(c.aesthetic or 0.0),
         "recency": recency_decay(c.captured_at, c.uploaded_at, now),
         "stageMatch": stage_match(c.stage_id, active, previous),
         "vipWeight": float(c.vip_weight or 1.0),
+        "onTopic": on_topic(c, scenes),
     }
 
 
 def _base_score(factors: dict[str, float]) -> float:
-    return factors["aesthetic"] * factors["recency"] * factors["stageMatch"] * factors["vipWeight"]
+    return (
+        factors["aesthetic"]
+        * factors["recency"]
+        * factors["stageMatch"]
+        * factors["vipWeight"]
+        * factors["onTopic"]
+    )
 
 
 def _collides(c: Candidate, others: list[Candidate]) -> bool:
@@ -172,6 +265,7 @@ def select_heroes(
     active: str | None,
     previous: str | None,
     limit: int = HERO_SLOTS,
+    scenes: SceneContext = SceneContext(),
 ) -> list[tuple[Candidate, dict[str, float]]]:
     """Greedy selection under the diversity rule (spec 04 §4/§6).
 
@@ -186,7 +280,7 @@ def select_heroes(
     A final pass fixes collisions across the loop boundary — the client cycles the program, so slot
     N-1 and slot 0 are consecutive on screen even though they are not consecutive in this list.
     """
-    pool = [(c, _base_factors(c, now, active, previous)) for c in candidates]
+    pool = [(c, _base_factors(c, now, active, previous, scenes)) for c in candidates]
     remaining = [(c, f, _base_score(f)) for c, f in pool]
     chosen: list[tuple[Candidate, dict[str, float]]] = []
 
@@ -250,6 +344,7 @@ def build(
     theme: str | None = None,
     premiere_reel_id: str | None = None,
     takeover_bounty_id: str | None = None,
+    scenes: SceneContext = SceneContext(),
 ) -> Program:
     """Assemble the slot list. Ordering rules, in the order they win:
 
@@ -276,7 +371,7 @@ def build(
         slots.append({"type": "bounty_call", "bountyId": takeover_bounty_id})
 
     heroes = select_heroes(
-        candidates, now=now, active=active_stage_id, previous=previous_stage_id
+        candidates, now=now, active=active_stage_id, previous=previous_stage_id, scenes=scenes
     )
 
     fresh = any(

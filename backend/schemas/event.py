@@ -13,6 +13,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from .common import SceneSetting
+
 
 class EventStatus(str, Enum):
     DRAFT = "draft"
@@ -91,6 +93,17 @@ class EventStage(BaseModel):
     endsAt: dt.datetime | None = None
     requiredMoments: list[RequiredMoment] = Field(default_factory=list)
     theme: str | None = None  # kiosk palette hint (spec 04 §4)
+    #: Where the host says this stage happens. The world model's cold-start prior: it lets the kiosk's
+    #: `onTopic` term know that outdoor photos are *expected* during the baraat before a single baraat
+    #: photo has been classified — which the observed distribution cannot possibly know, since at that
+    #: moment the corpus is entirely indoors.
+    #:
+    #: Host-declared, never model-assigned: `/itinerary/parse` proposes it, the host's review table
+    #: confirms it, and `PUT …/stages` writes it. Same posture as the cultural glossary and the
+    #: sensitivity dials (spec 11 §2) — a *declared* setting cannot be a wrong guess about someone's
+    #: event, it can only be a host describing their own venue. `None` is the common case and means
+    #: "no prior", not "indoors".
+    expectedSetting: SceneSetting | None = None
 
 
 class DemoConfig(BaseModel):

@@ -56,6 +56,16 @@ CLAIM_REVIEW_URL_TTL_MINUTES = 10
 #: host needs to see *that*, not page 4 of it.
 CLAIM_LIST_LIMIT = 50
 
+#: Page size for `GET /v1/events/{eventId}/media/review-queue`, and how deep its scan goes. Same
+#: reasoning as `CLAIM_LIST_LIMIT` — the queue exists to be emptied — but with one extra
+#: consideration: the query filters `guardian.hostDecision` in Python (a composite index on a field
+#: absent from almost every document would be an index serving a query that returns nothing), so
+#: `REVIEW_QUEUE_SCAN` bounds the documents read and `REVIEW_QUEUE_LIMIT` bounds those returned. The
+#: gap between them is what makes `truncated` meaningful: a scan that filled the page early has more
+#: behind it. NOT spec-pinned (HANDOFF §9) — spec 03 §5.3 names the queue, never its page size.
+REVIEW_QUEUE_LIMIT = 40
+REVIEW_QUEUE_SCAN = 200
+
 #: A selfie arrives as base64 in a JSON body; anything larger than this is a mistake or an attack.
 SELFIE_MAX_BYTES = 8 * 1024 * 1024
 
@@ -75,6 +85,31 @@ CLUSTER_PROBE_LIMIT = 8
 THUMB_PX = 384
 CLASSIFY_PX = 768
 DISPLAY_PX = 1600
+
+# --- video prep (spec 03 §4) ---------------------------------------------------------------
+# The two the spec pins verbatim — "keyframes at 1 fps capped at 12 frames" and "proxy_720.mp4".
+# `MAX_KEYFRAMES` is the whole cost story for video: 12 frames × ~258 tokens ≈ 3,100 input tokens,
+# about two photos' worth, which is what keeps a clip inside the same spend rail as the stills the
+# classify and safety queue rates were calibrated against (spec 09 §2).
+KEYFRAME_FPS = 1
+MAX_KEYFRAMES = 12
+PROXY_HEIGHT = 720
+
+#: How many frames the poster is chosen from, by sharpness. Spec 03 §4 says "best of 3 sampled
+#: frames by sharpness" — three, verbatim.
+POSTER_CANDIDATES = 3
+
+#: NOT spec-pinned (HANDOFF §9). A ceiling on clip length, checked after `ffprobe` and before any
+#: transcode. It exists because every cost in this worker scales with duration and the 200 MB upload
+#: cap does not bound it usefully — a heavily-compressed 40-minute clip fits well inside 200 MB and
+#: would occupy the 2-concurrency queue for minutes while the wall waits. Five minutes comfortably
+#: holds anything a guest actually shoots at an event; longer is a screen recording or a mistake, and
+#: rejecting it with a reason beats timing out with none.
+MAX_VIDEO_DURATION_SEC = 300
+
+#: Wall-clock budget for one ffmpeg invocation. Under Cloud Run's 300 s request timeout for this
+#: service (deploy/up.sh) with room for the download, the probe and three uploads either side.
+FFMPEG_TIMEOUT_SEC = 150
 
 # Stage fusion (spec 03 §5.1). The temporal prior is 1.0 inside a stage's scheduled window with a
 # ±30 min ramp, 0.15 outside — and *flattened* to 0.5 everywhere when EXIF is missing, so a wrong
@@ -469,3 +504,114 @@ INVITE_DEFAULT_SEATS = 300
 #: beyond an anonymous token that anyone can mint. 20 is far more than a human mistyping a code off a
 #: printed card will ever need, and it makes enumeration pointless rather than merely slow.
 CODE_LOOKUP_RATE_LIMIT_PER_HOUR = 20
+
+# --- sweeper ---
+#
+# `POST /internal/sweep` (spec 09 §2's `orphan-sweep`, hourly). None of these numbers is spec-pinned —
+# spec 09 §2 names the four jobs the sweep does in one pass and spec 11 §1.3/§1.4 name the TTL and cost
+# ceiling it enforces, but none of the *sweep's own* bounds are given a value anywhere. Recorded here
+# and flagged for HANDOFF §9, same discipline as tau_claim (§4.16) and the kiosk constants (§4.20).
+#
+# A lease crash-backstop, not a rate limit: the job runs hourly, so 55 minutes only matters if a
+# sweep dies mid-run — it must not survive long enough to block the *next* scheduled sweep.
+SWEEP_LEASE_MINUTES = 55
+#: Events read per run. Hackathon-scale: `MAX_CONCURRENT_LIVE_EVENTS=3` plus a handful of dev/wrapped
+#: events, nowhere near this cap — it exists so a future high-volume deployment fails safe (a bounded
+#: sweep that misses some events) rather than unboundedly (a sweep that never finishes).
+SWEEP_MAX_EVENTS_PER_RUN = 200
+#: Media docs read per event per case (A1/A4/A5), before the per-case action cap below stops it.
+SWEEP_MEDIA_SCAN_LIMIT = 300
+#: Actions taken per event per case per run (stages re-enqueued, intents abandoned, faces reconciled).
+#: One enormous event must not turn an hourly sweep into a multi-minute one.
+SWEEP_MAX_ACTIONS_PER_CASE = 30
+#: A5 re-drives a stuck upload by re-running `intake.process()` in-process — real GCS/Pillow work, not
+#: a queue enqueue — so its own cap is far tighter than the other cases' before it can eat the
+#: Scheduler job's attempt deadline.
+SWEEP_MAX_REDRIVES_PER_RUN = 5
+#: A1: how stale a `pending` stage's `stageTimings.{stage}.queuedAt` must be before the sweep treats
+#: it as stranded rather than merely in flight. Brief's own estimate ("~10 minutes"), not a spec value.
+SWEEP_STRANDED_STAGE_MINUTES = 10
+#: A5: same reasoning, for a media doc stuck at `status=='uploaded'` (the claim landed, nothing since).
+SWEEP_STUCK_UPLOAD_MINUTES = 10
+#: A4: generous slack *beyond* `SIGNED_URL_TTL_MINUTES` before an `awaiting_upload` intent is declared
+#: abandoned — the client outbox retries for a while, and a slow phone on bad venue wifi is not abuse.
+SWEEP_ABANDONED_SLACK_MINUTES = 45
+#: A3: how old a raw-bucket object must be, with no matching media doc, before it is an orphan rather
+#: than a normal race between the PUT landing and the finalize event being handled.
+SWEEP_ORPHAN_MIN_AGE_MINUTES = 60
+#: A3: raw-bucket objects listed per run (a `list_blobs` call, not a Firestore read).
+SWEEP_ORPHAN_SCAN_LIMIT = 500
+#: A2: face docs read per event per run before cluster-centroid reconciliation. Comparison is
+#: pairwise over the *distinct clusters* found, not over this count, so this bound is what keeps a
+#: pathological event's face count from making the pairwise pass itself unbounded.
+SWEEP_FACE_SCAN_LIMIT = 1500
+
+# --- world model (spec 03 §5.1's `sceneSetting`; MAIN lane) -----------------------------------
+#
+# The relevance rails. Nothing here is spec-pinned — no spec has a notion of topicality at all, which
+# is itself the finding: `shared/visibility.py::decide` has six inputs and none of them asks whether a
+# photo is *about* the event. All four are flagged for HANDOFF §9.
+#
+# Read by `publisher/program.py`'s `onTopic` term, which is why they live here rather than beside the
+# distiller in `directors/story/world.py`: that module is a service-side consumer, but `program.py` is
+# a pure function whose only permitted import is this file.
+
+#: Below this many placed photos the mechanism is **off** — `onTopic` is 1.0 for everything.
+#:
+#: A distribution needs a distribution. Photo #1 is 100% of the corpus, so it is simultaneously the
+#: baseline and an outlier; at photo 15 of a wedding that started indoors, `outdoor_venue` is at 0% and
+#: the baraat — the most important sequence of the day — would read as a 100% outlier and be demoted on
+#: the wall. Fifty is where a share becomes a statement rather than an accident.
+#:
+#: This is the same reasoning `STAGE_PRIOR_FLAT` encodes above: a flat prior contributes no ordering
+#: information, which is the honest thing to contribute when you know nothing yet. Not a threshold
+#: below which the system guesses — one below which it declines to.
+WORLD_MIN_CORPUS = 50
+
+#: Corpus share at or above which a setting is simply normal for this event, and `onTopic` is 1.0.
+#: 10% is deliberately generous: the cost of wrongly demoting a legitimate photo is invisible and
+#: unrecoverable to the guest who took it, and the cost of a stray hike reaching the wall is six
+#: seconds of mild embarrassment. The asymmetry should be reflected in the numbers, not just noted.
+WORLD_ONTOPIC_COMMON_SHARE = 0.10
+
+#: Below this share a setting is a genuine outlier for this event. Between the two it is unusual but
+#: not rare, and takes the middle multiplier.
+WORLD_ONTOPIC_RARE_SHARE = 0.02
+
+#: The three `onTopic` multipliers: normal, unusual, outlier. A *demotion*, never a gate — the term
+#: multiplies into the hero score and touches nothing else. It is never an input to
+#: `recompute_visibility`, and the arithmetic is why: at a plausible 95% precision on a 2,000-photo
+#: event where 1% is genuinely off-topic, you get ~19 true positives and ~99 false positives. As a
+#: ranking factor a false positive costs a photo one hero slot and nothing else — it keeps its gallery
+#: entry, its albums, its reel eligibility and its owner. As an exposure gate the same error would
+#: suppress 99 legitimate photos, and until the review queue existed there was no way to release them.
+WORLD_ONTOPIC_WEIGHTS = (1.0, 0.5, 0.15)
+
+# --- pipeline spend roll-up (spec 09 §2; MAIN lane) --------------------------------------------
+#
+# `event.costSoFarUsd` is read in three places — the host console's "Pipeline Spend" KPI
+# (`api/host.py::console_summary`), the sweep's public-event cost ceiling, and the frontend — and until
+# now was written by **nobody**. So the KPI read $0.00 forever and the ceiling could never fire. Found
+# by the sweeper lane, which correctly declined to reach into the media pipeline to fix it.
+#
+# The fix is a *derivation*, not a stored counter: `shared/spend.py` sums the per-media token counters
+# that every worker already writes (`services/gemini.py::usage_increments`) with one Firestore `sum()`
+# aggregation. Deliberately not an `Increment` on the event document — spec 09 §2 runs the two Gemini
+# queues at 8/s each, so up to 16 writes/second would land on one document, and Firestore's sustained
+# per-document write ceiling is ~1/s. That is the hot-key problem `fs.py::coverage_stage_shards_col`
+# already explains for the coverage ledger, and the same answer applies: do not create a hot document.
+
+#: Blended USD per Gemini token, **derived from spec 09 §2's own published figure** rather than
+#: invented: "~1,548 tokens in + ~300 out ≈ $0.0012/photo" → 0.0012 / 1848 ≈ 6.49e-7 per token.
+#:
+#: Blended across input and output because spec 09 gives one combined number and splitting it would
+#: mean inventing the ratio. Deriving from measured tokens rather than assuming $0.0012 per call is the
+#: point: a video's 12-keyframe classify call really does cost about twice a still's, and a ticker that
+#: charged both the same would understate exactly when spend starts mattering.
+GEMINI_BLENDED_USD_PER_TOKEN = 0.0012 / 1848
+
+#: Vision SafeSearch, per image, first pass of the Guardian. NOT in spec 09 (which prices only the
+#: Gemini queues) — Google's published SafeSearch rate at the 1k-5k/month tier. Flagged for HANDOFF §9.
+#: Counted per *screened item* rather than per keyframe: `workers/safety` calls SafeSearch once, on the
+#: classify render or the poster, whatever the media kind.
+VISION_SAFESEARCH_USD_PER_IMAGE = 0.0015

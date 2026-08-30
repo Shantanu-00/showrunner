@@ -4,8 +4,10 @@
 #
 #   bootstrap (APIs) → service accounts → buckets → Firestore → queues → build → deploy → Eventarc
 #
-# Services and their scaling come from spec 09 §1. One image serves api/intake/dlq/worker-curate;
-# $SERVICE selects which (see backend/main.py), so this builds once and deploys four times.
+# Services and their scaling come from spec 09 §1. One common image serves
+# api/intake/dlq/worker-curate/worker-safety/publisher and $SERVICE selects which (see
+# backend/main.py). Three services do not ride it: worker-face (InsightFace), worker-video-prep
+# (ffmpeg) and the render Job (ffmpeg + librosa) each get their own image and their own build.
 #
 # Deploy order matters in one place: `worker-curate` goes up *before* `intake`, because intake
 # dispatches to it by URL and a Cloud Tasks target it does not know about is a silently skipped
@@ -58,6 +60,17 @@ gcloud builds submit "${REPO_ROOT}/backend" \
   --config "${REPO_ROOT}/backend/docker/cloudbuild.face.yaml" \
   --substitutions "_IMAGE=${FACE_IMAGE}" --project "${PROJECT_ID}" >/dev/null
 note "built ${FACE_IMAGE}"
+
+# worker-video-prep needs ffmpeg/ffprobe, which api/intake must never carry either. Its own image is
+# deliberately much lighter than `render`'s: no fonts, no librosa (spec 03 §4 has it probe, sample and
+# transcode, never beat-track), because unlike the render Job this is a service that scales 0→5 on a
+# burst of uploads and pays every megabyte as cold-start latency.
+VIDEO_PREP_IMAGE="${IMAGE_HOST}/${PROJECT_ID}/${REPO}/worker-video-prep:${TAG}"
+step "Build worker-video-prep (separate image — backend/docker/Dockerfile.video-prep)"
+gcloud builds submit "${REPO_ROOT}/backend" \
+  --config "${REPO_ROOT}/backend/docker/cloudbuild.video-prep.yaml" \
+  --substitutions "_IMAGE=${VIDEO_PREP_IMAGE}" --project "${PROJECT_ID}" >/dev/null
+note "built ${VIDEO_PREP_IMAGE}"
 
 # Same story for the reel renderer: ffmpeg + fonts + librosa's SciPy/numba stack is ~400 MB that
 # api/intake must never carry (spec 09 §1 gives `render` its own row and its own 8 vCPU / 32 GiB shape).
@@ -158,6 +171,34 @@ grant_run_invoker worker-safety "serviceAccount:${TASKS_SA_EMAIL}"
 upsert_env WORKER_SAFETY_URL "${SAFETY_URL}"
 COMMON_ENV="${COMMON_ENV};WORKER_SAFETY_URL=${SAFETY_URL}"
 
+# worker-video-prep sits in the middle of the pipeline, so its slot in the deploy order is pinned on
+# both sides by this file's own rule ("anything that produces work is deployed after the thing that
+# consumes it"):
+#   - AFTER curate/face/safety, because it dispatches to all three and `COMMON_ENV` only carries their
+#     URLs now that those three blocks have run their `upsert_env`;
+#   - BEFORE intake, because intake dispatches to *it*, and an unset target URL is a silently skipped
+#     dispatch rather than an error (`shared/tasks.py`) — which is precisely how every video uploaded
+#     before this service existed ended up parked at `status='processing'` with no alert anywhere.
+step "Deploy worker-video-prep (Cloud Tasks target, private — spec 09 §1: 2/4Gi, 0→5, concurrency 2)"
+# `--timeout 300` is the one number spec 09 §1 does not give for this service. Chosen to match
+# `intake`, the closest analogue (the other service that does long media work on a request), and sized
+# against `FFMPEG_TIMEOUT_SEC=150` in shared/settings.py so a hung transcode is killed by the worker's
+# own timer — with a diagnosable error — rather than by Cloud Run tearing the container down.
+gcloud run deploy worker-video-prep \
+  --image "${VIDEO_PREP_IMAGE}" --region "${REGION}" --project "${PROJECT_ID}" \
+  --service-account "$(sa_email "${SA_VIDEO_PREP}")" \
+  --cpu 2 --memory 4Gi --min-instances 0 --max-instances 5 --concurrency 2 \
+  --timeout 300 --no-allow-unauthenticated \
+  --set-env-vars "^;^SERVICE=worker-video-prep;${COMMON_ENV}" \
+  --quiet >/dev/null
+VIDEO_PREP_URL="$(run_url worker-video-prep)"
+note "worker-video-prep → ${VIDEO_PREP_URL}"
+
+grant_run_invoker worker-video-prep "serviceAccount:${TASKS_SA_EMAIL}"
+
+upsert_env WORKER_VIDEO_PREP_URL "${VIDEO_PREP_URL}"
+COMMON_ENV="${COMMON_ENV};WORKER_VIDEO_PREP_URL=${VIDEO_PREP_URL}"
+
 # The publisher goes up before `api`, because the director tick nudges it by URL (spec 04 §4's
 # fallback recompute trigger) and an unset PUBLISHER_URL would make that a silently skipped call.
 step "Deploy publisher (kiosk playlist writer, private — spec 09 §1: 1/512Mi, min 1/max 5)"
@@ -234,7 +275,7 @@ export RENDER_ENV="${COMMON_ENV};NEXT_PUBLIC_API_URL=${API_URL}"
 "${REPO_ROOT}/deploy/scheduler.sh" "${API_URL}"
 
 step "Health"
-for svc in api intake dlq worker-curate worker-face worker-safety publisher; do
+for svc in api intake dlq worker-curate worker-face worker-safety worker-video-prep publisher; do
   url="$(run_url "${svc}")"
   if [[ "${svc}" == "api" ]]; then
     code="$(curl -s -o /dev/null -w '%{http_code}' "${url}/livez")"

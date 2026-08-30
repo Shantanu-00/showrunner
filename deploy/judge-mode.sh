@@ -88,31 +88,27 @@ for svc in intake dlq worker-curate worker-face worker-safety worker-video-prep;
   fi
 done
 
-step "Disabling public event creation (spec 11 §1.5's kill switch)"
-# An honest posture change rather than a claim we cannot back. Spec 11 §1.3/§1.4 design a 60-minute
-# auto-wrap and a $3 per-event cost ceiling for stranger-created events, and their settings exist
-# (`PUBLIC_EVENT_MAX_LIVE_MINUTES`, `PUBLIC_EVENT_COST_CEILING_USD`) — but both are enforced by the
-# hourly `orphan-sweep`, whose handler `/internal/sweep` this build does not ship, so `deploy/
-# scheduler.sh` correctly declines to create a job pointing at a 404. What *is* enforced is the
-# transactional capacity cap and this flag.
-#
-# Rather than leave an unbounded surface behind a guardrail that is not running, public Go Live is
-# switched off for the judging period. `class=='protected_demo'` is unaffected, so the entire judge
-# tour is unaffected; and the /judge disclosure panel says all of this out loud.
+step "Re-enabling public event creation (spec 11 §1.5's kill switch)"
+# Spec 11 §1.3/§1.4 design a 60-minute auto-wrap and a $3 per-event cost ceiling for stranger-created
+# events. Both are now enforced by the hourly `orphan-sweep` (`backend/api/sweep.py`, wired by
+# `deploy/scheduler.sh`), on top of the transactional capacity cap that was already running — so the
+# guardrail this flag used to stand in for is live, and public Go Live no longer needs to stay off
+# for the judging period. `class=='protected_demo'` was never affected either way; the /judge
+# disclosure panel reflects the current posture, not the old one.
 python - "${PROJECT_ID}" <<'PY'
 import sys
 from google.cloud import firestore
 
 db = firestore.Client(project=sys.argv[1])
 db.collection("platform").document("publicCreationEnabled").set(
-    {"enabled": False, "reason": "judging period: orphan-sweep TTL/cost-ceiling not shipped"},
+    {"enabled": True, "reason": "orphan-sweep enforces the public-event TTL and cost ceiling"},
     merge=True,
 )
-print("   platform/publicCreationEnabled: enabled=false")
+print("   platform/publicCreationEnabled: enabled=true")
 PY
 
 step "Verify"
-for job in director-tick director-tick-demo; do
+for job in director-tick director-tick-demo orphan-sweep; do
   gcloud scheduler jobs describe "${job}" --location "${REGION}" --project "${PROJECT_ID}" \
     --format='value[separator="  ·  "](name.basename(),state,schedule)' 2>/dev/null | sed 's/^/   /'
 done
@@ -120,6 +116,7 @@ done
 cat <<SUMMARY
 
 Judging posture set. Queues RUNNING, api + publisher warm, director every 15 minutes.
+orphan-sweep left running hourly — it's what makes public event creation safe to leave on.
 Idle cost ≈ \$0.50–0.90/day.
 
 Still owed by hand (README-PLAN Part B):
@@ -128,5 +125,5 @@ Still owed by hand (README-PLAN Part B):
   · the daily 5-minute ritual, incl. a glance at platform/liveEventCount
 
 Undo: ./deploy/up.sh  (restores */2, resumes director-tick-demo, re-warms everything)
-Re-enable public creation: set platform/publicCreationEnabled.enabled = true
+Disable public creation by hand if abuse shows up: set platform/publicCreationEnabled.enabled = false
 SUMMARY

@@ -23,6 +23,15 @@ from typing import Any, Callable
 
 from PIL import Image
 
+# The one backend import in this otherwise dependency-light file, and it earns itself: the scene
+# vocabulary is the world model's input, and a second hand-maintained copy of it here would drift the
+# moment the enum gained a value — leaving the eval passing a photo whose setting the pipeline had
+# started rejecting. Safe to import because both consumers (`backend/seed.py`, `eval/run_eval.py`) put
+# `backend/` on `sys.path` *before* importing this module.
+from schemas.common import SceneSetting  # noqa: E402
+
+SCENE_SETTINGS = frozenset(s.value for s in SceneSetting)
+
 AESTHETIC_LOW = 0.35
 AESTHETIC_HIGH = 0.40
 
@@ -219,5 +228,20 @@ def evaluate(fixture: Fixture, doc: dict[str, Any], glossary: set[str]) -> list[
     elements = curator.get("culturalElements") or []
     stray = [e for e in elements if e not in glossary]
     checks.append(Check("cultural_elements_within_glossary", not stray, f"stray={stray}" if stray else "ok"))
+
+    # The world model's input vocabulary (spec 03 §5.1's `sceneSetting`). Graded as *membership only*,
+    # deliberately not as an expected value per fixture: the synthetic gradients and solid fills have
+    # no real setting, so asserting one would be grading the fixture's luck rather than the pipeline —
+    # the same reasoning `assertStage` carries above. What must hold is that the coercion in
+    # `workers/curate/app.py::_scene_setting` never lets a value outside the enum reach the document,
+    # because every one of these becomes a Firestore map key on a coverage shard.
+    setting = curator.get("sceneSetting")
+    checks.append(
+        Check(
+            "scene_setting_in_vocabulary",
+            setting in SCENE_SETTINGS,
+            f"sceneSetting={setting!r} not in the closed vocabulary" if setting not in SCENE_SETTINGS else "ok",
+        )
+    )
 
     return checks

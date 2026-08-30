@@ -191,8 +191,18 @@ def evidence_block(
     person_id: str | None = None,
     critique: list[str] | None = None,
     previous_shot_ids: list[str] | None = None,
+    venue: str = "",
 ) -> str:
-    """The whole of what the director is told. Evidence, the lens, and nothing else."""
+    """The whole of what the director is told. Evidence, the lens, and nothing else.
+
+    `venue` is the world model's distilled prose (`directors/story/world.py::recall_prose`) — one
+    document read the caller already did, never a model call inside this one. It answers the mandate
+    `PERSONA_LENS[STAGE_RECAP]` already asks for ("open on the setting") but had no data to satisfy:
+    without it the director could describe *what* happened and never *where*. Advisory, like the
+    Story Director's own `--- PHYSICAL SETTING ---` block, and for the same reason — it is prose
+    generated from photograph counts, not a source of mediaIds, so it earns no special trust and
+    changes no candidate's eligibility (`select.py` already settled that before this function runs).
+    """
     profile = (event.get("eventTypeProfile") or {}) if isinstance(event, dict) else {}
     glossary = [str(g) for g in (profile.get("culturalGlossary") or [])]
 
@@ -207,6 +217,8 @@ def evidence_block(
         "--- YOUR MANDATE FOR THIS COMMISSION ---",
         PERSONA_LENS[persona],
     ]
+    if venue:
+        lines += ["", f"--- SETTING (advisory only) --- {venue}"]
     if glossary:
         lines += [
             "",

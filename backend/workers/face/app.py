@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from google.api_core import exceptions as gexc
 
-from schemas.common import Stage
+from schemas.common import MediaKind, Stage
 from schemas.faces import EmbedRequest, EmbedResponse, FaceDetection
 from shared import chaos, faces as faces_lib, fs, gcs, log, pipeline
 from shared.settings import MAX_FACES_PER_MEDIA, SELFIE_MAX_BYTES, settings
@@ -109,26 +109,30 @@ async def on_task(request: Request) -> dict[str, Any]:
     if injected:
         return await _transient(request, claim, event_id, media_id, event, started, injected)
 
-    # ---- the render this worker sees: display_1600 for detail on faces far from the lens;
-    # classify_768 only if a display render never landed (spec 03 §5.2 has no keyframe-grid path
-    # for video — the faces stage never dispatches for videos, see intake._dispatch).
+    # ---- what this worker looks at, which depends on the kind:
+    #
+    # A **photo**: `display_1600`, falling back to `classify_768`. The big render on purpose — a face
+    # at the back of a group shot is a handful of pixels at 768.
+    #
+    # A **video**: the keyframe grid `worker-video-prep` produced (spec 03 §4 step 3), not the poster.
+    # One frame would make a clip's album membership depend on which instant the poster sampler
+    # happened to like, and the person who walks into shot at second nine would never be indexed.
     media = claim.media
-    uri = media.get("displayUri") or media.get("classifyUri")
-    parsed = gcs.parse_gs_uri(str(uri or ""))
-    if parsed is None:
-        return await _permanent(event_id, media_id, event, started, f"no usable render (uri={uri!r})")
+    is_video = media.get("kind") == MediaKind.VIDEO.value
+    sources = _sources_for(media, is_video)
+    if not sources:
+        return await _permanent(
+            event_id, media_id, event, started, f"no usable render (kind={media.get('kind')!r})"
+        )
 
     try:
-        image_bytes = await run_in_threadpool(gcs.download_bytes, parsed[0], parsed[1])
+        detections = await run_in_threadpool(_detect_all, sources, is_video)
+    except analyzer.DecodeError as exc:
+        return await _permanent(event_id, media_id, event, started, f"decode failed: {exc}")
     except gexc.NotFound:
         return await _permanent(event_id, media_id, event, started, "render object missing")
     except Exception as exc:  # noqa: BLE001 - GCS being unhappy is the queue's problem, not ours
         return await _transient(request, claim, event_id, media_id, event, started, f"download failed: {exc}")
-
-    try:
-        detections = await run_in_threadpool(analyzer.detect, image_bytes)
-    except analyzer.DecodeError as exc:
-        return await _permanent(event_id, media_id, event, started, f"decode failed: {exc}")
 
     try:
         result = await run_in_threadpool(
@@ -138,6 +142,69 @@ async def on_task(request: Request) -> dict[str, Any]:
         return await _transient(request, claim, event_id, media_id, event, started, f"index failed: {exc}")
 
     return {"ok": True, **result}
+
+
+# ---------------------------------------------------------------- what to look at
+
+
+def _sources_for(media: dict[str, Any], is_video: bool) -> list[str]:
+    """The `gs://` URIs to run detection over, in the order they should be scanned."""
+    if is_video:
+        return [str(u) for u in (media.get("keyframeUris") or []) if u]
+    uri = media.get("displayUri") or media.get("classifyUri")
+    return [str(uri)] if uri else []
+
+
+def _detect_all(sources: list[str], is_video: bool) -> list[analyzer.Detection]:
+    """Detect across every source, then dedupe *within this clip* (spec 03 §4 step 3).
+
+    Two things make the video path different from running the photo path twelve times.
+
+    **Deduping is by embedding, not by box.** A guest standing still for eight seconds appears in
+    eight keyframes; without a dedupe they become eight face documents, eight vector-search round
+    trips and eight album memberships for one person in one clip. Boxes cannot answer this — the
+    camera pans — so the test is cosine similarity against the faces already kept, at `tau_cluster`,
+    the same threshold `shared/faces.py` uses to decide two embeddings are the same person. Reused
+    rather than re-derived so "the same person" means one thing in this system.
+
+    **Largest-box-first ordering is preserved across frames.** `analyzer.detect` already sorts each
+    frame that way, and the kept list is re-sorted at the end, so the `MAX_FACES_PER_MEDIA` truncation
+    in `_fuse_and_commit` still cuts the people the clip is *about* last — same guarantee a photo gets.
+
+    A frame that fails to decode is skipped rather than fatal: eleven good keyframes are a better
+    answer than a permanent failure over one bad WebP.
+    """
+    kept: list[analyzer.Detection] = []
+    for index, uri in enumerate(sources):
+        parsed = gcs.parse_gs_uri(uri)
+        if parsed is None:
+            continue
+        image_bytes = gcs.download_bytes(parsed[0], parsed[1])
+        if not is_video:
+            # A photo has exactly one source and no dedupe to do; let a DecodeError propagate, since
+            # an undecodable single render is genuinely a permanent failure for this stage.
+            return analyzer.detect(image_bytes)
+        try:
+            frame = analyzer.detect(image_bytes)
+        except analyzer.DecodeError as exc:
+            log.warn("keyframe_decode_failed", frame=index, err=str(exc))
+            continue
+        for detection in frame:
+            if any(
+                faces_lib.cosine(detection.embedding, seen.embedding) >= settings().tau_cluster
+                for seen in kept
+            ):
+                continue
+            kept.append(detection)
+            if len(kept) >= MAX_FACES_PER_MEDIA:
+                # Enough: the cap is a write-amplification rail, and scanning further frames only to
+                # discard them is a download per frame for nothing.
+                break
+        if len(kept) >= MAX_FACES_PER_MEDIA:
+            break
+
+    kept.sort(key=lambda d: d.box.w * d.box.h, reverse=True)
+    return kept
 
 
 # ---------------------------------------------------------------- fuse + commit

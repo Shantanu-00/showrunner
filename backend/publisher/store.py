@@ -21,9 +21,9 @@ from typing import Any, Iterable
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from schemas.common import MediaStatus, Visibility
+from schemas.common import UNINFORMATIVE_SETTINGS, MediaStatus, Visibility
 from schemas.event import EventStatus
-from shared import fs
+from shared import coverage, fs
 from shared.settings import DEFAULT_TIER, KIOSK_CANDIDATE_LIMIT
 
 from . import program
@@ -165,6 +165,7 @@ def to_candidate(doc: dict[str, Any], tiers: dict[str, int]) -> program.Candidat
         moment_tags=tuple(str(t) for t in (curator.get("momentTags") or [])),
         dedupe_keys=frozenset(keys),
         vip_weight=program.vip_weight([t for t in in_frame if t is not None]),
+        scene_setting=curator.get("sceneSetting"),
     )
 
 
@@ -178,6 +179,38 @@ def candidates(event_id: str) -> list[program.Candidate]:
             doc.setdefault("mediaId", snap.id)
             docs[snap.id] = doc
     return [to_candidate(doc, tiers) for doc in docs.values()]
+
+
+def scene_context(event_id: str, event: dict[str, Any]) -> program.SceneContext:
+    """The `onTopic` term's input, built from the coverage shards the director's own LEDGER step
+    also reads — no new collection, no new I/O shape.
+
+    **Gated on `access.mode == 'open' and access.kioskPublic`.** The just-landed event-access
+    boundary changes what "public" means: on an invite-only or kiosk-private event, Ring 2 already
+    resolves to *the people in this event*, not the internet, so an off-topic photo there is a
+    non-problem — the audience is exactly the people who took the hike. That narrowing conveniently
+    excludes the small, low-corpus events where the statistics have no reliable signal anyway
+    (`program.py::on_topic`'s `WORLD_MIN_CORPUS` gate would mostly no-op for them regardless).
+    """
+    access = event.get("access") or {}
+    mode = str(access.get("mode") or "open")
+    if mode != "open" or not bool(access.get("kioskPublic", True)):
+        return program.SceneContext(enabled=False)
+
+    shards = coverage.read(event_id)
+    totals = coverage.scene_totals(shards)
+    informative_total = sum(n for tag, n in totals.items() if tag not in UNINFORMATIVE_SETTINGS)
+    expected_by_stage = {
+        str(stage.get("stageId")): str(stage.get("expectedSetting"))
+        for stage in (event.get("stages") or [])
+        if stage.get("stageId") and stage.get("expectedSetting")
+    }
+    return program.SceneContext(
+        totals=totals,
+        informative_total=informative_total,
+        expected_by_stage=expected_by_stage,
+        enabled=True,
+    )
 
 
 def takeover_bounty(event_id: str, *, now: dt.datetime | None = None) -> str | None:

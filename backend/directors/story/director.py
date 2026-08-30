@@ -36,7 +36,14 @@ from services import gemini
 from services.armor_plugin import ModelArmorPlugin
 from shared import log
 
-from . import act, ledger as ledger_mod, memory, session as session_mod, validate
+from . import (
+    act,
+    ledger as ledger_mod,
+    memory,
+    session as session_mod,
+    validate,
+    world as world_mod,
+)
 from .agent import prompt_parts, reason_agent
 
 STAGE = "director"
@@ -69,8 +76,19 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
         outcome.expired = expired
 
         preferences = await memory.recall_host_preferences(event_id, event)
+        # One document read, never a model call: the distillation itself runs at the *end* of the tick
+        # (`api/internal.py::_do_work`), so what the director reads here is the paragraph written from
+        # an earlier tick's counts. That staleness is the design — "warm" means the expensive step is
+        # amortised across 25 photos and the read on the critical path is free. Degrades to "" and the
+        # prompt block simply does not appear.
+        venue = await run_in_threadpool(world_mod.recall_prose, event_id)
         led = await run_in_threadpool(
-            ledger_mod.build, event_id, event, state, host_preferences=preferences
+            ledger_mod.build,
+            event_id,
+            event,
+            state,
+            host_preferences=preferences,
+            world_model=venue,
         )
 
         outcome.armed = await run_in_threadpool(

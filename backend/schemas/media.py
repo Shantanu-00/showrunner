@@ -18,6 +18,7 @@ from .common import (
     GuardianVerdict,
     MediaKind,
     MediaStatus,
+    SceneSetting,
     StageState,
     StageTiming,
     Usage,
@@ -51,6 +52,10 @@ class CuratorBlock(BaseModel):
     caption: str | None = None
     culturalElements: list[str] = Field(default_factory=list)
     peopleCountEstimate: int | None = None
+    #: Coerced to the closed vocabulary by `workers/curate/app.py::_scene_setting` — the model returns
+    #: a bare string so one bad value cannot fail the whole parse. `shared/coverage.py` counts these
+    #: per stage, and that accumulated count is the world model's hard layer.
+    sceneSetting: SceneSetting = SceneSetting.UNKNOWN
     needsReview: bool = False  # conservative default on permanent failure (spec 03 §6)
 
 
@@ -130,5 +135,16 @@ class MediaDoc(BaseModel):
     displayUri: str | None = None
     posterUri: str | None = None
     proxyUri: str | None = None
+    #: Video only (spec 03 §4): the 1 fps keyframe grid, capped at `MAX_KEYFRAMES`, in time order.
+    #: This is what the Curator and the Guardian actually look at for a clip — the poster alone would
+    #: make a 60-second video's verdict rest on one arbitrary instant — and what the Face Indexer runs
+    #: detection over. Empty for a photo.
+    keyframeUris: list[str] = Field(default_factory=list)
     width: int | None = None
     height: int | None = None
+    #: Video only. `durationSec` is what bounds every per-clip cost in the system (keyframe count,
+    #: proxy transcode time); `hasAudio` is recorded because nothing in this build screens sound, so a
+    #: clip with audio carries an unscreened channel and that fact should be on the document rather
+    #: than only in a spec footnote.
+    durationSec: float | None = None
+    hasAudio: bool | None = None

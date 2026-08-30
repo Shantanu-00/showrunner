@@ -70,6 +70,10 @@ SA_DLQ="sa-dlq"
 SA_CURATE="sa-curate"
 SA_FACE="sa-face"
 SA_SAFETY="sa-safety"
+# The only B2 worker that reads `raw` (it needs the original video ffmpeg decodes) and the only one
+# that enqueues downstream work (it fans out to curate/faces/safety after producing their renders).
+# Both are unusual enough to be worth naming here rather than only in buckets.sh and sa.sh.
+SA_VIDEO_PREP="sa-video-prep"
 SA_PUBLISHER="sa-publisher"
 # The reel renderer, and the only identity in the fleet permitted to *write* the curated bucket
 # (spec 09 §4). It reads `derived` and has no grant on `raw` at all — a reel is built from the same

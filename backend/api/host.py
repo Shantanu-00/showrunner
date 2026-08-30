@@ -26,6 +26,7 @@ from google.adk.agents import LlmAgent
 from google.cloud import firestore
 from google.genai import types
 
+from schemas.common import GuardianVerdict, SceneSetting
 from schemas.event import (
     Event,
     EventAccessMode,
@@ -62,7 +63,10 @@ from schemas.host import (
 from schemas.itinerary_out import ItineraryParseOut
 from schemas.wrap_out import WrapHeadlineOut
 from services import armor, gemini
-from shared import coverage, errors, fs, internal, log
+# One-way: `moderation` imports nothing from this package, so the console badge can share the
+# review queue's own predicate rather than restating it. Do not add the reverse import.
+from . import moderation
+from shared import coverage, errors, fs, internal, log, spend
 from shared.auth import (
     Principal,
     TooManyEventClaims,
@@ -707,6 +711,27 @@ async def update_profile(
     if event.get("status") != EventStatus.DRAFT.value:
         raise errors.conflict("NOT_DRAFT", "the event type profile can only be set before Go Live")
 
+    # `culturalGlossary` and `requiredMomentsTemplate[].label` are the two pieces of *this* endpoint's
+    # free text that ride straight into a per-photo prompt: `workers/curate/agent.py::event_context`
+    # prints every required-moment label and `culturalElements` may only use a glossary term (spec 11
+    # §2). `services/armor_plugin.py`'s own reasoning for exempting the perception workers from a
+    # per-call Model Armor check is that this text is "already checked at onboarding" — true for the
+    # itinerary paste (`parse_itinerary` below calls `armor.guard`), but this endpoint set the
+    # glossary without ever calling it. One guard call here is what makes that claim actually true,
+    # and it costs nothing on the 8/s classify path this text is calibrated against, because it runs
+    # once per wizard save rather than once per photo.
+    guarded = ", ".join(req.culturalGlossary or []) + " " + ", ".join(
+        m.label for m in (req.requiredMomentsTemplate or [])
+    )
+    if guarded.strip():
+        try:
+            armor.guard(guarded, surface="event_profile", event_id=eventId)
+        except armor.ArmorBlocked as exc:
+            raise errors.bad_request(
+                "TEXT_REJECTED",
+                f"the glossary or required-moment labels looked like {', '.join(exc.filters) or 'a policy match'}",
+            ) from exc
+
     profile = _apply_template(req.templateId)
     if req.vipTopology is not None:
         profile["vipTopology"] = req.vipTopology.value
@@ -731,6 +756,13 @@ short lowercase snake_case stageId, a human label taken from the host's own word
 text exactly as written (timeHint) — you are not told what date this is, so never compute or guess
 an actual date or a UTC instant — and any named required moments within it (momentId snake_case,
 label as written).
+
+expectedSetting: where this stage will physically happen, but ONLY when the text says or plainly
+implies it. One of: indoor_venue, outdoor_venue, outdoor_nature, domestic_interior, vehicle, street.
+Leave it empty for anything else, including anything you are inferring from the kind of event rather
+than from the words in front of you. "Lawn ceremony" is outdoor_venue; "baraat procession from the
+hotel" is street; "getting ready in the suite" is domestic_interior; a bare "Reception, 8 PM" says
+nothing about where, so leave it empty. An empty value is the correct and common answer.
 
 If the paste has no clear stage boundaries, return the whole thing as one stage and add a warning
 saying so. Never invent a stage, moment or time the text does not imply. Preserve the host's own
@@ -783,6 +815,25 @@ async def parse_itinerary(
     except gemini.ModelError as exc:
         raise errors.ApiError(503, "MODEL_UNAVAILABLE", str(exc)) from exc
 
+    # `expectedSetting` is coerced here rather than left for the console. The model-facing schema
+    # accepts any string on purpose (an unrecognised value must not fail the whole parse and burn the
+    # single retry), but `EventStage.expectedSetting` is a strict enum — so a hallucinated "garden_area"
+    # would sail through this endpoint and then 422 on `PUT /stages`, surfacing to the host as "saving
+    # your timeline failed" with no clue why. Coerce at the boundary where the untrusted value stops
+    # being untrusted: the host's review table should only ever be offered values it can save.
+    dropped = 0
+    for stage in out.stages:
+        candidate = (stage.expectedSetting or "").strip().lower()
+        if not candidate:
+            continue
+        try:
+            stage.expectedSetting = SceneSetting(candidate).value
+        except ValueError:
+            stage.expectedSetting = ""
+            dropped += 1
+    if dropped:
+        log.warn("itinerary_setting_dropped", event_id=eventId, count=dropped)
+
     # Not folded into `event.costSoFarUsd`: that field is the per-media perception pipeline's
     # running total (spec 10 §2), and this is a one-off host-side call on a different cost path —
     # inventing a second accumulation mechanism here risks disagreeing with whichever one the
@@ -792,6 +843,7 @@ async def parse_itinerary(
         event_id=eventId,
         stages=len(out.stages),
         warnings=len(out.warnings),
+        settings_kept=sum(1 for s in out.stages if s.expectedSetting),
         tokens_in=usage.tokensIn,
         tokens_out=usage.tokensOut,
     )
@@ -1217,7 +1269,15 @@ async def console_summary(
         photos=photos,
         guests=guests,
         coveragePct=coverage_pct,
-        costSoFarUsd=round(float(event.get("costSoFarUsd") or 0.0), 2),
+        # Derived from the per-media token counters every worker already writes, not read off the
+        # event document. `event.costSoFarUsd` is a schema field that nothing has ever incremented, so
+        # reading it here showed "$0.00" for the life of every event — a money number that is
+        # confidently wrong reads as "this event is free". See `shared/spend.py` for why it is summed
+        # server-side rather than incremented (spec 09 §2's 8/s queues would make the event document a
+        # hot key). Falls back to the stored field if some future writer starts maintaining it.
+        costSoFarUsd=round(spend.usd(eventId) or float(event.get("costSoFarUsd") or 0.0), 2),
         publicFrozen=bool(event.get("publicFrozen")),
         liveEventCount=live_count,
+        reviewCount=moderation.pending_review_count(eventId, GuardianVerdict.HOST_REVIEW),
+        blockedCount=moderation.pending_review_count(eventId, GuardianVerdict.BLOCKED),
     )

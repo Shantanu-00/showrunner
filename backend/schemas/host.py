@@ -301,3 +301,10 @@ class ConsoleSummary(BaseModel):
     costSoFarUsd: float
     publicFrozen: bool
     liveEventCount: int | None = None  # only meaningful for class=='public'; else None
+    #: How many photos are waiting on the host's call (`guardian.verdict == 'host_review'` with no
+    #: `hostDecision` yet), and how many the explicit-content gate blocked. Both are counted by
+    #: `api/moderation.py::pending_review_count`, which is also what the review-queue endpoint lists —
+    #: one predicate, so the badge and the page can never disagree. `blockedCount` is separate because
+    #: the two need different actions: a held photo is a decision, a blocked one is a deletion.
+    reviewCount: int = 0
+    blockedCount: int = 0

@@ -16,9 +16,12 @@ call without failing the tick (HANDOFF §4.23's discipline) — reusing it costs
 per person and, on the rare tick where someone crosses a threshold, one Gemma call.
 
 **Why it is not inside the tick's guardrail budget.** A delayed taste memo costs nothing downstream —
-spec 07 §3's ranking reads `tasteProfile`/`tasteMemo` directly, and this module can update either at
-any time — so a slow memo cycle must never make the director's real guardrails (the bounty budget,
-the coverage ledger) wait on it. It runs after the director and the publisher nudge in
+spec 07 §3's ranking would read `tasteProfile`/`tasteMemo` directly, and this module can update either
+at any time — so a slow memo cycle must never make the director's real guardrails (the bounty budget,
+the coverage ledger) wait on it. Note the conditional: **that ranking is not built.** Nothing reads
+either field today outside `api/identity.py`'s deletion/export path, so this module's output is
+currently write-only, which is a deliberate ordering (the cheap deterministic half exists and is
+verified; the consumer is spec 07's unbuilt half) and not an oversight to be discovered later. It runs after the director and the publisher nudge in
 `api/internal.py::_do_work`, and its own failures are caught there too.
 
 **Where it writes, and why that is not the person document.** `tasteProfile`, `tasteMemo`,

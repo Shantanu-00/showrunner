@@ -20,6 +20,15 @@ Three prompt decisions carry most of the quality:
   the single most embarrassing thing this system could do, so it is structurally prevented: no
   glossary, no cultural terms.
 
+One later addition, `sceneSetting`, is the same shape of decision as the rubric anchors. It is a
+**closed** nine-value vocabulary rather than free text because the accumulated distribution of those
+values *is* the world model (`directors/story/world.py`), and four spellings of "indoors" make that
+arithmetic meaningless. The instruction carries two lines that do most of the work: hosted space beats
+open country when both are in frame — a lawn with mountains behind it is `outdoor_venue`, which is what
+keeps a hill-station wedding from reading as one long outlier — and `closeup_detail`/`unknown` are
+stated as real answers, because a model pressed to guess a setting for a ring shot is a model
+poisoning the very distribution the feature depends on.
+
 Few-shots are text-only, deliberately. Image few-shots would triple the per-photo prompt cost and
 blow the spend calibration in spec 09 §2; what the examples actually teach is the *mapping* from a
 described scene to rubric numbers, and prose carries that fine.
@@ -71,6 +80,19 @@ culturalElements: only glossary terms actually visible in the frame. No glossary
 an empty list. Never name a tradition, ritual, garment or religion that is not in the glossary.
 
 peopleCountEstimate: distinct people at least partly visible; round crowds over 20 to nearest 10.
+
+sceneSetting: the physical setting of the frame, exactly one value.
+ indoor_venue       a hall, hotel function room, banquet space, marquee interior — a hosted space.
+ outdoor_venue      a lawn, courtyard, terrace, poolside — a hosted space, open to the sky.
+ outdoor_nature     mountains, forest, beach, open country, with no hosted space in frame.
+ domestic_interior  a home or hotel room — getting ready, private space.
+ vehicle            inside or immediately around a car, bus, boat.
+ street             a public road or thoroughfare — a procession, an arrival.
+ closeup_detail     an object or hands fill the frame; no setting is visible.
+ screen_or_document a screenshot, slide, printed page, diagram or phone screen.
+ unknown            you genuinely cannot tell.
+If a hosted space and open country are both in frame, the hosted space wins — outdoor_nature means
+nature and nothing else. Prefer closeup_detail or unknown over guessing: they are real answers.
 """
 
 #: Text-only few-shots (spec 03 §5.1: three annotated examples per event type). Each line is

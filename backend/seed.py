@@ -354,6 +354,15 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=150.0)
     ap.add_argument("--regen-cast", action="store_true")
     ap.add_argument("--skip-cast", action="store_true", help="upload fixtures only, reuse an existing cast")
+    ap.add_argument(
+        "--cast-only",
+        action="store_true",
+        help=(
+            "skip the eval harness's synthetic gradient/solid/noise negative-control fixtures — for "
+            "judge/guest-facing events, where a near-zero-aesthetic test image would otherwise clear "
+            "the public floor and compete for real kiosk hero slots"
+        ),
+    )
     ap.add_argument("--no-reset", action="store_true", help="keep whatever is already on the event (default: wipe first)")
     ap.add_argument("--reset-only", action="store_true", help="wipe the event's people/media/ops and exit (make demo-reset)")
     ap.add_argument("--event-id", default=None, help="exact event id (default: dev_{--event})")
@@ -403,6 +412,8 @@ def main() -> int:
         cast_records = enroll_cast(api, api_key, event_id, members)
 
     fixture_list = fixtures_module.build_fixtures(members)
+    if args.cast_only:
+        fixture_list = [f for f in fixture_list if f.kind == "cast"]
     log(f"uploading {len(fixture_list)} golden fixtures through the real pipeline —")
     items = []
     for fixture in fixture_list:

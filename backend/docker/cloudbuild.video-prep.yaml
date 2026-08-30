@@ -1,0 +1,9 @@
+# Same reason as cloudbuild.face.yaml and cloudbuild.render.yaml: `gcloud builds submit --tag` always
+# builds `./Dockerfile`, and this service needs docker/Dockerfile.video-prep. Invoked from the repo
+# root with `backend/` as context:
+#   gcloud builds submit backend --config backend/docker/cloudbuild.video-prep.yaml --substitutions=_IMAGE=...
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "docker/Dockerfile.video-prep", "-t", "$_IMAGE", "."]
+images:
+  - "$_IMAGE"

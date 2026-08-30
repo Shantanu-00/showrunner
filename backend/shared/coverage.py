@@ -34,7 +34,7 @@ from typing import Any
 
 from google.cloud import firestore
 
-from schemas.common import Visibility
+from schemas.common import UNINFORMATIVE_SETTINGS, SceneSetting, Visibility
 
 from . import fs, log
 
@@ -64,10 +64,29 @@ class StageCoverage:
     #: `personId → appearances`. Only claimed people appear here; unclaimed face clusters are not a
     #: coverage question, they are an identity question.
     people: dict[str, int] = field(default_factory=dict)
+    #: `sceneSetting → count` (spec 03 §5.1). The observed physical setting of this stage's photos —
+    #: the world model's hard layer, and the only thing any decision is allowed to read.
+    scenes: dict[str, int] = field(default_factory=dict)
 
     @property
     def mean_aesthetic(self) -> float:
         return (self.aesthetic_sum / self.photo_count) if self.photo_count else 0.0
+
+    @property
+    def dominant_scene(self) -> str | None:
+        """The most-observed setting for this stage, ignoring the two that carry no information.
+
+        `closeup_detail` and `unknown` are excluded because a stage whose photos are mostly ring shots
+        has not told us where it happened — returning `closeup_detail` as its "setting" would be
+        reporting the absence of evidence as evidence, which is exactly the mistake
+        `UNINFORMATIVE_SETTINGS` exists to prevent.
+        """
+        informative = {
+            tag: n for tag, n in self.scenes.items() if tag not in UNINFORMATIVE_SETTINGS and n > 0
+        }
+        if not informative:
+            return None
+        return max(informative, key=lambda tag: (informative[tag], tag))
 
 
 def bump(
@@ -111,6 +130,22 @@ def bump(
         if moments:
             updates["moments"] = moments
 
+        # The world model's hard layer (spec 03 §5.1's `sceneSetting`). One more `Increment` on a map
+        # that already exists in shape, which is the whole reason it lives here rather than in a
+        # document of its own: it inherits this transaction's exactly-once property for free, because
+        # `pipeline._derive_status` returns an update only on the transition into `indexed` and never
+        # again. A separate `ledger/worldModel` counter would need either a second write inside this
+        # transaction or one outside it, and the second is a distribution that can drift from the media
+        # it claims to describe.
+        #
+        # Per-stage rather than event-wide, and that is the point rather than a bonus: an event is a
+        # sequence of settings (a wedding starts indoors and moves outdoors for the baraat), so an
+        # event-wide count would read every stage transition as an anomaly. `scene_totals` below sums
+        # the shards when the event-wide view is genuinely what is wanted, at no extra read.
+        scene = str(curator.get("sceneSetting") or SceneSetting.UNKNOWN.value)
+        if _safe_key(scene):
+            updates["scenes"] = {scene: firestore.Increment(1)}
+
         people = {
             str(person): firestore.Increment(1)
             for person in (media.get("albumOf") or [])
@@ -147,8 +182,24 @@ def read(event_id: str) -> dict[str, StageCoverage]:
             else None,
             moments={str(k): int(v or 0) for k, v in (doc.get("moments") or {}).items()},
             people={str(k): int(v or 0) for k, v in (doc.get("people") or {}).items()},
+            scenes={str(k): int(v or 0) for k, v in (doc.get("scenes") or {}).items()},
         )
     return out
+
+
+def scene_totals(shards: dict[str, StageCoverage]) -> dict[str, int]:
+    """Event-wide `sceneSetting → count`, summed across the shards `read()` already fetched.
+
+    A free derivation rather than a stored counter, which is the point: a second copy of this number
+    would be a second thing that can disagree with the media it describes. Callers that want the
+    per-stage view read `shards[stageId].scenes` directly — and should prefer it, since an event's
+    settings legitimately change as it moves between stages.
+    """
+    totals: dict[str, int] = {}
+    for shard in shards.values():
+        for tag, count in shard.scenes.items():
+            totals[tag] = totals.get(tag, 0) + count
+    return totals
 
 
 def clear(event_id: str) -> int:

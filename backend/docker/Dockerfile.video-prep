@@ -1,0 +1,51 @@
+# The `worker-video-prep` service only (spec 09 §1: 2 vCPU / 4 GiB, 0→5, concurrency 2).
+#
+# backend/Dockerfile serves api/intake/dlq/worker-curate/worker-safety/publisher and must never carry
+# ffmpeg: `intake` scales 0→20 on a burst and pays every megabyte as cold-start latency (friction log
+# 2026-08-27 — the face image's 1049 MB cost a 29.6 s cold start).
+#
+# Not Dockerfile.render either, even though both need ffmpeg. That one is a Cloud Run *Job* — it ends
+# with `ENTRYPOINT ["python", "-m", "render.main"]` and has no server — and it drags librosa's
+# SciPy/numba stack for beat tracking, which this worker never does. A service needs a uvicorn CMD and
+# a PORT, and it wants to be small because it scales.
+#
+# Single-stage, same as Dockerfile.render: ffmpeg ships as a binary and Pillow's wheels are prebuilt,
+# so nothing here needs a compiler the runtime does not also need.
+#
+# Build from the `backend/` directory as context — see backend/docker/cloudbuild.video-prep.yaml.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# ffmpeg brings ffprobe with it; both are used (`workers/video_prep/ffmpeg_ops.py`). No fonts and no
+# libsndfile here, unlike the render image — this worker draws no captions and decodes no audio, it
+# only passes an audio stream through to the proxy.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt requirements-video-prep.txt ./
+RUN pip install -r requirements-video-prep.txt
+
+COPY . ./
+
+# Fail the build rather than the first clip. This project has been bitten by exactly this class of
+# silent failure twice (a missing ffmpeg binary reads as a bad filtergraph, a missing font as a
+# captioning bug), so Dockerfile.render asserts its toolchain at build time and so does this one.
+# ffprobe is asserted separately: it is a different binary and a slim image could plausibly ship one
+# without the other.
+RUN ffmpeg -hide_banner -version | head -1 \
+    && ffprobe -hide_banner -version | head -1 \
+    && python -c "from PIL import Image, ImageFilter; print('pillow ok')"
+
+ENV PORT=8080 \
+    SERVICE=worker-video-prep
+
+# One worker, and concurrency 2 at the Cloud Run layer (spec 09 §1): ffmpeg is CPU-bound and already
+# uses both vCPUs, so a second uvicorn worker would contend with the first rather than add throughput.
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT} --workers 1

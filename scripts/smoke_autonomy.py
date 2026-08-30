@@ -192,6 +192,54 @@ def check_program() -> None:
         )
     print(f"  ok  {' → '.join(got):<34} recency: uploadedAt rescues a stale-EXIF forward")
 
+    # --- 4d: onTopic demotes an off-topic photo without touching visibility. The hike and the lawn
+    # ceremony score identically on every other factor; only the observed scene distribution tells
+    # them apart. Framed as a hill-station wedding on purpose — this is the case a per-photo classifier
+    # or a "no landscapes" host rule both get wrong, and a corpus-relative share gets right.
+    hill_station = program.SceneContext(
+        totals={"outdoor_venue": 300, "outdoor_nature": 3},
+        informative_total=303,
+        enabled=True,
+    )
+    lawn = program.Candidate(
+        media_id="lawn", aesthetic=0.8, captured_at=now, uploaded_at=now, stage_id=None,
+        scene_setting="outdoor_venue",
+    )
+    hike = program.Candidate(
+        media_id="hike", aesthetic=0.8, captured_at=now, uploaded_at=now, stage_id=None,
+        scene_setting="outdoor_nature",
+    )
+    built = program.build([lawn, hike], now=now, scenes=hill_station)
+    got = _hero_ids(built)
+    if got != ["lawn", "hike"]:
+        fail(f"program: onTopic did not demote the off-topic photo → {got}, expected ['lawn', 'hike']")
+    ok("onTopic: a 1%-of-corpus hike loses to an equal-aesthetic lawn photo that is 99% of the venue")
+
+    # --- 4d: the itinerary prior exempts a stage's *first* photo of its declared setting, before any
+    # evidence has accumulated for it. Without this, the baraat — a wedding's most important five
+    # minutes — would read as a 100% outlier the moment it starts, because the corpus so far is
+    # entirely indoor getting-ready photos.
+    cold_start = program.SceneContext(
+        totals={"indoor_venue": 400},
+        informative_total=400,
+        expected_by_stage={"baraat": "street"},
+        enabled=True,
+    )
+    first_baraat_photo = program.Candidate(
+        media_id="x", aesthetic=0.8, captured_at=now, uploaded_at=now,
+        stage_id="baraat", scene_setting="street",
+    )
+    if program.on_topic(first_baraat_photo, cold_start) != 1.0:
+        fail("program: the itinerary prior did not exempt a stage's first photo of its declared setting")
+    ok("onTopic: the baraat's first photo is not demoted at zero observed evidence (the itinerary prior)")
+
+    # --- 4d: disabled by default. Every row above this one built with no `scenes` kwarg at all, which
+    # must mean the same thing as an explicit disabled context — the mechanism is off unless a caller
+    # (`publisher/store.py::scene_context`) opts an event in.
+    if program.on_topic(hike, program.SceneContext()) != 1.0:
+        fail("program: onTopic must default to a no-op when no SceneContext is supplied")
+    ok("onTopic: no-ops to 1.0 when disabled — every prior assertion in this file ran with it off")
+
     # --- spec 04 §6: no face cluster twice in any five consecutive hero slots, loop included.
     #
     # The criterion is arithmetic before it is code: five consecutive distinct clusters need at least

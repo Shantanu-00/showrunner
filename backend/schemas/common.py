@@ -73,6 +73,53 @@ class GuardianVerdict(str, Enum):
     BLOCKED = "blocked"
 
 
+class SceneSetting(str, Enum):
+    """Where a frame was taken, as a closed vocabulary. The world model's only new observation.
+
+    Lives here rather than in `curator_out.py` because four things share it: the Curator's output, the
+    stored `CuratorBlock`, the host-declared `EventStage.expectedSetting`, and the kiosk's `onTopic`
+    ranking term. A vocabulary with four readers is a `common.py` enum, same as `GuardianVerdict`.
+
+    **Why it is closed.** The accumulated distribution of these values *is* the world model — the count
+    of `indoor_venue` against `outdoor_nature` across an event is what tells the system, without being
+    told, whether it is at a ballroom or on a hillside. An open vocabulary makes that distribution
+    uncountable: `indoor`, `inside`, `hall` and `banquet_hall` are four keys for one fact, and the
+    arithmetic silently stops meaning anything. This is the same lesson `culturalElements` taught —
+    which is why `workers/curate/app.py` filters that against a host-reviewed glossary rather than
+    trusting the prompt.
+
+    **Why `closeup_detail` and `unknown` both exist.** They are not the same answer, and neither is a
+    failure. A ring shot filling the frame has no visible setting; a dim crowd shot might have one the
+    model cannot make out. Both must be *sayable*, because forcing either into a real setting is what
+    would pollute the distribution — and both are treated as "no information" downstream rather than as
+    evidence against the photo. Penalising a frame for carrying no setting would be punishing the
+    absence of evidence, which is the mistake `workers/curate/fusion.py` avoids by flattening the
+    temporal prior to 0.5 when EXIF is missing instead of scoring it 0.
+
+    **Why `screen_or_document` is worth a slot of its own.** A screenshot, a slide or a photographed
+    page is the one case that is off-topic at *every* event regardless of venue, so it needs no
+    distribution to identify. It is the cheapest true positive the world model gets.
+    """
+
+    INDOOR_VENUE = "indoor_venue"
+    OUTDOOR_VENUE = "outdoor_venue"
+    OUTDOOR_NATURE = "outdoor_nature"
+    DOMESTIC_INTERIOR = "domestic_interior"
+    VEHICLE = "vehicle"
+    STREET = "street"
+    CLOSEUP_DETAIL = "closeup_detail"
+    SCREEN_OR_DOCUMENT = "screen_or_document"
+    UNKNOWN = "unknown"
+
+
+#: The two values that carry no information about *where* the photo was taken, as opposed to carrying
+#: information that happens to be unusual. Every consumer treats these as "no opinion" — see the
+#: `SceneSetting` docstring, and `onTopic` in `publisher/program.py`.
+UNINFORMATIVE_SETTINGS = frozenset(
+    {SceneSetting.CLOSEUP_DETAIL.value, SceneSetting.UNKNOWN.value}
+)
+
+
 class StageTiming(BaseModel):
     """Stamped by each worker; the Flight Deck reads these as stage latencies (spec 10)."""
 

@@ -70,7 +70,9 @@ Actions, and when each is right:
 ISSUE_BOUNTY — a real gap you can still close. Set targetStage and targetMoment, or targetStage and
 targetVip, or all three. title is the wanted-poster headline on a five-metre screen: under 60
 characters, concrete, no exclamation marks. guestFacingCopy is the sentence in a guest's pocket: say
-what to photograph and where, warmly, under 140 characters, never guilt-trip. basePoints {BOUNTY_POINTS_MIN}-{BOUNTY_POINTS_MAX}
+what to photograph and where, warmly, under 140 characters, never guilt-trip. If a PHYSICAL SETTING
+block is present, use it for the "where" — a guest who is told the lawn or the pavilion can walk
+there, one told only what to shoot has to guess. Never name a place that block does not name. basePoints {BOUNTY_POINTS_MIN}-{BOUNTY_POINTS_MAX}
 (it is multiplied by the person's vipWeight and clamped, so do not pre-multiply). expiresInMin around
 {BOUNTY_DEFAULT_TTL_MINUTES} for something happening now, longer for a stage that runs a while.
 audience: nearStage for anything a guest must be in the room for, all for a whole-event ask.

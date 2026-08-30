@@ -32,6 +32,9 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Any
 
+from fastapi.concurrency import run_in_threadpool
+
+from directors.story import world as world_mod
 from schemas.reel import (
     Critique,
     CriticVerdict,
@@ -341,6 +344,10 @@ async def _direct_and_critique(
     previous_ids: list[str] = []
     attempts = 0
 
+    # One document read, no model call — `world.recall_prose` degrades to "" on any failure, and an
+    # empty string means `evidence_block` simply omits the section (see its docstring).
+    venue = await run_in_threadpool(world_mod.recall_prose, event_id)
+
     for attempt in (1, 2):
         attempts = attempt
         block = agent.evidence_block(
@@ -353,6 +360,7 @@ async def _direct_and_critique(
             person_id=person_id,
             critique=feedback or None,
             previous_shot_ids=previous_ids or None,
+            venue=venue,
         )
         plan, plan_usage = await gemini.run_structured(
             agent.direct_agent(),

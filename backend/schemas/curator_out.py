@@ -62,3 +62,11 @@ class CuratorOut(BaseModel):
     caption: str = ""
     culturalElements: list[str] = Field(default_factory=list)
     peopleCountEstimate: int = Field(ge=0, default=0)
+    #: One `SceneSetting` value. Deliberately typed `str` and **not** the enum: a response schema that
+    #: rejects an unrecognised value fails the *whole* parse, and `services/gemini.py::run_structured`
+    #: allows exactly one retry before declaring the answer permanently unusable — so one hallucinated
+    #: setting would cost a photo its entire classification, including the aesthetic score and the
+    #: caption that were probably fine. `workers/curate/app.py::_scene_setting` coerces it against the
+    #: enum and falls back to `unknown`, which is the same posture `_glossary_filter` takes for
+    #: `culturalElements`: let the model answer freely, enforce the vocabulary in code.
+    sceneSetting: str = "unknown"

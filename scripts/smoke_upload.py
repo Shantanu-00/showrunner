@@ -31,7 +31,10 @@ import io
 import json
 import os
 import random
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -50,7 +53,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from shared import fs, gcs  # noqa: E402
-from shared.settings import settings  # noqa: E402
+from shared.settings import MAX_KEYFRAMES, settings  # noqa: E402
 from shared.ulid import new_ulid  # noqa: E402
 
 TERMINAL = {"processing", "indexed", "rejected", "quarantined"}
@@ -155,7 +158,15 @@ def sign_in_anonymously(api_key: str) -> tuple[str, str]:
 
 
 def register_intent(
-    api: str, event_id: str, token: str, media_id: str, data: bytes, ring: str
+    api: str,
+    event_id: str,
+    token: str,
+    media_id: str,
+    data: bytes,
+    ring: str,
+    *,
+    content_type: str = "image/jpeg",
+    file_name: str | None = None,
 ) -> dict[str, Any]:
     consent = {"public": ring == "public", "selfOnly": ring == "self"}
     resp = requests.post(
@@ -167,8 +178,8 @@ def register_intent(
             "files": [
                 {
                     "clientMediaId": media_id,
-                    "fileName": f"{media_id}.jpg",
-                    "contentType": "image/jpeg",
+                    "fileName": file_name or f"{media_id}.jpg",
+                    "contentType": content_type,
                     "size": len(data),
                 }
             ],
@@ -180,15 +191,37 @@ def register_intent(
     return resp.json()["uploads"][0]
 
 
-def put_bytes(url: str, data: bytes) -> None:
+def put_bytes(url: str, data: bytes, content_type: str = "image/jpeg") -> None:
     resp = requests.put(
         url,
         data=data,
-        headers={"Content-Type": "image/jpeg", "Content-Length": str(len(data))},
-        timeout=120,
+        headers={"Content-Type": content_type, "Content-Length": str(len(data))},
+        timeout=300,
     )
     if resp.status_code not in (200, 201):
         fail(f"signed PUT rejected ({resp.status_code}): {resp.text[:400]}")
+
+
+def put_resumable(session_uri: str, data: bytes, content_type: str) -> None:
+    """Finish a GCS resumable session in one range (spec 01 §2.2's video path).
+
+    The PWA chunks at 16 MiB because a phone on venue wifi needs to survive a dropped connection
+    mid-upload; a smoke test on a wired machine has nothing to prove there, so it sends one range and
+    checks the terminal status. What this *does* exercise, and what a signed PUT would not, is that
+    `POST /uploads` issued a `resumableSessionUri` at all for a video content type.
+    """
+    total = len(data)
+    resp = requests.put(
+        session_uri,
+        data=data,
+        headers={
+            "Content-Type": content_type,
+            "Content-Range": f"bytes 0-{total - 1}/{total}",
+        },
+        timeout=600,
+    )
+    if resp.status_code not in (200, 201):
+        fail(f"resumable PUT rejected ({resp.status_code}): {resp.text[:400]}")
 
 
 def wait_for(event_id: str, media_id: str, timeout: float) -> dict[str, Any]:
@@ -367,6 +400,156 @@ def set_chaos(event_id: str, stage: str, fail_next: int) -> None:
 # ---------------------------------------------------------------- main
 
 
+# ---------------------------------------------------------------- the video path (spec 03 §4)
+
+
+def make_video(workdir: str) -> bytes | None:
+    """A 6-second 720p test clip with a tone, via ffmpeg. None when ffmpeg is not on PATH.
+
+    Six seconds is chosen against `MAX_KEYFRAMES`: at 1 fps it produces 6 keyframes, which proves the
+    sampler runs while staying under the cap — so a count below 12 is unambiguous rather than being
+    either "the cap works" or "extraction stopped early". `testsrc2` gives moving high-contrast detail,
+    so the sharpness-based poster pick has something to discriminate on.
+    """
+    if shutil.which("ffmpeg") is None:
+        return None
+    out = os.path.join(workdir, "smoke.mp4")
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-nostdin", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=6",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=6",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-shortest",
+            "-movflags", "+faststart",
+            out,
+        ],
+        capture_output=True, text=True, timeout=180, check=False,
+    )
+    if proc.returncode != 0 or not os.path.exists(out):
+        tail = "\n".join((proc.stderr or "").strip().splitlines()[-4:])
+        fail(f"could not generate a test clip: {tail[:400]}")
+    return Path(out).read_bytes()
+
+
+def run_video(args: argparse.Namespace, api: str, api_key: str) -> int:
+    """`--video`: the branch that did not exist until worker-video-prep did.
+
+    What it asserts, in the order the pipeline produces it:
+
+    1. `POST /uploads` issues a **resumable session**, not a signed PUT, for a video content type.
+    2. `video_prep` reaches `done` — ffprobe read the container and every render family landed.
+    3. The clip carries the *same* thumb/classify/display triple a photo does. That is the assertion
+       that keeps the gallery, the lightbox and the kiosk hero free of any video branch.
+    4. `keyframeUris` is populated, within the cap, and every object really exists.
+    5. `durationSec` and `hasAudio` are recorded — the second because nothing in this build screens
+       sound, and the document is where that gap should be visible rather than only in a spec footnote.
+    6. The three downstream stages were seeded `pending` and the clip was **not** `indexed` on
+       `video_prep` alone. That was the trap this worker had to avoid: `_derive_status` flips on "every
+       key in the stages map is done", and every public surface filters on exactly that flag.
+    7. It then does reach `indexed`, with a Curator block and a Guardian verdict — so the fan-out
+       `worker-video-prep` performs itself actually landed.
+    """
+    cfg = settings()
+    with tempfile.TemporaryDirectory(prefix="smoke-video-") as workdir:
+        if args.file:
+            data = Path(args.file).read_bytes()
+            name = Path(args.file).name
+        else:
+            generated = make_video(workdir)
+            if generated is None:
+                fail(
+                    "ffmpeg is not on PATH, so a test clip cannot be generated — "
+                    "pass --file path/to/clip.mp4 instead"
+                )
+            data = generated
+            name = "smoke.mp4"
+
+    content_type = "video/quicktime" if name.lower().endswith(".mov") else "video/mp4"
+    print(f"clip: {len(data)} bytes  {content_type}  {name}")
+
+    token, uid = sign_in_anonymously(api_key)
+    ok(f"anonymous uid {uid}")
+
+    media_id = new_ulid()
+    target = register_intent(
+        api, args.event_id, token, media_id, data, args.consent,
+        content_type=content_type, file_name=name,
+    )
+    if not target.get("resumableSessionUri"):
+        fail("a video intent did not come back with a resumableSessionUri (spec 01 §2.2)")
+    if target.get("signedUrl"):
+        fail("a video intent came back with a signed PUT URL — the photo path was taken")
+    ok(f"intent registered as a resumable session: {media_id}")
+
+    put_resumable(target["resumableSessionUri"], data, content_type)
+    ok("bytes uploaded through the resumable session")
+
+    budget = max(args.timeout, 240.0)
+    print(f"      waiting for video_prep (budget {budget:.0f}s)")
+    doc = wait_for_stage(args.event_id, media_id, "video_prep", budget)
+    ok("stages.video_prep=done")
+
+    if doc.get("kind") != "video":
+        fail(f"kind is {doc.get('kind')!r}, expected 'video'")
+
+    duration = doc.get("durationSec")
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        fail(f"durationSec missing or not positive: {duration!r}")
+    ok(f"durationSec={float(duration):.2f}  hasAudio={doc.get('hasAudio')}")
+
+    for field in ("thumbUri", "classifyUri", "displayUri", "posterUri"):
+        if not doc.get(field):
+            fail(f"{field} missing — a clip must carry the same renders a photo does")
+    for render in ("thumb_384.webp", "classify_768.webp", "display_1600.webp"):
+        path = gcs.derived_path(args.event_id, media_id, render)
+        if not object_exists(cfg.derived_bucket, path):
+            fail(f"missing poster render: {path}")
+    ok("poster produced thumb_384 / classify_768 / display_1600, posterUri set")
+
+    keyframes = [str(u) for u in (doc.get("keyframeUris") or [])]
+    if not keyframes:
+        fail("keyframeUris is empty — the Guardian would be judging one arbitrary instant")
+    if len(keyframes) > MAX_KEYFRAMES:
+        fail(f"{len(keyframes)} keyframes exceeds the cap of {MAX_KEYFRAMES}")
+    for uri in keyframes:
+        parsed = gcs.parse_gs_uri(uri)
+        if parsed is None or not object_exists(parsed[0], parsed[1]):
+            fail(f"keyframe object missing: {uri}")
+    ok(f"{len(keyframes)} keyframes present (cap {MAX_KEYFRAMES}), every object exists")
+
+    if not doc.get("proxyUri"):
+        fail("proxyUri missing — playback would fall back to the full-size original")
+    proxy_parsed = gcs.parse_gs_uri(str(doc["proxyUri"]))
+    if proxy_parsed is None or not object_exists(proxy_parsed[0], proxy_parsed[1]):
+        fail(f"proxy object missing: {doc['proxyUri']}")
+    ok("proxy_720.mp4 present")
+
+    for stage in ("curate", "faces", "safety"):
+        if (doc.get("stages") or {}).get(stage) is None:
+            fail(f"stages.{stage} was never seeded — the fan-out flags did not ride the settle")
+    if doc.get("status") == "indexed":
+        fail("status=indexed straight after video_prep — perception had not run yet")
+    ok("curate/faces/safety seeded pending; status not yet indexed")
+
+    print(f"      waiting for perception to finish (budget {budget:.0f}s)")
+    doc = wait_for(args.event_id, media_id, budget)
+    if doc.get("status") != "indexed":
+        fail(f"clip never reached indexed: status={doc.get('status')!r} stages={doc.get('stages')}")
+    if not (doc.get("curator") or {}):
+        fail("no curator block — the Curator never saw the poster")
+    verdict = (doc.get("guardian") or {}).get("verdict")
+    if not verdict:
+        fail("no guardian verdict — the clip reached indexed without a safety answer")
+    aesthetic = float((doc.get("curator") or {}).get("aestheticScore") or 0.0)
+    ok(f"indexed  aesthetic={aesthetic:.2f}  guardian={verdict}")
+    ok(f"visibility={doc.get('visibility')!r}  faces={len(doc.get('faces') or [])}")
+
+    print()
+    print(f"PASS  {args.event_id}/{media_id} (video)")
+    return 0
+
+
 def main() -> int:
     # Before the parser, not after: the flag defaults below read the environment, and `.env` is
     # only merged into it as a side effect of building Settings. Reversed, `make smoke` sees none
@@ -384,6 +567,13 @@ def main() -> int:
     ap.add_argument("--duplicate", action="store_true", help="upload the same bytes twice under two ids")
     ap.add_argument("--corrupt", action="store_true", help="upload truncated bytes (expect rejected)")
     ap.add_argument("--skip-curate", action="store_true", help="stop at intake, do not wait for the Curator")
+    ap.add_argument(
+        "--video",
+        action="store_true",
+        help="exercise the video path end to end (spec 03 §4): resumable upload → video_prep → "
+        "poster/keyframes/proxy → the ordinary photo fan-out. Generates a 6 s clip with ffmpeg, "
+        "or use --file for a real one.",
+    )
     ap.add_argument(
         "--chaos",
         type=int,
@@ -412,6 +602,15 @@ def main() -> int:
     if health.status_code != 200:
         fail(f"api unhealthy: {health.status_code} {health.text[:200]}")
     ok(f"api healthy: {health.json()}")
+
+    if args.video:
+        # Its own branch rather than a flag threaded through the photo path: a clip takes a resumable
+        # session instead of a signed PUT, has no EXIF or GPS to assert, and gains four assertions
+        # (poster, keyframes, proxy, the deferred index) that mean nothing for a still.
+        for unsupported in ("idempotency", "duplicate", "corrupt", "no_gps"):
+            if getattr(args, unsupported, False):
+                fail(f"--{unsupported.replace('_', '-')} is a photo-path test; drop it or drop --video")
+        return run_video(args, api, api_key)
 
     # Capture time is 30 minutes ago *in the event's timezone* — inside the active stage window.
     captured_local = (dt.datetime.now(tz) - dt.timedelta(minutes=30)).replace(microsecond=0)

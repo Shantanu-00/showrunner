@@ -11,6 +11,7 @@ DLQ_SA="$(sa_email "${SA_DLQ}")"
 CURATE_SA="$(sa_email "${SA_CURATE}")"
 FACE_SA="$(sa_email "${SA_FACE}")"
 SAFETY_SA="$(sa_email "${SA_SAFETY}")"
+VIDEO_PREP_SA="$(sa_email "${SA_VIDEO_PREP}")"
 PUBLISHER_SA="$(sa_email "${SA_PUBLISHER}")"
 RENDER_SA="$(sa_email "${SA_RENDER}")"
 TASKS_SA="$(sa_email "${SA_TASKS}")"
@@ -24,6 +25,7 @@ ensure_sa "${SA_DLQ}" "Showrunner dlq (dead-letter consumer)"
 ensure_sa "${SA_CURATE}" "Showrunner worker-curate (Curator agent)"
 ensure_sa "${SA_FACE}" "Showrunner worker-face (Face Indexer)"
 ensure_sa "${SA_SAFETY}" "Showrunner worker-safety (Guardian)"
+ensure_sa "${SA_VIDEO_PREP}" "Showrunner worker-video-prep (ffmpeg/ffprobe)"
 ensure_sa "${SA_PUBLISHER}" "Showrunner publisher (kiosk playlist)"
 ensure_sa "${SA_RENDER}" "Showrunner render job (Reel Director)"
 ensure_sa "${SA_TASKS}" "Showrunner Cloud Tasks OIDC identity"
@@ -74,6 +76,15 @@ grant_project_role "serviceAccount:${SAFETY_SA}" "roles/aiplatform.user"
 # Pass 1, SafeSearch. Vision's annotate methods carry no IAM permission of their own — access is
 # granted by being able to consume the project's Vision quota, which is what this role is.
 grant_project_role "serviceAccount:${SAFETY_SA}" "roles/serviceusage.serviceUsageConsumer"
+
+step "worker-video-prep: Firestore + Cloud Tasks (it fans out) — no LLM, no Vertex"
+# The only B2 worker with no model call at all: ffprobe, three ffmpeg invocations and Pillow. What it
+# does have that the other three do not is `cloudtasks.enqueuer`, because spec 03 §4 has it dispatch
+# curate/faces/safety itself once the poster and keyframes exist — it is the only worker that produces
+# work rather than only consuming it. Bucket grants live in buckets.sh: read on `raw` (the original
+# video is the one thing only this worker needs) and create on `derived`.
+grant_project_role "serviceAccount:${VIDEO_PREP_SA}" "roles/datastore.user"
+grant_project_role "serviceAccount:${VIDEO_PREP_SA}" "roles/cloudtasks.enqueuer"
 
 step "publisher: Firestore only — no LLM, no Vertex, no GCS, no Tasks"
 # The playlist writer reads media/people/bounties/reels and writes one document. It has no reason to
@@ -134,6 +145,9 @@ step "Cloud Tasks OIDC: actAs for the enqueuers"
 # first B2 dispatch fails with an opaque 403.
 grant_sa_role "${TASKS_SA}" "serviceAccount:${API_SA}" "roles/iam.serviceAccountUser"
 grant_sa_role "${TASKS_SA}" "serviceAccount:${INTAKE_SA}" "roles/iam.serviceAccountUser"
+# worker-video-prep is the third enqueuer (spec 03 §4 step 1 ends by fanning out). Easy to miss:
+# the other two are the *entry* points and this one sits in the middle of the pipeline.
+grant_sa_role "${TASKS_SA}" "serviceAccount:${VIDEO_PREP_SA}" "roles/iam.serviceAccountUser"
 
 step "Eventarc / Pub-Sub delivery identity"
 grant_project_role "serviceAccount:${EVENTARC_SA}" "roles/eventarc.eventReceiver"

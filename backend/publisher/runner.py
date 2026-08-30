@@ -91,6 +91,10 @@ def recompute(
             theme=context.theme,
             premiere_reel_id=premiere,
             takeover_bounty_id=store.takeover_bounty(event_id),
+            # The world model's `onTopic` ranking term (spec 03 §5.1). One extra coverage read,
+            # already paid for by the director's own tick — `store.scene_context` no-ops to a plain
+            # 1.0 multiplier whenever the event is invite-only, kiosk-private, or has not opted in.
+            scenes=store.scene_context(event_id, context.event),
         )
     written = store.publish(
         event_id, built, trigger=trigger, holder=holder, premiered=premiere

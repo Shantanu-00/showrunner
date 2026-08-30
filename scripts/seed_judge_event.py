@@ -109,6 +109,10 @@ def main() -> int:
         JUDGE_EVENT_NAME,
         "--timezone",
         args.timezone,
+        # This event is what a judge/guest actually sees, not the eval harness's grading target — the
+        # 9 gradient + 4 solid/noise negative-control fixtures belong only on `dev_demo` (`make eval`),
+        # where a low aesthetic score is the expected, graded outcome rather than kiosk content.
+        "--cast-only",
     ]
     if args.api:
         argv += ["--api", args.api]

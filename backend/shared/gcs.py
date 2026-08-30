@@ -210,6 +210,13 @@ def copy_object(src_bucket: str, src_path: str, dst_bucket: str, dst_path: str) 
     source.copy_blob(blob, client().bucket(dst_bucket), dst_path)
 
 
+def list_object_names(bucket: str, prefix: str, *, max_results: int) -> list[storage.Blob]:
+    """List blobs under `prefix`, capped. The orphan sweep (spec 09 §2) is the one caller that
+    needs to compare bucket contents against Firestore intent — nothing else in this codebase lists
+    a bucket rather than addressing one object directly."""
+    return list(client().list_blobs(bucket, prefix=prefix, max_results=max_results))
+
+
 def delete_object(bucket: str, path: str) -> None:
     """Best-effort delete — a missing object is the desired end state either way."""
     try:

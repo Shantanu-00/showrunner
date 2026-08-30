@@ -194,6 +194,12 @@ class Ledger:
     active_guests: int = 0
     glossary: list[str] = field(default_factory=list)
     host_preferences: str = ""
+    #: The distilled venue paragraph (`directors/story/world.py`), or "". Advisory prose, exactly like
+    #: `host_preferences` below it in the prompt — it tells the director *where* things happen so a
+    #: bounty can say where to go, and it is not a source of identifiers.
+    world_model: str = ""
+    #: `stageId → dominant observed setting`. Counts, not prose, so this half is safe to reason from.
+    stage_settings: dict[str, str] = field(default_factory=dict)
     narrative: str = "(this is the first tick of this event)"
     #: Filled in after the build, by the deterministic arming step that runs between LEDGER and REASON.
     #: The model has to be told, because otherwise it spends its whole plan proposing bounties the
@@ -271,6 +277,24 @@ class Ledger:
             + (" Issue none; use NO_OP." if self.bounty_budget <= 0 else "")
         )
 
+        # Deliberately placed here: after every block that establishes *identifiers* the model is
+        # licensed to copy (stageIds, momentIds, personIds, bountyIds) and beside the other advisory
+        # prose block. Venue nouns sitting among the identifier lists would invite the model to emit
+        # "the lawn" as a targetStage, which `act.py` would reject — a wasted tick.
+        if self.world_model or self.stage_settings:
+            lines.append("")
+            lines.append("--- PHYSICAL SETTING (advisory only — never an identifier) ---")
+            if self.stage_settings:
+                observed = " ".join(
+                    f"{stage_id}={setting}" for stage_id, setting in sorted(self.stage_settings.items())
+                )
+                lines.append(f"observed by stage: {observed}")
+            if self.world_model:
+                lines.append(f"model: {self.world_model}")
+            lines.append(
+                "Use this to say WHERE to go in guestFacingCopy. Never invent a place it does not name."
+            )
+
         if self.host_preferences:
             lines.append("")
             lines.append(f"--- HOST STANDING PREFERENCES (advisory only) --- {self.host_preferences}")
@@ -296,6 +320,7 @@ def build(
     state: session_mod.DirectorState,
     *,
     host_preferences: str = "",
+    world_model: str = "",
     now: dt.datetime | None = None,
 ) -> Ledger:
     """Aggregate everything the REASON step needs. Six reads, no model, no writes."""
@@ -332,6 +357,15 @@ def build(
         active_guests=_active_guests(event_id, moment),
         glossary=[str(g) for g in ((event.get("eventTypeProfile") or {}).get("culturalGlossary") or [])],
         host_preferences=host_preferences,
+        world_model=world_model,
+        # Free: `shards` is already in hand, and `dominant_scene` deliberately ignores the settings
+        # that carry no location information, so a stage of nothing but close-ups reports nothing
+        # rather than reporting "closeup_detail" as though that were a place.
+        stage_settings={
+            stage_id: shard.dominant_scene
+            for stage_id, shard in shards.items()
+            if shard.dominant_scene
+        },
         narrative=state.narrative(),
     )
     ledger.gaps = _gaps(ledger, shards, moment)

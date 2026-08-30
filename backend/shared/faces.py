@@ -33,7 +33,7 @@ from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
 
 from . import fs, log
-from .settings import CLUSTER_PROBE_LIMIT, settings
+from .settings import CLUSTER_PROBE_LIMIT, DEFAULT_TIER, settings
 
 EMBEDDING_DIM = 512
 EMBEDDING_FIELD = "embedding"
@@ -78,7 +78,26 @@ class PersonHit:
 
     @property
     def tier(self) -> int:
-        return int(self.person.get("tier") or 3)
+        """The host-declared tier, defaulting to Guest only when the field is genuinely absent.
+
+        `.get("tier", DEFAULT_TIER)` and **not** `.get("tier") or DEFAULT_TIER`. The `or` form was a
+        real bug: `Tier.PRINCIPAL == 0`, and `0 or 3` is `3` in Python, so the single most sensitive
+        tier in the system read as an ordinary guest. `protected` below is `tier <= 2`, so a Principal
+        came back **unprotected** — the impersonation guard skipped exactly the album most worth
+        stealing. Every other tier was unaffected (1, 2 and 3 are all truthy), which is what let it sit
+        here unnoticed.
+        """
+        raw = self.person.get("tier", DEFAULT_TIER)
+        if raw is None:
+            return DEFAULT_TIER
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            # A malformed tier must fail *closed* for a guard, and Guest is the closed answer here
+            # only because `protected` also checks `hostEnrolled` — a host-named person stays
+            # protected regardless of what their tier field says.
+            log.warn("person_tier_unreadable", person_id=self.personId, value=str(raw)[:32])
+            return DEFAULT_TIER
 
     @property
     def protected(self) -> bool:
@@ -86,6 +105,13 @@ class PersonHit:
 
         Tier ≤ 2 is Principal / InnerCircle / NamedVIP (spec 11 §3); `hostEnrolled` covers anyone
         the host named without a tier promotion. These are the albums worth stealing.
+
+        Why the tier bug above was latent rather than live: today `tier` is written in exactly two
+        places — `api/identity.py` sets every self-enrolled person to Guest, and `backend/seed.py`
+        sets the host-seeded cast, where it also sets `hostEnrolled: True`. So every tier-0 person that
+        currently exists is caught by the second clause. It would have become live and silent the
+        moment a host could *promote* a self-enrolled guest to Principal — which is spec 08's People
+        tab, cut this build and therefore likely to return.
         """
         return self.tier <= 2 or bool(self.person.get("hostEnrolled"))
 
@@ -361,3 +387,123 @@ def unlink_person(event_id: str, person_id: str) -> int:
         )
     log.info("faces_unlinked", event_id=event_id, person=person_id, faces=total)
     return total
+
+
+# ---------------------------------------------------------------- reconciliation (the hourly sweep)
+
+
+@dataclass(frozen=True)
+class ClusterMerge:
+    """One reconciliation outcome: `losers` folded into `winner` (spec 03 §5.2's hourly sweep)."""
+
+    winner: str
+    losers: list[str]
+    faces_moved: int
+
+
+def _centroid(vectors: list[list[float]]) -> list[float]:
+    """Mean of unit-norm vectors, re-normalised — the centroid `nearest_cluster` never needed
+    because it adopts by nearest-neighbour instead. The sweep is the one caller that actually wants
+    a per-cluster average, so it lives here rather than in the hot indexing path."""
+    dim = len(vectors[0])
+    summed = [0.0] * dim
+    for vector in vectors:
+        for i, value in enumerate(vector):
+            summed[i] += value
+    norm = sum(value * value for value in summed) ** 0.5 or 1.0
+    return [value / norm for value in summed]
+
+
+def _rewrite_cluster(event_id: str, losing_cluster_id: str, winning_cluster_id: str) -> int:
+    """Move every face still carrying `losing_cluster_id` onto `winning_cluster_id`.
+
+    Idempotent by construction: re-running finds nothing left at the losing id (it queries the
+    field, not a snapshot taken earlier) and moves nothing on a repeat pass.
+    """
+    moved = 0
+    query = faces_col(event_id).where(filter=FieldFilter("clusterId", "==", losing_cluster_id))
+    batch = fs.db().batch()
+    pending = 0
+    for snap in query.stream():
+        batch.update(snap.reference, {"clusterId": winning_cluster_id})
+        pending += 1
+        moved += 1
+        if pending >= 400:  # stay well under Firestore's 500-write batch ceiling
+            batch.commit()
+            batch = fs.db().batch()
+            pending = 0
+    if pending:
+        batch.commit()
+    return moved
+
+
+def reconcile_clusters(event_id: str, *, scan_limit: int) -> list[ClusterMerge]:
+    """Merge clusters that are really the same person (spec 03 §5.2, the hourly sweep's own job).
+
+    `nearest_cluster` adopts by nearest-neighbour on purpose — spec 03 §5.2 accepts that two workers
+    racing the same unmatched face may each mint a fresh cluster rather than serialising cluster
+    creation, which would cap indexing throughput at one face at a time. This is the reconciliation
+    that trade requires: group every unclaimed face (`personId is None`) by `clusterId`, average each
+    group's embeddings into a centroid, and fold any two centroids at or above `tau_cluster` into one
+    cluster. The winner is the lowest ULID in each merged group — ULIDs sort by creation time, so the
+    oldest cluster survives and a re-run always reaches the same answer regardless of run order.
+    """
+    groups: dict[str, list[list[float]]] = {}
+    for snap in faces_col(event_id).limit(scan_limit).stream():
+        doc = snap.to_dict() or {}
+        cluster_id = doc.get("clusterId")
+        if not cluster_id or doc.get("personId"):
+            continue
+        stored = doc.get(EMBEDDING_FIELD)
+        if stored is None:
+            continue
+        values = list(stored.value) if isinstance(stored, Vector) else list(stored)
+        if len(values) != EMBEDDING_DIM:
+            continue
+        groups.setdefault(str(cluster_id), []).append(values)
+
+    if len(groups) < 2:
+        return []
+
+    centroids = {cid: _centroid(vectors) for cid, vectors in groups.items()}
+    cluster_ids = sorted(centroids)
+
+    parent = {cid: cid for cid in cluster_ids}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            # The lower ULID root always wins, however the pair was ordered.
+            if ra < rb:
+                parent[rb] = ra
+            else:
+                parent[ra] = rb
+
+    tau = settings().tau_cluster
+    for i, a in enumerate(cluster_ids):
+        for b in cluster_ids[i + 1 :]:
+            if cosine(centroids[a], centroids[b]) >= tau:
+                union(a, b)
+
+    components: dict[str, list[str]] = {}
+    for cid in cluster_ids:
+        components.setdefault(find(cid), []).append(cid)
+
+    merges: list[ClusterMerge] = []
+    for winner, members in components.items():
+        losers = [m for m in members if m != winner]
+        if not losers:
+            continue
+        moved = sum(_rewrite_cluster(event_id, loser, winner) for loser in losers)
+        if moved:
+            merges.append(ClusterMerge(winner=winner, losers=losers, faces_moved=moved))
+            log.info(
+                "clusters_merged", event_id=event_id, winner=winner, losers=losers, faces=moved
+            )
+    return merges
