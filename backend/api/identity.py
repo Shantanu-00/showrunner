@@ -62,7 +62,10 @@ from schemas.identity import (
     EnrollOutcome,
     EnrollRequest,
     EnrollResponse,
+    HostEnrollRequest,
+    HostEnrollResponse,
     ReclaimRequest,
+    TierRequest,
     RedeemRequest,
     RedeemResponse,
     SubjectVetoRequest,
@@ -103,10 +106,38 @@ def _decode_selfie(selfie_b64: str) -> bytes:
     return image_bytes
 
 
+def _shrink_for_embed(selfie_b64: str) -> str:
+    """Downscale a selfie before it rides to `worker-face` — the HANDOFF §8 fix, landed where it
+    was owed: the live enrollment path, not a seeding script.
+
+    InsightFace detects, 5-point-aligns and resamples to 112×112 regardless of input size, so a
+    phone's 4 MB original buys nothing but transfer time — and `embed_selfie`'s 20 s timeout was
+    measured to expire mid-upload on a slow uplink precisely because ~2.4 MB of base64 was in
+    flight (`backend/seed.py`'s cast-portrait note). ≤1280 px re-encoded JPEG is ~100 KB. Any
+    decode failure returns the original untouched: the face worker's own error is the real one.
+    """
+    try:
+        from io import BytesIO  # noqa: PLC0415
+
+        from PIL import Image, ImageOps  # noqa: PLC0415
+
+        raw = base64.b64decode(selfie_b64, validate=True)
+        image = Image.open(BytesIO(raw))
+        image = ImageOps.exif_transpose(image)
+        if max(image.size) <= 1280 and len(raw) <= 400_000:
+            return selfie_b64
+        image.thumbnail((1280, 1280))
+        out = BytesIO()
+        image.convert("RGB").save(out, format="JPEG", quality=88)
+        return base64.b64encode(out.getvalue()).decode("ascii")
+    except Exception:  # noqa: BLE001 - see docstring
+        return selfie_b64
+
+
 def _embed_one(selfie_b64: str) -> tuple[list[float], BoundingBox, float]:
     """One face from a selfie, or a 400 — enrollment/re-claim need exactly one clear face."""
     try:
-        body = internal.embed_selfie(selfie_b64, max_faces=1)
+        body = internal.embed_selfie(_shrink_for_embed(selfie_b64), max_faces=1)
     except internal.FaceServiceError as exc:
         raise errors.ApiError(503, "FACE_SERVICE_UNAVAILABLE", str(exc)) from exc
     faces = [FaceDetection(**f) for f in body.get("faces") or []]
@@ -521,6 +552,109 @@ async def reclaim(
     return _hold_identity_match(
         eventId, principal, hits[0], False, image_bytes, method=ClaimMethod.RECLAIM
     )
+
+
+# ---------------------------------------------------------------- host enrollment (spec 13 §7)
+
+
+@router.post("/people/host-enroll", response_model=HostEnrollResponse)
+async def host_enroll(
+    req: HostEnrollRequest,
+    eventId: str = Path(min_length=1, max_length=128),
+    principal: Principal = Depends(caller),
+) -> HostEnrollResponse:
+    """The host adds a participant with a reference photo — `backend/seed.py::seed_person`
+    promoted to a product path (spec 13 §7), with the gates the seed never needed: the same ban
+    check and hourly attempt cap the selfie path has (a reference photo is exactly as much of a
+    free probe against enrolled faces as a selfie is), and an explicit permission acknowledgment.
+
+    **§4.28's rule survives with no exceptions: this grants no identity.** `claimApproved: True`
+    because the host — the approver — is the one enrolling, so the album may accrete (that is the
+    point; the director needs to see who has been photographed). But **no uid link and no
+    `personId` claim are written here**: when the real human selfie-enrolls, their match against
+    this host-enrolled person is *held* (`holdReason=protected_person`, the impersonation guard),
+    and host approval remains the only grant. The subject keeps subject-veto and delete-my-data.
+    """
+    _require_host(principal, eventId)
+    event = fs.get_event(eventId)
+    if event is None:
+        raise errors.not_found("NO_EVENT", "unknown event")
+    if not req.photoConsent:
+        raise errors.bad_request(
+            "CONSENT_REQUIRED", "confirm you have this person's permission to add their photo"
+        )
+    _decode_selfie(req.photo)  # size/encoding gate, same as the selfie path
+    _consume_claim_attempt(fs.db().transaction(), eventId, principal.uid)
+    embedding, _box, _det = _embed_one(req.photo)
+
+    person_id = new_ulid()
+    now = dt.datetime.now(dt.timezone.utc)
+    fs.enrollment_ref(eventId, person_id).set(
+        {"personId": person_id, "embedding": embedding, "createdAt": now}
+    )
+    fs.person_ref(eventId, person_id).set(
+        {
+            "personId": person_id,
+            "displayName": req.displayName,
+            "tier": int(req.tier),
+            "hostEnrolled": True,
+            # The host is the approver, so the approval the self-enrollment path waits for has
+            # already happened — same reasoning as `backend/seed.py::seed_person`. Without it
+            # `workers/face` would refuse to auto-link any face to this person and the People
+            # panel would show a name with a permanently empty album.
+            "claimApproved": True,
+            "featured": False,
+            "consent": {
+                "selfieEnrolled": True,
+                "enrolledAt": now,
+                "retentionNoticeShown": True,
+                "hostAsserted": True,  # spec 13 §7: consent asserted by the host, not the subject
+            },
+            "createdAt": now,
+        }
+    )
+    fs.person_private_ref(eventId, person_id).set({"uidLinks": [], "tasteProfile": {}})
+    log.info(
+        "host_enrolled",
+        event_id=eventId,
+        person=person_id,
+        tier=int(req.tier),
+        by=principal.uid,
+    )
+    return HostEnrollResponse(personId=person_id, displayName=req.displayName, tier=int(req.tier))
+
+
+@router.post("/people/{personId}/tier")
+async def set_tier(
+    req: TierRequest,
+    eventId: str = Path(min_length=1, max_length=128),
+    personId: str = Path(min_length=1, max_length=128),
+    principal: Principal = Depends(caller),
+) -> dict[str, Any]:
+    """Spec 11 §6's promote/demote, finally implemented. Deterministic ranking metadata only —
+    "VIP is policy, not memory" (spec 11 §4) — and audited to `ops/`, because who the system
+    treats as important is exactly the kind of change a host must be able to point at later."""
+    _require_host(principal, eventId)
+    ref = fs.person_ref(eventId, personId)
+    snap = ref.get()
+    if not snap.exists:
+        raise errors.not_found("NO_PERSON", "unknown person")
+    was = int((snap.to_dict() or {}).get("tier", int(Tier.GUEST)))
+    ref.update({"tier": int(req.tier)})
+    if was != int(req.tier):
+        fs.ops_alert(
+            eventId,
+            "tier_changed",
+            f"host set {personId} tier {was} → {req.tier}",
+            severity="info",
+            resolved=True,
+            by=principal.uid,
+            personId=personId,
+            fromTier=was,
+            toTier=int(req.tier),
+        )
+    log.info("tier_set", event_id=eventId, person=personId, tier=int(req.tier), by=principal.uid)
+    return {"personId": personId, "tier": int(req.tier)}
 
 
 # ---------------------------------------------------------------- host review (spec 02 §3.1)

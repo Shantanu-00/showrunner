@@ -105,11 +105,16 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
     state = await run_in_threadpool(session_mod.load, event_id)
 
     try:
-        settled = await validate.settle(event_id, tick_id=tick_id)
+        settled = await validate.settle(event_id, tick_id=tick_id, event=event)
         usage = usage + settled.usage
 
         expired, gaps = await run_in_threadpool(act.expire_bounties, event_id)
         outcome.expired = expired
+
+        # Assignment timeouts release with the same deterministic step (spec 13 §6): an unanswered
+        # personal ask becomes a broadcast, model not consulted. Runs before the idle check for the
+        # same reason Expire does — an open assignment means the event is not idle anyway.
+        await run_in_threadpool(act.release_stale_assignments, event_id)
 
         # Spec 13's idle economy. Checked *after* Validate and Expire, because awards never wait and
         # a timed-out bounty closes on time whatever the hour — and a tick that just expired one is

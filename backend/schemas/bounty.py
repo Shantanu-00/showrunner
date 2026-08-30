@@ -46,11 +46,15 @@ OPEN_STATUSES = frozenset({BountyStatus.ACTIVE.value, BountyStatus.ESCALATED.val
 
 
 class BountyAudience(str, Enum):
-    """Spec 05 §4's targeting. `nearStage` = guests who uploaded in the last 15 minutes."""
+    """Spec 05 §4's targeting, plus spec 13 §6's `assignee`. `nearStage` = guests who uploaded in
+    the last 15 minutes; `assignee` = one specific active guest, resolved deterministically in the
+    Act step (never by the model), falling back to `all` when the assignment times out unanswered.
+    Audience is **delivery, never pay**: whoever submits the fulfilling photo gets the points."""
 
     ALL = "all"
     NEAR_STAGE = "nearStage"
     TOP_CONTRIBUTORS = "topContributors"
+    ASSIGNEE = "assignee"
 
 
 class SubmissionVerdict(str, Enum):
@@ -103,6 +107,14 @@ class Bounty(BaseModel):
     source: str = "reconciliation"
     issuedBy: str = "story_director"
     tickId: str | None = None
+
+    #: Spec 13 §6: who this bounty banners for while `audience == assignee`. Resolved by the
+    #: deterministic Act step (the most recently active member), cleared by the Expire step at
+    #: `assignmentTimeoutAt` (audience flips to `all`). Display routing only — the award
+    #: transaction never reads any of these three fields.
+    assigneeUid: str | None = None
+    assignedAt: dt.datetime | None = None
+    assignmentTimeoutAt: dt.datetime | None = None
 
     kioskTakeover: bool = False
     submissions: list[BountySubmission] = Field(default_factory=list)

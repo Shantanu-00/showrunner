@@ -213,6 +213,15 @@ TICK_IDLE_LOOKAHEAD_MINUTES = 120
 #: even outside `STAGE_ADVANCE_WINDOW_MINUTES` — the photos move the timeline; the schedule only
 #: anticipates it. One tick's drift can be a burst of forwarded photos; two consecutive is a place.
 DRIFT_ADVANCE_TICKS = 2
+#: Spec 13 §5: a frame counts toward "the whole group" at
+#: `ceil(expectedParticipants × this)` people — 0.75 because the photographer is usually one of
+#: the group, and a 4-person trip's 3-person frame plus the person holding the phone *is* the
+#: group photo the day was missing. Skipped entirely when `expectedParticipants` is unset.
+GROUP_SHOT_MIN_FRACTION = 0.75
+#: Spec 13 §6: how long an assigned bounty banners for one guest before the deterministic Expire
+#: step flips it to everyone. ~3 demo ticks: long enough to be a personal ask, short enough that
+#: one person ignoring their phone never costs the event the photo.
+BOUNTY_ASSIGN_TIMEOUT_MINUTES = 6
 
 # --- kiosk program rails (spec 04 §4) ---------------------------------------------------------
 KIOSK_PROGRAM_SECONDS = 300  # "~5 min program, recomputed on triggers"

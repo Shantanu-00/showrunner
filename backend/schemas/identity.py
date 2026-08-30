@@ -113,6 +113,33 @@ class EnrollRequest(BaseModel):
     retentionNoticeShown: bool = False
 
 
+class HostEnrollRequest(BaseModel):
+    """`POST …/people/host-enroll` (spec 13 §7) — the host adds a participant with a reference
+    photo, `backend/seed.py::seed_person`'s shape promoted to a product path.
+
+    `photoConsent` is the host's explicit assertion that they have this person's permission to
+    enroll their photo — required, never pre-ticked, and it is *host-asserted* consent, which is
+    why the enrolled person keeps every self-service right unchanged (subject veto,
+    delete-my-data, and the claim review when they later selfie-enroll themselves)."""
+
+    photo: str  # base64 JPEG/PNG reference photo with exactly one clear face
+    displayName: str = Field(min_length=1, max_length=80)
+    tier: int = Field(default=3, ge=0, le=3)
+    photoConsent: bool = False
+
+
+class HostEnrollResponse(BaseModel):
+    personId: str
+    displayName: str
+    tier: int
+
+
+class TierRequest(BaseModel):
+    """`POST …/people/{personId}/tier` (spec 11 §6) — promote/demote one person. Audited."""
+
+    tier: int = Field(ge=0, le=3)
+
+
 class EnrollOutcome(str, Enum):
     #: uid linked to a person immediately. No enrollment or re-claim path returns this any more (see
     #: the module docstring); it stays on the wire because the guest PWA still branches on it and

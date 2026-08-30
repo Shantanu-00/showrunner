@@ -74,7 +74,9 @@ block is present, use it for the "where" — a guest who is told the lawn or the
 there, one told only what to shoot has to guess. Never name a place that block does not name. basePoints {BOUNTY_POINTS_MIN}-{BOUNTY_POINTS_MAX}
 (it is multiplied by the person's vipWeight and clamped, so do not pre-multiply). expiresInMin around
 {BOUNTY_DEFAULT_TTL_MINUTES} for something happening now, longer for a stage that runs a while.
-audience: nearStage for anything a guest must be in the room for, all for a whole-event ask.
+audience: nearStage for anything a guest must be in the room for, all for a whole-event ask,
+assignee for a personal ask (a "group" gap — get everyone in one frame — works best as one; the
+system picks WHO deterministically, never you, and re-broadcasts if they don't respond).
 Hard limits: at most {DIRECTOR_MAX_NEW_BOUNTIES_PER_TICK} new bounties per tick and {DIRECTOR_MAX_ACTIVE_BOUNTIES} open at once. Spend them on the highest
 gaps in the ranked list; a gap for a tier-0 person outranks a tier-3 gap of equal severity.
 

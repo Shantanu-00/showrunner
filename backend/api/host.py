@@ -747,13 +747,43 @@ async def update_profile(
     eventId: str = Path(min_length=1, max_length=128),
     principal: Principal = Depends(caller),
 ) -> dict[str, Any]:
-    """Spec 11 §2's template picker + editable dials — draft-only, same discipline as the
-    itinerary review below: an already-live event's cultural context is not something a
-    mid-event edit should silently change under the perception pipeline's feet."""
+    """Spec 11 §2's presets + editable dials, with spec 13's mutability split: the **sensitivity
+    dials alone** are editable while the event runs — they are ceilings (a dial can only hold a
+    photo back, never release one already judged; Guardian verdicts are stored per-photo, so a
+    loosened dial affects only future photos), and a host tightening one mid-event is a safety
+    action the console must not refuse. Everything else on the profile (glossary, moment
+    templates, topology, preset swaps) stays draft-only, the original discipline: that text rides
+    into per-photo prompts and bounty arming, and a live event's cultural context is not
+    something a mid-event edit should silently change under the perception pipeline's feet."""
     _require_host(principal, eventId)
     event = _event_or_404(eventId)
     if event.get("status") != EventStatus.DRAFT.value:
-        raise errors.conflict("NOT_DRAFT", "the event type profile can only be set before Go Live")
+        dials_only = (
+            req.sensitivityProfile is not None
+            and req.vipTopology is None
+            and req.culturalGlossary is None
+            and req.requiredMomentsTemplate is None
+        )
+        if not dials_only:
+            raise errors.conflict(
+                "NOT_DRAFT",
+                "after Go Live only the sensitivity dials may change; the glossary, required "
+                "moments and topology are fixed",
+            )
+        profile = dict(event.get("eventTypeProfile") or {})
+        profile["sensitivityProfile"] = req.sensitivityProfile.model_dump(mode="json")
+        fs.event_ref(eventId).update({"eventTypeProfile": profile})
+        fs.ops_alert(
+            eventId,
+            "sensitivity_dials_changed",
+            "host changed the sensitivity dials mid-event (applies to future photos only)",
+            severity="info",
+            resolved=True,
+            by=principal.uid,
+            dials=profile["sensitivityProfile"],
+        )
+        log.info("profile_dials_updated", event_id=eventId, by=principal.uid)
+        return {"eventTypeProfile": profile}
 
     # `culturalGlossary` and `requiredMomentsTemplate[].label` are the two pieces of *this* endpoint's
     # free text that ride straight into a per-photo prompt: `workers/curate/agent.py::event_context`

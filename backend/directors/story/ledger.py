@@ -26,6 +26,7 @@ Four properties worth checking against the code:
 from __future__ import annotations
 
 import datetime as dt
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,6 +42,7 @@ from shared.settings import (
     DRIFT_MIN_VISUAL,
     DRIFT_SAMPLE_SIZE,
     DRIFT_VOTE_FRACTION,
+    GROUP_SHOT_MIN_FRACTION,
     NEAR_STAGE_WINDOW_MINUTES,
     STAGE_GAP_GRACE_MINUTES,
     UPLOAD_VELOCITY_WINDOW_MINUTES,
@@ -201,6 +203,9 @@ class Ledger:
     #: stage. Computed by `director.py` from the session state; `act._decide_advance` reads it as
     #: the evidence half of spec 13's advance rule. 0 when there is no signal this tick.
     drift_streak: int = 0
+    #: `Event.expectedParticipants` — people, not sessions (spec 13 §1). `None` disables the
+    #: group-coverage gap entirely.
+    expected_participants: int | None = None
     stages: list[StageView] = field(default_factory=list)
     people: list[Person] = field(default_factory=list)
     gaps: list[Gap] = field(default_factory=list)
@@ -366,6 +371,9 @@ def build(
         active_source=active_source,
         scheduled_stage_id=scheduled_id,
         calendar=EventCalendar.of(event),
+        expected_participants=(
+            int(event["expectedParticipants"]) if event.get("expectedParticipants") else None
+        ),
         stages=stages,
         people=people,
         bounties=bounties,
@@ -509,6 +517,10 @@ def _gaps(ledger: Ledger, shards: dict[str, coverage.StageCoverage], now: dt.dat
                 )
             )
 
+    group = _group_gap(ledger, shards, now)
+    if group is not None:
+        gaps.append(group)
+
     active = next((s for s in ledger.stages if s.stage_id == ledger.active_stage_id), None)
     if active is not None:
         appearances = (shards.get(active.stage_id) or coverage.StageCoverage(active.stage_id)).people
@@ -533,6 +545,74 @@ def _gaps(ledger: Ledger, shards: dict[str, coverage.StageCoverage], now: dt.dat
 
     gaps.sort(key=lambda g: g.sort_key, reverse=True)
     return gaps
+
+
+def _group_gap(
+    ledger: Ledger, shards: dict[str, coverage.StageCoverage], now: dt.datetime
+) -> Gap | None:
+    """Spec 13 §5: one gap per day for "nobody has a frame with (most of) the whole group in it".
+
+    Per *day*, not per stage — "the group photo of the day" is the human unit of this ask, and a
+    per-stage version would flood a 5-segment day with five identical requests. The evidence is
+    the coverage shards' people-count histogram; the threshold is derived at read time from
+    `expectedParticipants` (host-editable) at `GROUP_SHOT_MIN_FRACTION`, floored conservatively
+    (`frames_with_at_least` counts bucket lower bounds, so coverage is understated, never
+    overstated). Severity ramps across the day's scheduled span: at breakfast there is a whole
+    day left to get it; at the last dinner it is now or never.
+    """
+    expected = ledger.expected_participants
+    if not expected:
+        return None
+    threshold = math.ceil(expected * GROUP_SHOT_MIN_FRACTION)
+    if threshold < 2:
+        return None  # a "group" of one is every photo of them
+
+    today = ledger.calendar.day_index(now) if ledger.calendar.dated else None
+
+    def in_scope(stage: StageView) -> bool:
+        if today is None:
+            return True  # undated event: the whole event is one "day"
+        return stage.starts_at is not None and ledger.calendar.day_index(stage.starts_at) == today
+
+    scoped = [s for s in ledger.stages if in_scope(s) and s.has_started(now)]
+    if not scoped:
+        return None
+
+    shard_ids = [s.stage_id for s in scoped] + ([coverage.UNSTAGED] if today is None else [])
+    if any(
+        (shards.get(sid) or coverage.StageCoverage(sid)).frames_with_at_least(threshold) > 0
+        for sid in shard_ids
+    ):
+        return None
+
+    # Severity ramps over the day's scheduled span (0.5 → 1.5); 1.0 flat when unknowable.
+    starts = [s.starts_at for s in scoped if s.starts_at is not None]
+    ends = [s.ends_at for s in ledger.stages if in_scope(s) and s.ends_at is not None]
+    if starts and ends and max(ends) > min(starts):
+        progress = (now - min(starts)) / (max(ends) - min(starts))
+        severity = 0.5 + min(1.0, max(0.0, progress))
+    else:
+        severity = 1.0
+
+    # Anchored to the active stage when it is in scope (that is where the group is standing),
+    # else the latest started one — the anchor is what a bounty's targetStage may copy.
+    anchor = next((s for s in scoped if s.stage_id == ledger.active_stage_id), None) or max(
+        scoped, key=lambda s: s.starts_at or dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+    )
+    scope_word = "today" if today is not None else "yet"
+    return Gap(
+        kind="group",
+        stage_id=anchor.stage_id,
+        stage_label=anchor.label,
+        label=(
+            f"no frame holds the whole group {scope_word} "
+            f"(need ≥{threshold} of the {expected} people in one photo)"
+        ),
+        severity=min(1.5, severity),
+        vip_weight=1.0,
+        photo_count=0,
+        moment_id="group_shot",
+    )
 
 
 def _drift(event_id: str, active_stage_id: str | None) -> Drift:

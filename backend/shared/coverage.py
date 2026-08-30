@@ -47,6 +47,24 @@ UNSTAGED = "_unstaged"
 #: moment`). Reused rather than re-thresholded so "a good photo" means one thing in this system.
 _HIGHLIGHT_FIELD = "curator"
 
+#: The people-count histogram's buckets (spec 13 §5), keyed by their inclusive lower bound. Coarse
+#: on purpose: `peopleCountEstimate` drifts ±1 on group shots (the B2-S4 resolution finding), so
+#: buckets that a ±1 error cannot cross at the sizes that matter are what keep the histogram
+#: honest. Order matters only to `bucket_for`.
+PEOPLE_BUCKET_FLOORS: dict[str, int] = {"p1": 1, "p2_3": 2, "p4_6": 4, "p7_12": 7, "p13up": 13}
+
+
+def bucket_for(people_count: int) -> str | None:
+    """The histogram bucket for one frame's estimated head-count. None for zero/no estimate —
+    a landscape is not a 0-person group shot, it is not a people observation at all."""
+    if people_count <= 0:
+        return None
+    chosen = None
+    for bucket, floor in PEOPLE_BUCKET_FLOORS.items():
+        if people_count >= floor:
+            chosen = bucket
+    return chosen
+
 
 @dataclass
 class StageCoverage:
@@ -67,10 +85,28 @@ class StageCoverage:
     #: `sceneSetting → count` (spec 03 §5.1). The observed physical setting of this stage's photos —
     #: the world model's hard layer, and the only thing any decision is allowed to read.
     scenes: dict[str, int] = field(default_factory=dict)
+    #: People-count histogram from `curator.peopleCountEstimate` (spec 13 §5): bucket → count.
+    #: A histogram rather than a stored `groupShotCount` because the group threshold depends on
+    #: `expectedParticipants`, which the host can edit after the fact — thresholds apply at read,
+    #: and this module's own rule ("write-only, no read-modify-write on the hot path") means a
+    #: max could not be maintained here anyway.
+    people_buckets: dict[str, int] = field(default_factory=dict)
 
     @property
     def mean_aesthetic(self) -> float:
         return (self.aesthetic_sum / self.photo_count) if self.photo_count else 0.0
+
+    def frames_with_at_least(self, people: int) -> int:
+        """How many of this stage's photos hold at least `people` faces-worth of humans, by the
+        Curator's estimate. Bucket lower bounds are what make this answerable from a histogram:
+        a `p4_6` frame provably holds ≥4, so a threshold of 4 counts it and a threshold of 5
+        does not — the conservative direction for a gap detector (understate coverage, never
+        overstate it)."""
+        return sum(
+            count
+            for bucket, count in self.people_buckets.items()
+            if PEOPLE_BUCKET_FLOORS.get(bucket, 0) >= people and count > 0
+        )
 
     @property
     def dominant_scene(self) -> str | None:
@@ -154,6 +190,12 @@ def bump(
         if people:
             updates["people"] = people
 
+        # The people-count histogram (spec 13 §5) — same exactly-once property as every other
+        # counter here, inherited from the indexing transition for free.
+        bucket = bucket_for(int(curator.get("peopleCountEstimate") or 0))
+        if bucket:
+            updates["peopleBuckets"] = {bucket: firestore.Increment(1)}
+
         transaction.set(fs.coverage_stage_shard_ref(event_id, stage_id), updates, merge=True)
         return stage_id
     except Exception as exc:  # noqa: BLE001 - see docstring: never fail the indexing transaction
@@ -183,6 +225,9 @@ def read(event_id: str) -> dict[str, StageCoverage]:
             moments={str(k): int(v or 0) for k, v in (doc.get("moments") or {}).items()},
             people={str(k): int(v or 0) for k, v in (doc.get("people") or {}).items()},
             scenes={str(k): int(v or 0) for k, v in (doc.get("scenes") or {}).items()},
+            people_buckets={
+                str(k): int(v or 0) for k, v in (doc.get("peopleBuckets") or {}).items()
+            },
         )
     return out
 

@@ -46,7 +46,11 @@ from schemas.bounty import (
 )
 from schemas.director import ActionType, DirectorAction, DirectorPlan
 from shared import fs, log
+from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 from shared.settings import (
+    BOUNTY_ASSIGN_TIMEOUT_MINUTES,
     BOUNTY_DEFAULT_BASE_POINTS,
     BOUNTY_DEFAULT_TTL_MINUTES,
     BOUNTY_MAX_TTL_MINUTES,
@@ -56,6 +60,7 @@ from shared.settings import (
     DIRECTOR_MAX_ACTIVE_BOUNTIES,
     DIRECTOR_MAX_NEW_BOUNTIES_PER_TICK,
     DRIFT_ADVANCE_TICKS,
+    NEAR_STAGE_WINDOW_MINUTES,
     STAGE_ADVANCE_MIN_CONFIDENCE,
     STAGE_ADVANCE_WINDOW_MINUTES,
 )
@@ -445,6 +450,65 @@ class Outcome:
         }
 
 
+# ---------------------------------------------------------------- assignment (spec 13 §6)
+
+
+def resolve_assignee(event_id: str, now: dt.datetime | None = None) -> str | None:
+    """The one place a bounty's assignee is ever chosen, and it is arithmetic: the most recently
+    active member (seen inside the nearStage window, with at least one upload — someone provably
+    holding a camera they use). The model proposes `audience: assignee`; it never proposes a uid.
+    Returns None when nobody qualifies, and the caller falls back to a broadcast audience —
+    an assignment to a ghost is worse than no assignment.
+    """
+    moment = now or dt.datetime.now(dt.timezone.utc)
+    since = moment - dt.timedelta(minutes=NEAR_STAGE_WINDOW_MINUTES)
+    try:
+        query = (
+            fs.event_ref(event_id)
+            .collection("guests")
+            .where(filter=FieldFilter("lastSeenAt", ">=", since))
+            .order_by("lastSeenAt", direction=firestore.Query.DESCENDING)
+            .limit(10)
+        )
+        for snap in query.stream():
+            guest = snap.to_dict() or {}
+            if guest.get("banned"):
+                continue
+            if int(guest.get("uploads") or 0) >= 1:
+                return snap.id
+    except Exception as exc:  # noqa: BLE001 - no assignee is a fine answer; a failed tick is not
+        log.warn("assignee_resolve_failed", event_id=event_id, err=str(exc))
+    return None
+
+
+def release_stale_assignments(event_id: str, now: dt.datetime | None = None) -> list[str]:
+    """The deterministic half of the assignment lifecycle: an assignment unanswered past
+    `assignmentTimeoutAt` flips to a broadcast (`audience: all`, assignee cleared). Runs with the
+    Expire step — no model involved, per spec 13 §6's rule that targeting is delivery routing and
+    the timeout is what keeps one person ignoring their phone from costing the event the photo."""
+    moment = now or dt.datetime.now(dt.timezone.utc)
+    released: list[str] = []
+    for snap in fs.bounties_col(event_id).stream():
+        doc = snap.to_dict() or {}
+        if str(doc.get("status") or "") not in OPEN_STATUSES:
+            continue
+        if doc.get("audience") != BountyAudience.ASSIGNEE.value:
+            continue
+        timeout = doc.get("assignmentTimeoutAt")
+        if not isinstance(timeout, dt.datetime) or timeout > moment:
+            continue
+        snap.reference.update(
+            {
+                "audience": BountyAudience.ALL.value,
+                "assigneeUid": None,
+                "assignmentReleasedAt": fs.SERVER_TIMESTAMP,
+            }
+        )
+        released.append(snap.id)
+        log.line("bounty", event_id=event_id, bounty=snap.id, outcome="assignment_released")
+    return released
+
+
 # ---------------------------------------------------------------- expiry
 
 
@@ -675,6 +739,17 @@ def _execute(event_id: str, decision: Decision, *, tick_id: str, outcome: Outcom
         return
 
     if kind is ActionType.ISSUE_BOUNTY:
+        # Spec 13 §6: the model may ask for `audience: assignee` (and a group-shot bounty asks by
+        # default — a personal "get all four of you in one frame" beats shouting it at the room),
+        # but the *person* is always resolved here, deterministically. Nobody active → broadcast.
+        audience, assignee = decision.audience, None
+        if audience is BountyAudience.ASSIGNEE or decision.moment == "group_shot":
+            assignee = resolve_assignee(event_id)
+            audience = BountyAudience.ASSIGNEE if assignee else (
+                decision.audience
+                if decision.audience is not BountyAudience.ASSIGNEE
+                else BountyAudience.ALL
+            )
         outcome.issued.append(
             _write_bounty(
                 event_id,
@@ -687,8 +762,9 @@ def _execute(event_id: str, decision: Decision, *, tick_id: str, outcome: Outcom
                 base_points=decision.base_points,
                 vip_weight=decision.person.weight if decision.person else 1.0,
                 ttl_minutes=decision.ttl_minutes,
-                audience=decision.audience,
+                audience=audience,
                 source="reconciliation",
+                assignee_uid=assignee,
             )
         )
         return
@@ -820,6 +896,7 @@ def _write_bounty(
     ttl_minutes: int,
     audience: BountyAudience,
     source: str,
+    assignee_uid: str | None = None,
 ) -> dict[str, Any]:
     """Write one bounty document. Points are scaled and clamped by `points_for`, exactly once."""
     now = dt.datetime.now(dt.timezone.utc)
@@ -844,12 +921,24 @@ def _write_bounty(
         source=source,
         tickId=tick_id,
         expiresAt=now + dt.timedelta(minutes=ttl),
+        assigneeUid=assignee_uid,
+        assignedAt=now if assignee_uid else None,
+        assignmentTimeoutAt=(
+            now + dt.timedelta(minutes=BOUNTY_ASSIGN_TIMEOUT_MINUTES) if assignee_uid else None
+        ),
     )
     # `by_alias` so the document carries spec 05 §3's `copy`, which is what the PWA banner and the
-    # kiosk poster read — the model's own field name never reaches Firestore.
-    payload = bounty.model_dump(mode="json", by_alias=True, exclude={"createdAt", "expiresAt"})
+    # kiosk poster read — the model's own field name never reaches Firestore. Every datetime is
+    # excluded from the json dump and set as a real value, or the Expire step could never compare it.
+    payload = bounty.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude={"createdAt", "expiresAt", "assignedAt", "assignmentTimeoutAt"},
+    )
     payload["createdAt"] = fs.SERVER_TIMESTAMP
     payload["expiresAt"] = bounty.expiresAt
+    payload["assignedAt"] = bounty.assignedAt
+    payload["assignmentTimeoutAt"] = bounty.assignmentTimeoutAt
     fs.bounty_ref(event_id, bounty_id).set(payload)
 
     log.line(

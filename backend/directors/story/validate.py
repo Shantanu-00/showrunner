@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import datetime as dt
 import functools
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,9 +49,14 @@ from shared import fs, log
 from shared.settings import (
     BOUNTY_MATCH_CONFIDENCE,
     BOUNTY_PARTIAL_FRACTION,
+    GROUP_SHOT_MIN_FRACTION,
     GUEST_DAILY_POINTS_CAP,
     settings,
 )
+
+#: The moment id spec 13 §5's group gap emits, and the marker this validator keys its
+#: deterministic head-count floor on. One string, shared by the gap, the bounty and the check.
+GROUP_MOMENT_ID = "group_shot"
 
 STAGE = "bounty_check"
 
@@ -120,8 +126,12 @@ def checker_agent() -> LlmAgent:
 # ---------------------------------------------------------------- the pass
 
 
-async def settle(event_id: str, *, tick_id: str) -> Settled:
-    """Validate every bounty submission that has finished the pipeline since the last tick."""
+async def settle(event_id: str, *, tick_id: str, event: dict[str, Any] | None = None) -> Settled:
+    """Validate every bounty submission that has finished the pipeline since the last tick.
+
+    `event` (the document the tick already holds) is only read for `expectedParticipants` — the
+    group-shot floor's threshold input. Optional so every existing caller keeps working; without
+    it a group bounty degrades to the ordinary moment check."""
     settled = Settled()
     pending = _pending(event_id)
     if not pending:
@@ -138,7 +148,7 @@ async def settle(event_id: str, *, tick_id: str) -> Settled:
             settled.rejected.append(media_id)
             continue
 
-        verdict, score, reason, usage = await _judge(event_id, media, bounty)
+        verdict, score, reason, usage = await _judge(event_id, media, bounty, event=event)
         settled.usage = settled.usage + usage
         settled.checked += 1
 
@@ -209,7 +219,11 @@ def _bounty(event_id: str, bounty_id: str) -> dict[str, Any] | None:
 
 
 async def _judge(
-    event_id: str, media: dict[str, Any], bounty: dict[str, Any]
+    event_id: str,
+    media: dict[str, Any],
+    bounty: dict[str, Any],
+    *,
+    event: dict[str, Any] | None = None,
 ) -> tuple[SubmissionVerdict, float, str, gemini.ModelUsage]:
     """Deterministic checks first, then — only if they pass — the one contextual question."""
     curator = media.get("curator") or {}
@@ -239,6 +253,26 @@ async def _judge(
         )
 
     target_moment = bounty.get("targetMoment")
+    expected = int((event or {}).get("expectedParticipants") or 0)
+    if target_moment == GROUP_MOMENT_ID and expected:
+        # Spec 13 §5's floor, and for a group bounty the floor IS the criterion: "at least
+        # threshold people in one frame" is exactly what was asked, it is answered by the
+        # Curator's stored estimate, and no model call could add anything — a language model
+        # cannot tell this group from any other N people, because identity was never its to judge.
+        threshold = math.ceil(expected * GROUP_SHOT_MIN_FRACTION)
+        count = int(curator.get("peopleCountEstimate") or 0)
+        if count < threshold:
+            return (
+                SubmissionVerdict.REJECTED,
+                0.0,
+                f"~{count} people in frame; the group shot needs at least {threshold}",
+                gemini.ModelUsage(),
+            )
+        verdict = (
+            SubmissionVerdict.FULFILLED if aesthetic >= QUALITY_FLOOR else SubmissionVerdict.PARTIAL
+        )
+        return verdict, 1.0, f"~{count} people in one frame (needed {threshold})", gemini.ModelUsage()
+
     tags = [str(t) for t in (curator.get("momentTags") or [])]
     if target_moment and target_moment in tags:
         # The Curator already tagged it with the exact requested momentId (its instruction tells it to
