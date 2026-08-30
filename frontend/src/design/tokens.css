@@ -160,20 +160,33 @@
   --accent-glow: var(--electric-indigo-glow);
 }
 
-/* Stage-specific accents */
-[data-theme="wedding_hindu"][data-stage="haldi"] {
-  --accent: #eab308;
-  --accent-glow: rgba(234, 179, 8, 0.3);
+/* Spec 12 §3 — kiosk stage-of-the-moment accents, event-generic (supersedes the old
+   wedding_hindu-only `[data-theme][data-stage]` accents). Keyed on `data-stage-theme`, which
+   `KioskShow` sets from the kiosk playlist's free-string `theme` field, mapped through a small
+   legacy table for events seeded before the 8-name palette existed (see
+   `components/kiosk/KioskShow.tsx`). Each block only retunes `--accent`, same as the accents it
+   replaces, so nothing else about the theme changes underneath it. */
+[data-stage-theme="gold"] {
+  --accent: #d4af6a; /* warm ceremonial gold — the default; ritual, golden hour */
 }
-[data-theme="wedding_hindu"][data-stage="sangeet"] {
-  --accent: #a855f7;
-  --accent-glow: rgba(168, 85, 247, 0.3);
+[data-stage-theme="violet"] {
+  --accent: #a66bef; /* electric violet — nightlife, after-dark energy */
 }
-[data-theme="wedding_hindu"][data-stage="pheras"] {
-  --accent: #e11d48;
-  --accent-glow: rgba(225, 29, 72, 0.3);
+[data-stage-theme="crimson"] {
+  --accent: #cf5468; /* deep rose crimson — high romance and intensity */
 }
-[data-theme="wedding_hindu"][data-stage="reception"] {
-  --accent: #d4af6a;
-  --accent-glow: rgba(212, 175, 106, 0.3);
+[data-stage-theme="ocean"] {
+  --accent: #5fb8db; /* cinematic teal-blue — coastal and water settings, cool calm */
+}
+[data-stage-theme="forest"] {
+  --accent: #5fb98a; /* deep jade green — outdoor and nature settings, grounded */
+}
+[data-stage-theme="neon"] {
+  --accent: #4debc4; /* acid cyan-mint — clubs, afterparties, high-energy nightlife */
+}
+[data-stage-theme="slate"] {
+  --accent: #9fb0c2; /* cool mission-control grey-blue — corporate, understated */
+}
+[data-stage-theme="sunrise"] {
+  --accent: #f0975c; /* coral-gold dawn — morning departures, sunrise sessions */
 }

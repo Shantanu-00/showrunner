@@ -27,7 +27,7 @@ export function PublicGallery({
   explainMode,
 }: {
   eventId: string;
-  stages: Array<{ stageId: string; label: string }>;
+  stages: Array<{ stageId: string; label: string; day?: number | null }>;
   activeStageId?: string | null;
   explainMode: boolean;
 }) {

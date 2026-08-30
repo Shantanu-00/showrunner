@@ -22,7 +22,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      data-theme="wedding_hindu"
+      data-theme="custom"
       className={`${fraunces.variable} ${inter.variable} ${jetbrainsMono.variable}`}
     >
       <body className="font-[family-name:var(--font-ui)] antialiased">{children}</body>

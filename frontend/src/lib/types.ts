@@ -195,7 +195,13 @@ export interface EventPublicInfo {
   timezone?: string;
   activeStage?: string | null;
   templateId?: string;
-  stages?: Array<{ stageId: string; label: string; theme?: string | null }>;
+  /** Local dates ("YYYY-MM-DD") in `timezone`, for multi-day (timeline-first) events. Both are
+   * `null` on undated events — see `lib/eventTime.ts`. */
+  startsOn?: string | null;
+  endsOn?: string | null;
+  /** `day` is a 1-based day index (server-computed, spec: timeline-first events), `null` on
+   * undated events. */
+  stages?: Array<{ stageId: string; label: string; theme?: string | null; day?: number | null }>;
   uploadsOpen?: boolean;
   publicFrozen?: boolean;
   serverTime?: string;
