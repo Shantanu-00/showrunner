@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import requests  # noqa: E402
 
+from shared.settings import settings  # noqa: E402
 from smoke_faces import mint_host_token  # noqa: E402
 from smoke_upload import sign_in_anonymously  # noqa: E402
 
@@ -159,6 +160,7 @@ def main() -> int:
     args = parser.parse_args()
     api = args.api.rstrip("/")
 
+    settings()  # side effect: loads repo-root .env into os.environ for local runs
     api_key = os.environ.get("NEXT_PUBLIC_FIREBASE_API_KEY", "")
     if not api_key:
         fail("no NEXT_PUBLIC_FIREBASE_API_KEY — run ./deploy/bootstrap.sh")
@@ -289,7 +291,7 @@ def main() -> int:
     ok("an injection stage label is deflected at the one writer of the stage table")
 
     # --- 5. what a guest sees: day indices, never stage timing
-    resp = requests.get(f"{api}/v1/events/{event_id}/public", timeout=30)
+    resp = requests.get(f"{api}/v1/events/{event_id}/public", headers=host, timeout=30)
     public = resp.json()
     days = {s["stageId"]: s.get("day") for s in public.get("stages") or []}
     if days.get("day1_shibuya") != 1 or days.get("day4_viewpoint") != 4:
@@ -309,7 +311,7 @@ def main() -> int:
     )
     if resp.status_code != 200:
         fail(f"details update failed ({resp.status_code}): {resp.text[:300]}")
-    public = requests.get(f"{api}/v1/events/{event_id}/public", timeout=30).json()
+    public = requests.get(f"{api}/v1/events/{event_id}/public", headers=host, timeout=30).json()
     shifted = {s["stageId"]: s.get("day") for s in public.get("stages") or []}
     if shifted.get("day4_viewpoint") != 3:
         fail(f"a corrected start date did not move the derived day indices: {shifted}")
