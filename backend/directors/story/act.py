@@ -55,6 +55,7 @@ from shared.settings import (
     BOUNTY_POINTS_MIN,
     DIRECTOR_MAX_ACTIVE_BOUNTIES,
     DIRECTOR_MAX_NEW_BOUNTIES_PER_TICK,
+    DRIFT_ADVANCE_TICKS,
     STAGE_ADVANCE_MIN_CONFIDENCE,
     STAGE_ADVANCE_WINDOW_MINUTES,
 )
@@ -300,19 +301,43 @@ def _decide_escalate(
     return Decision(action.type, True, bounty_id=bounty_id, escalated_points=raised)
 
 
+def _advance_window_minutes(led: "ledger_mod.Ledger", target: "ledger_mod.StageView") -> float:
+    """The schedule half of the advance rule, sized to the schedule's own grain (spec 05 §1, spec 13).
+
+    `max(45, 0.25 × minutes to the nearest neighbouring stage)`: a wedding scheduled in 30-minute
+    beats keeps the spec's literal ±45, while a trip whose segments sit four hours apart gets ±60 —
+    a timetable that loose was never a ±45-minute instrument, and holding it to one turns every
+    honest advance into a suggestion card.
+    """
+    if target.starts_at is None:
+        return float(STAGE_ADVANCE_WINDOW_MINUTES)
+    neighbours = [
+        abs((target.starts_at - s.starts_at).total_seconds()) / 60.0
+        for s in led.stages
+        if s.stage_id != target.stage_id and s.starts_at is not None
+    ]
+    if not neighbours:
+        return float(STAGE_ADVANCE_WINDOW_MINUTES)
+    return max(float(STAGE_ADVANCE_WINDOW_MINUTES), 0.25 * min(neighbours))
+
+
 def _decide_advance(
     action: DirectorAction,
     led: "ledger_mod.Ledger",
     stage_ids: set[str],
     now: dt.datetime,
 ) -> Decision:
-    """Spec 05 §1's stage guardrail.
+    """Spec 05 §1's stage guardrail, with spec 13's evidence path beside it.
 
-    Two conditions, both required, and the second is the one that matters: a model can be confident and
-    wrong, but it cannot move a stage the *timetable* disagrees with by more than 45 minutes. An
-    accepted decision with `auto_apply=False` is a host-console suggestion card, which is a good
-    outcome and not a failure — and while the host holds the stage manually, a suggestion is the only
-    thing the director may ever produce (spec 05 §2: "host override always wins instantly").
+    Confidence is always required, and then **either** leg suffices: the *schedule* leg (the target's
+    window agrees with now, within `_advance_window_minutes`) or the *evidence* leg (the drift signal
+    has named this same target for `DRIFT_ADVANCE_TICKS` consecutive ticks — the photos themselves
+    say the event has moved, and the photos are the ground truth the schedule only anticipates). One
+    tick's drift is deliberately not enough: a burst of forwarded photos from this morning can win a
+    single tick, but it cannot keep winning against fresh uploads. An accepted decision with
+    `auto_apply=False` is a host-console suggestion card, which is a good outcome and not a failure —
+    and while the host holds the stage manually, a suggestion is the only thing the director may ever
+    produce (spec 05 §2: "host override always wins instantly").
     """
     target = (action.toStageId or "").strip()
     if target not in stage_ids:
@@ -323,15 +348,25 @@ def _decide_advance(
     stage = next((s for s in led.stages if s.stage_id == target), None)
     confidence = float(action.confidence or 0.0)
     window_ok = False
+    window_minutes = float(STAGE_ADVANCE_WINDOW_MINUTES)
     if stage is not None and stage.starts_at is not None:
-        window_ok = abs((now - stage.starts_at).total_seconds()) / 60.0 <= STAGE_ADVANCE_WINDOW_MINUTES
+        window_minutes = _advance_window_minutes(led, stage)
+        window_ok = abs((now - stage.starts_at).total_seconds()) / 60.0 <= window_minutes
+    evidence_ok = (
+        led.drift.signal
+        and led.drift.top_stage_id == target
+        and led.drift_streak >= DRIFT_ADVANCE_TICKS
+    )
 
     if led.active_source == "override":
         why = "the host is holding the stage manually"
     elif confidence < STAGE_ADVANCE_MIN_CONFIDENCE:
         why = f"confidence {confidence:.2f} < {STAGE_ADVANCE_MIN_CONFIDENCE}"
-    elif not window_ok:
-        why = f"the schedule puts {target} more than {STAGE_ADVANCE_WINDOW_MINUTES} min from now"
+    elif not (window_ok or evidence_ok):
+        why = (
+            f"the schedule puts {target} more than {window_minutes:.0f} min from now, and the drift "
+            f"signal has not named it {DRIFT_ADVANCE_TICKS} ticks running"
+        )
     else:
         why = ""
 
@@ -452,6 +487,52 @@ def expire_bounties(
         )
         log.line("bounty", event_id=event_id, bounty=snap.id, outcome="expired")
     return closed, gaps
+
+
+# ---------------------------------------------------------------- lapse archiving (spec 13)
+
+
+def archive_lapsed_stages(
+    led: "ledger_mod.Ledger", state: session_mod.DirectorState
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Fold each newly-lapsed stage's uncovered moments into permanent-gap records, exactly once.
+
+    The other half of the ledger's grace cutoff: `_gaps` stops *reporting* a lapsed stage so Day 1
+    cannot crowd Day 4 out of the prompt, and this step makes sure what it stops reporting is not
+    forgotten — the records land beside the expired-bounty ones in `directorState.permanentGaps`,
+    which is what the wrap report reads to be honest with the host. Pure (no I/O): the session
+    record's writer persists both halves of the return value.
+    """
+    already = set(state.archived_stage_ids)
+    archived: list[str] = []
+    gaps: list[dict[str, Any]] = []
+    for stage in led.stages:
+        if stage.stage_id in already or not stage.has_lapsed(led.now):
+            continue
+        archived.append(stage.stage_id)  # covered stages archive too — "checked" is worth remembering
+        for moment_id, label, _tier_weight in stage.required_moments:
+            count = stage.moment_counts.get(moment_id, 0)
+            if count >= ledger_mod.MOMENT_TARGET_PHOTOS:
+                continue
+            gaps.append(
+                {
+                    "kind": "lapsed_stage",
+                    "targetStage": stage.stage_id,
+                    "stageLabel": stage.label,
+                    "targetMoment": moment_id,
+                    "title": label,
+                    "photos": count,
+                    "lapsedAt": led.now,
+                }
+            )
+    if archived:
+        log.line(
+            "director_lapsed",
+            event_id=led.event_id,
+            stages=",".join(archived),
+            uncovered=len(gaps),
+        )
+    return archived, gaps
 
 
 # ---------------------------------------------------------------- arming (spec 05 §2)

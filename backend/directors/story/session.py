@@ -54,9 +54,13 @@ class TickSummary:
     fulfilled: int = 0
     expired: int = 0
     stageId: str | None = None
+    #: The tick's event-local stamp ("Day 2 Tue 14:05"), computed at record time by the calendar
+    #: (spec 13) — stored, because a window of ten lines spanning three days is unreadable as bare
+    #: %H:%M, and the model's own history is the one place it can learn that a day has passed.
+    day: str = ""
 
     def as_line(self) -> str:
-        when = self.at.strftime("%H:%M") if isinstance(self.at, dt.datetime) else "--:--"
+        when = self.day or (self.at.strftime("%H:%M") if isinstance(self.at, dt.datetime) else "--:--")
         acts = ", ".join(self.actions) if self.actions else "NO_OP"
         return f"[{when} stage={self.stageId or '-'}] {acts} :: {self.assessment or '(no note)'}"
 
@@ -70,6 +74,7 @@ class TickSummary:
             "fulfilled": self.fulfilled,
             "expired": self.expired,
             "stageId": self.stageId,
+            "day": self.day,
         }
 
     @classmethod
@@ -83,6 +88,7 @@ class TickSummary:
             fulfilled=int(doc.get("fulfilled") or 0),
             expired=int(doc.get("expired") or 0),
             stageId=doc.get("stageId"),
+            day=str(doc.get("day") or ""),
         )
 
 
@@ -97,6 +103,15 @@ class DirectorState:
     ticks: list[TickSummary] = field(default_factory=list)
     commissions: list[dict[str, Any]] = field(default_factory=list)
     permanent_gaps: list[dict[str, Any]] = field(default_factory=list)
+    #: The drift signal's target on the last tick and how many consecutive ticks it has held —
+    #: the evidence half of spec 13's advance rule (`act._decide_advance`). State, not memory:
+    #: two ticks have to agree, so one of them has to remember the other.
+    drift_stage_id: str | None = None
+    drift_streak: int = 0
+    #: Stages whose lapse has already been archived into `permanent_gaps` — the "exactly once" in
+    #: the gap lifecycle. Ids, not records: the records live in `permanent_gaps` beside the
+    #: expired-bounty ones the wrap report reads.
+    archived_stage_ids: list[str] = field(default_factory=list)
 
     def narrative(self) -> str:
         """What the REASON step reads as its own memory: the compaction, then the window."""
@@ -119,6 +134,9 @@ def load(event_id: str) -> DirectorState:
         ticks=[TickSummary.from_doc(t) for t in (doc.get("ticks") or []) if isinstance(t, dict)],
         commissions=[c for c in (doc.get("commissions") or []) if isinstance(c, dict)],
         permanent_gaps=[g for g in (doc.get("permanentGaps") or []) if isinstance(g, dict)],
+        drift_stage_id=doc.get("driftStageId"),
+        drift_streak=int(doc.get("driftStreak") or 0),
+        archived_stage_ids=[str(s) for s in (doc.get("archivedStages") or [])],
     )
 
 
@@ -130,6 +148,8 @@ def record(
     stage_id: str | None,
     commissions: list[dict[str, Any]] | None = None,
     permanent_gaps: list[dict[str, Any]] | None = None,
+    drift: tuple[str | None, int] | None = None,
+    archived_stage_ids: list[str] | None = None,
 ) -> DirectorState:
     """Append this tick to the window, compact the overflow, and store it. Idempotent per tickId."""
     if state.last_tick_id == summary.tickId:
@@ -149,6 +169,11 @@ def record(
         state.commissions = (state.commissions + commissions)[-MAX_COMMISSIONS:]
     if permanent_gaps:
         state.permanent_gaps = (state.permanent_gaps + permanent_gaps)[-MAX_PERMANENT_GAPS:]
+    if drift is not None:
+        state.drift_stage_id, state.drift_streak = drift
+    if archived_stage_ids:
+        merged = [*state.archived_stage_ids, *archived_stage_ids]
+        state.archived_stage_ids = list(dict.fromkeys(merged))  # de-dup, order kept
 
     fs.director_state_ref(event_id).set(
         {
@@ -161,6 +186,9 @@ def record(
             "ticks": [t.to_doc() for t in state.ticks],
             "commissions": state.commissions,
             "permanentGaps": state.permanent_gaps,
+            "driftStageId": state.drift_stage_id,
+            "driftStreak": state.drift_streak,
+            "archivedStages": state.archived_stage_ids,
             "updatedAt": fs.SERVER_TIMESTAMP,
         },
         merge=True,
@@ -244,5 +272,8 @@ DOC_FIELDS = (
     "ticks",
     "commissions",
     "permanentGaps",
+    "driftStageId",
+    "driftStreak",
+    "archivedStages",
     "updatedAt",
 )

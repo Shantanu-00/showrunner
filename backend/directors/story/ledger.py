@@ -35,15 +35,18 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from schemas.bounty import OPEN_STATUSES, BountyStatus
 from schemas.common import MediaStatus
 from shared import coverage, fs, log
+from shared.eventtime import EventCalendar
 from shared.settings import (
     DEFAULT_TIER,
     DRIFT_MIN_VISUAL,
     DRIFT_SAMPLE_SIZE,
     DRIFT_VOTE_FRACTION,
     NEAR_STAGE_WINDOW_MINUTES,
+    STAGE_GAP_GRACE_MINUTES,
     UPLOAD_VELOCITY_WINDOW_MINUTES,
     VIP_WEIGHT_BY_TIER,
 )
+from shared.stages import resolve_active, scheduled_stage_id
 
 from . import session as session_mod
 
@@ -101,6 +104,14 @@ class StageView:
 
     def has_started(self, now: dt.datetime) -> bool:
         return self.starts_at is None or self.starts_at <= now
+
+    def has_lapsed(self, now: dt.datetime) -> bool:
+        """Past its window plus the grace period — its uncovered moments are history, not gaps.
+        An unscheduled or open-ended stage never lapses: with no `endsAt` there is no moment after
+        which asking stops making sense."""
+        if self.ends_at is None:
+            return False
+        return now > self.ends_at + dt.timedelta(minutes=STAGE_GAP_GRACE_MINUTES)
 
 
 @dataclass(frozen=True)
@@ -182,8 +193,14 @@ class Ledger:
     status: str
     active_stage_id: str | None
     active_stage_label: str
-    active_source: str  # override | schedule | none
+    active_source: str  # override | activeStage | schedule | none
     scheduled_stage_id: str | None
+    #: The event's wall clock and (optional) date span — every "Day N" in the prompt comes from here.
+    calendar: EventCalendar = field(default_factory=lambda: EventCalendar.of(None))
+    #: How many consecutive ticks (including this one) the drift signal has named the same target
+    #: stage. Computed by `director.py` from the session state; `act._decide_advance` reads it as
+    #: the evidence half of spec 13's advance rule. 0 when there is no signal this tick.
+    drift_streak: int = 0
     stages: list[StageView] = field(default_factory=list)
     people: list[Person] = field(default_factory=list)
     gaps: list[Gap] = field(default_factory=list)
@@ -212,10 +229,14 @@ class Ledger:
 
     def as_prompt_block(self) -> str:
         """The whole of what the model is told. Deliberately short and entirely identifiers + counts."""
+        # Event-local, day-indexed when the event has dates ("Day 2 Tue 14:05") — a five-day trip's
+        # model must be able to tell Day 1's dinner from Day 4's, and %H:%M erased exactly that.
+        day_count = self.calendar.day_count()
+        span = f" (day {self.calendar.day_index(self.now)} of {day_count})" if day_count else ""
         lines: list[str] = [
             "--- EVENT ---",
             f"event={self.event_id} name={self.event_name!r} status={self.status} "
-            f"localTime={self.now:%H:%M} (UTC)",
+            f"localTime={self.calendar.stamp(self.now)}{span}",
             f"activeStage={self.active_stage_id or 'none'} ({self.active_stage_label}) "
             f"source={self.active_source}; scheduleSaysNow={self.scheduled_stage_id or 'none'}",
             f"uploadsLast{UPLOAD_VELOCITY_WINDOW_MINUTES}min={self.velocity} activeGuests={self.active_guests}",
@@ -226,7 +247,9 @@ class Ledger:
         lines.append("")
         lines.append("--- TIMELINE AND COVERAGE ---")
         for stage in self.stages:
-            window = _window_text(stage)
+            window = self.calendar.window_text(stage.starts_at, stage.ends_at)
+            if stage.has_lapsed(self.now):
+                window += " ENDED"
             moments = ", ".join(
                 f"{mid}:{stage.moment_counts.get(mid, 0)}" for mid, _, _ in stage.required_moments
             )
@@ -241,7 +264,8 @@ class Ledger:
             lines.append("  (this event has no schedule — no stage may be advanced or targeted)")
 
         lines.append("")
-        lines.append(f"--- STAGE DRIFT --- {self.drift.as_line()}")
+        streak = f" (same target {self.drift_streak} ticks running)" if self.drift_streak > 1 else ""
+        lines.append(f"--- STAGE DRIFT --- {self.drift.as_line()}{streak}")
 
         lines.append("")
         lines.append("--- PEOPLE THE HOST NAMED (the only permitted targetVip values) ---")
@@ -305,12 +329,6 @@ class Ledger:
         return "\n".join(lines)
 
 
-def _window_text(stage: StageView) -> str:
-    if stage.starts_at is None or stage.ends_at is None:
-        return "[unscheduled]"
-    return f"[{stage.starts_at:%H:%M}-{stage.ends_at:%H:%M}]"
-
-
 # ---------------------------------------------------------------- the build
 
 
@@ -329,12 +347,11 @@ def build(
     people = _people(event_id)
     stages = _stages(event, shards)
 
-    active_id, active_source = _active_stage(event)
-    scheduled_id = next((s.stage_id for s in stages if s.scheduled_now(moment)), None)
-    if active_id is None:
-        # No override and no `activeStage` written yet: the schedule is the answer, which is also what
-        # `GET /v1/events/{id}/public` and the publisher would show.
-        active_id, active_source = scheduled_id, "schedule" if scheduled_id else "none"
+    # One resolver for every surface (`shared/stages.py`): override, then `activeStage`, then the
+    # schedule — the publisher, the public endpoint and the perception workers now read the same
+    # function, so the stage the director reasons about is always the stage the wall is showing.
+    active_id, active_source = resolve_active(event, moment)
+    scheduled_id = scheduled_stage_id(event, moment)
 
     active_label = next((s.label for s in stages if s.stage_id == active_id), "unscheduled")
     bounties = _bounties(event_id, moment)
@@ -348,6 +365,7 @@ def build(
         active_stage_label=active_label,
         active_source=active_source,
         scheduled_stage_id=scheduled_id,
+        calendar=EventCalendar.of(event),
         stages=stages,
         people=people,
         bounties=bounties,
@@ -370,17 +388,6 @@ def build(
     )
     ledger.gaps = _gaps(ledger, shards, moment)
     return ledger
-
-
-def _active_stage(event: dict[str, Any]) -> tuple[str | None, str]:
-    """The host's override beats the schedule instantly (spec 05 §2), exactly as the publisher reads it."""
-    override = event.get("stageOverride")
-    if override:
-        return str(override), "override"
-    active = event.get("activeStage")
-    if active:
-        return str(active), "activeStage"
-    return None, "none"
 
 
 def _stages(event: dict[str, Any], shards: dict[str, coverage.StageCoverage]) -> list[StageView]:
@@ -476,6 +483,12 @@ def _gaps(ledger: Ledger, shards: dict[str, coverage.StageCoverage], now: dt.dat
     for stage in ledger.stages:
         if not stage.has_started(now):
             continue  # not a gap yet: the varmala is not missing before the varmala
+        if stage.has_lapsed(now):
+            # Ended past the grace window: nobody can photograph it any more, so it stops bidding
+            # for prompt slots and bounty budget. The director's archive step records it once into
+            # `directorState.permanentGaps` — the wrap report stays honest without Day 1's misses
+            # shouting over Day 4's live ones (spec 13).
+            continue
         for moment_id, label, tier_weight in stage.required_moments:
             count = stage.moment_counts.get(moment_id, 0)
             if count >= MOMENT_TARGET_PHOTOS:

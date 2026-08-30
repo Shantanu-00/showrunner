@@ -35,6 +35,9 @@ from schemas.director import DirectorPlan
 from services import gemini
 from services.armor_plugin import ModelArmorPlugin
 from shared import log
+from shared.eventtime import EventCalendar
+from shared.settings import STAGE_GAP_GRACE_MINUTES, TICK_IDLE_LOOKAHEAD_MINUTES
+from shared.stages import as_dt
 
 from . import (
     act,
@@ -47,6 +50,36 @@ from . import (
 from .agent import prompt_parts, reason_agent
 
 STAGE = "director"
+
+
+def _is_idle(event_id: str, event: dict[str, Any], now: dt.datetime) -> bool:
+    """Spec 13's overnight economy: nothing scheduled near now, nobody uploading, nothing open —
+    so this tick does its deterministic steps and does not pay for a REASON call.
+
+    Deliberately conservative, cheapest check first. Any condition it cannot be sure of keeps the
+    director awake: a host holding a stage is actively directing; a stage without a window might be
+    happening right now for all the schedule knows; an event with no stages at all keeps its
+    pre-spec-13 behavior. Velocity is one count aggregation; the bounty scan only runs when
+    everything cheaper already said "idle".
+    """
+    if event.get("stageOverride"):
+        return False
+    stages = list(event.get("stages") or [])
+    if not stages:
+        return False
+    horizon_start = now - dt.timedelta(minutes=STAGE_GAP_GRACE_MINUTES)
+    horizon_end = now + dt.timedelta(minutes=TICK_IDLE_LOOKAHEAD_MINUTES)
+    for stage in stages:
+        starts, ends = as_dt(stage.get("startsAt")), as_dt(stage.get("endsAt"))
+        if starts is None or ends is None:
+            return False  # an unscheduled stage keeps the director awake
+        if starts <= horizon_end and ends >= horizon_start:
+            return False
+    if ledger_mod._velocity(event_id, now) > 0:  # noqa: SLF001 - same package, same read the ledger does
+        return False
+    if act.open_dedupe_keys(event_id):
+        return False
+    return True
 
 
 async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dict[str, Any]:
@@ -65,6 +98,9 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
     error: str | None = None
     led: ledger_mod.Ledger | None = None
     gaps: list[dict[str, Any]] = []
+    drift_note: tuple[str | None, int] | None = None
+    archived_ids: list[str] = []
+    idle = False
 
     state = await run_in_threadpool(session_mod.load, event_id)
 
@@ -74,6 +110,19 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
 
         expired, gaps = await run_in_threadpool(act.expire_bounties, event_id)
         outcome.expired = expired
+
+        # Spec 13's idle economy. Checked *after* Validate and Expire, because awards never wait and
+        # a timed-out bounty closes on time whatever the hour — and a tick that just expired one is
+        # not idle, since the record of that expiry is written by the session step below.
+        idle = not gaps and await run_in_threadpool(_is_idle, event_id, event, started)
+        if idle:
+            return {
+                "mode": "idle",
+                "validation": settled.as_report(),
+                "expired": outcome.expired,
+                "tokensIn": usage.tokensIn,
+                "tokensOut": usage.tokensOut,
+            }
 
         preferences = await memory.recall_host_preferences(event_id, event)
         # One document read, never a model call: the distillation itself runs at the *end* of the tick
@@ -90,6 +139,21 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
             host_preferences=preferences,
             world_model=venue,
         )
+
+        # Spec 13's evidence half of the advance rule: two ticks have to agree, so this tick reads
+        # what the last one saw. Deterministic — the streak is arithmetic over the drift signal,
+        # which is itself arithmetic over stored Curator distributions.
+        if led.drift.signal and led.drift.top_stage_id:
+            streak = state.drift_streak + 1 if state.drift_stage_id == led.drift.top_stage_id else 1
+            led.drift_streak = streak
+            drift_note = (led.drift.top_stage_id, streak)
+        else:
+            drift_note = (None, 0)
+
+        # Fold newly-lapsed stages' uncovered moments into the permanent-gap record, exactly once —
+        # the counterpart of the ledger's grace cutoff (spec 13).
+        archived_ids, lapsed_gaps = act.archive_lapsed_stages(led, state)
+        gaps = gaps + lapsed_gaps
 
         outcome.armed = await run_in_threadpool(
             act.arm_stage_moments, event_id, led, state, tick_id=tick_id
@@ -134,36 +198,45 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
 
     finally:
         stage_id = led.active_stage_id if led is not None else state.last_stage_id
-        summary = session_mod.TickSummary(
-            tickId=tick_id,
-            at=started,
-            assessment=(plan.assessment if plan else (error or "tick produced no assessment")),
-            actions=outcome.action_labels(),
-            issued=len(outcome.issued) + len(outcome.armed),
-            fulfilled=0,
-            expired=len(outcome.expired),
-            stageId=stage_id,
-        )
-        try:
-            await run_in_threadpool(
-                session_mod.record,
-                event_id,
-                state,
-                summary,
-                stage_id=stage_id,
-                commissions=outcome.commissioned,
-                permanent_gaps=gaps,
+        if not idle:
+            # An idle tick leaves no session line: it did nothing worth the model's memory, and ten
+            # overnight "[03:14] NO_OP" entries would push the evening the director actually worked
+            # out of its own rolling window.
+            calendar = led.calendar if led is not None else EventCalendar.of(event)
+            summary = session_mod.TickSummary(
+                tickId=tick_id,
+                at=started,
+                assessment=(plan.assessment if plan else (error or "tick produced no assessment")),
+                actions=outcome.action_labels(),
+                issued=len(outcome.issued) + len(outcome.armed),
+                fulfilled=0,
+                expired=len(outcome.expired),
+                stageId=stage_id,
+                day=calendar.stamp(started),
             )
-        except Exception as exc:  # noqa: BLE001 - the tick already happened; losing the note is not fatal
-            log.warn("director_session_write_failed", event_id=event_id, err=str(exc))
+            try:
+                await run_in_threadpool(
+                    session_mod.record,
+                    event_id,
+                    state,
+                    summary,
+                    stage_id=stage_id,
+                    commissions=outcome.commissioned,
+                    permanent_gaps=gaps,
+                    drift=drift_note,
+                    archived_stage_ids=archived_ids,
+                )
+            except Exception as exc:  # noqa: BLE001 - the tick already happened; losing the note is not fatal
+                log.warn("director_session_write_failed", event_id=event_id, err=str(exc))
 
         log.line(
             "director",
             event_id=event_id,
             tick_id=tick_id,
             stage=stage_id,
+            mode="idle" if idle else None,
             gaps=len(led.gaps) if led is not None else None,
-            actions=",".join(outcome.action_labels()) or "NO_OP",
+            actions=",".join(outcome.action_labels()) or ("idle" if idle else "NO_OP"),
             rejected=len(outcome.rejected) or None,
             tokens_in=usage.tokensIn or None,
             tokens_out=usage.tokensOut or None,

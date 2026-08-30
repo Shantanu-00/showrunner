@@ -47,7 +47,6 @@ from shared.settings import (
     DIRECTOR_MAX_ACTIVE_BOUNTIES,
     DIRECTOR_MAX_NEW_BOUNTIES_PER_TICK,
     STAGE_ADVANCE_MIN_CONFIDENCE,
-    STAGE_ADVANCE_WINDOW_MINUTES,
     settings,
 )
 
@@ -84,10 +83,12 @@ matters. It gains points, reaches everybody and takes over the big screen. One a
 is constantly being shouted at stops listening.
 
 PROPOSE_STAGE_ADVANCE — the drift signal says the photos look like a different stage than the one
-marked active. Give toStageId, confidence and the evidence in one clause. It applies automatically only
-at confidence {STAGE_ADVANCE_MIN_CONFIDENCE} or above *and* when the timetable agrees within {STAGE_ADVANCE_WINDOW_MINUTES} minutes; otherwise it
-becomes a suggestion for the host, which is a good outcome, not a failure. Never propose one on the
-strength of a couple of photos, and never when the host is holding the stage manually.
+marked active. Give toStageId, confidence and the evidence in one clause. It applies automatically at
+confidence {STAGE_ADVANCE_MIN_CONFIDENCE} or above when *either* the timetable agrees with the move, or the drift signal has named
+that same stage for consecutive ticks (the STAGE DRIFT line tells you its streak) — the photos are the
+ground truth the schedule only anticipates. Otherwise it becomes a suggestion for the host, which is a
+good outcome, not a failure. Never propose one on the strength of a couple of photos, and never when
+the host is holding the stage manually.
 
 COMMISSION_REEL — a stage has ended with good coverage and deserves a film. persona is one of couple,
 stage_recap, guest_energy, main_character. At most one per tick.
