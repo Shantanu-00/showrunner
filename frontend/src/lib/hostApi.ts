@@ -10,6 +10,7 @@ import type {
   EventTemplateId,
   EventTypeProfile,
   HostLinkResponse,
+  ItineraryFileMime,
   ItineraryParseOut,
   LifecycleResponse,
   RedeemHostResponse,
@@ -21,10 +22,16 @@ import type {
 
 export { ApiError };
 
+/** `POST /v1/events` (spec 08 §1, spec 13). Itinerary-first creation: `templateId` is never sent —
+ * the server defaults new events to `custom` (neutral dials, empty glossary), and the template
+ * presets survive only as the Settings panel's optional starting point (`updateProfile` below). */
 export async function createEvent(body: {
   name: string;
   timezone: string;
-  templateId: EventTemplateId;
+  startDate?: string;
+  endDate?: string;
+  expectedParticipants?: number;
+  accessMode?: "open" | "invite";
 }): Promise<CreateEventResponse> {
   return authedJson("/v1/events", { method: "POST", body: JSON.stringify(body) });
 }
@@ -50,10 +57,15 @@ export async function updateProfile(
   return authedJson(`/v1/events/${eventId}/profile`, { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function parseItinerary(eventId: string, rawText: string): Promise<ItineraryParseOut> {
+/** `POST /v1/events/{eventId}/itinerary/parse` (spec 08 §3.2, spec 13's PDF/screenshot extension).
+ * At least one of `rawText`/`fileBase64` is required — the server 400s `EMPTY` otherwise. */
+export async function parseItinerary(
+  eventId: string,
+  body: { rawText?: string; fileBase64?: string; fileMime?: ItineraryFileMime }
+): Promise<ItineraryParseOut> {
   return authedJson(`/v1/events/${eventId}/itinerary/parse`, {
     method: "POST",
-    body: JSON.stringify({ rawText }),
+    body: JSON.stringify(body),
   });
 }
 

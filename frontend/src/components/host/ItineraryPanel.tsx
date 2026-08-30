@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Sparkles, Plus, Trash2, Calendar, Clock, AlertTriangle, Check, X, Tag } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Calendar, AlertTriangle, Check } from "lucide-react";
 import { parseItinerary, saveStages } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
 import type {
@@ -9,8 +9,11 @@ import type {
   ExpectedSetting,
   HostEventDoc,
   RequiredMoment,
+  StageTheme,
 } from "@/lib/hostTypes";
-import { EXPECTED_SETTING_LABELS } from "@/lib/hostTypes";
+import { dateForDayIndex, dayIndexFromLocalDate, formatLocalDate, slugify } from "@/lib/hostTypes";
+import { ItineraryInputTabs, type ItineraryParsePayload } from "./ItineraryInputTabs";
+import { StageEditorCard } from "./StageEditorCard";
 
 interface DraftStage {
   key: string;
@@ -21,10 +24,7 @@ interface DraftStage {
   endsAt: string;
   requiredMoments: RequiredMoment[];
   expectedSetting: ExpectedSetting | "";
-}
-
-function slugify(label: string): string {
-  return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "stage";
+  theme: StageTheme | "";
 }
 
 function fromEventStage(s: EventStageDoc, i: number): DraftStage {
@@ -32,15 +32,17 @@ function fromEventStage(s: EventStageDoc, i: number): DraftStage {
     key: `${s.stageId}-${i}`,
     stageId: s.stageId,
     label: s.label,
+    // Naive truncation of the stored UTC ISO instant — kept exactly as this panel always did it,
+    // not corrected to a real timezone conversion here (see `hostTypes.ts`'s day-grouping note).
     startsAt: s.startsAt ? s.startsAt.slice(0, 16) : "",
     endsAt: s.endsAt ? s.endsAt.slice(0, 16) : "",
     requiredMoments: s.requiredMoments ?? [],
     expectedSetting: s.expectedSetting ?? "",
+    theme: (s.theme as StageTheme) ?? "",
   };
 }
 
 export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventId: string }) {
-  const [raw, setRaw] = useState("");
   const [stages, setStages] = useState<DraftStage[]>(
     event.stages.map((s, i) => fromEventStage(s, i))
   );
@@ -54,29 +56,29 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
     setStages(event.stages.map((s, i) => fromEventStage(s, i)));
   }, [event.eventId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleParse() {
-    if (!raw.trim()) return;
+  async function handleParse(payload: ItineraryParsePayload) {
     setParsing(true);
     setError(null);
     try {
-      const out = await parseItinerary(eventId, raw);
+      const out = await parseItinerary(eventId, payload);
       setStages(
         out.stages.map((s, i) => ({
           key: `${s.stageId}-${i}-${Date.now()}`,
           stageId: s.stageId,
           label: s.label,
           timeHint: s.timeHint,
-          startsAt: "",
-          endsAt: "",
+          startsAt: s.proposedStartLocal || "",
+          endsAt: s.proposedEndLocal || "",
           requiredMoments: s.requiredMoments,
           expectedSetting: s.expectedSetting ?? "",
+          theme: "",
         }))
       );
       setWarnings(out.warnings);
     } catch (err) {
       setError(
         err instanceof ApiError
-          ? "Couldn't parse that paste — you can still add stages manually below."
+          ? `Couldn't parse that (${err.status}): ${err.message} — you can still add stages manually below.`
           : "Something went wrong."
       );
     } finally {
@@ -90,11 +92,12 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
       {
         key: `new-${Date.now()}`,
         stageId: "",
-        label: "New Stage Phase",
+        label: "New Stage",
         startsAt: "",
         endsAt: "",
         requiredMoments: [],
         expectedSetting: "",
+        theme: "",
       },
     ]);
   }
@@ -133,7 +136,7 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
         startsAt: s.startsAt ? new Date(s.startsAt).toISOString() : null,
         endsAt: s.endsAt ? new Date(s.endsAt).toISOString() : null,
         requiredMoments: s.requiredMoments,
-        theme: null,
+        theme: s.theme || null,
         // "" means the host declared nothing. Sent as null, not omitted: the backend enum is
         // `SceneSetting | None`, and an empty string is not a member of it.
         expectedSetting: s.expectedSetting || null,
@@ -148,6 +151,53 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
   }
 
   const canEdit = event.status === "draft" || event.status === "live" || event.status === "paused";
+
+  // Day-grouped only when the event actually declared a calendar span (spec 13) — an undated event
+  // (every event created before it, or a host who skipped the field) keeps the flat list it always had.
+  const groups = useMemo(() => {
+    if (!event.startsOn) return null;
+    const byDay = new Map<number | null, DraftStage[]>();
+    for (const s of stages) {
+      const idx = dayIndexFromLocalDate(event.startsOn, s.startsAt);
+      const arr = byDay.get(idx) ?? [];
+      arr.push(s);
+      byDay.set(idx, arr);
+    }
+    const keys = Array.from(byDay.keys()).sort((a, b) => {
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return a - b;
+    });
+    return keys.map((dayIndex) => ({ dayIndex, stages: byDay.get(dayIndex) as DraftStage[] }));
+  }, [stages, event.startsOn]);
+
+  const positionOf = new Map(stages.map((s, i) => [s.key, i]));
+
+  function stageCard(stage: DraftStage) {
+    const idx = positionOf.get(stage.key) ?? 0;
+    return (
+      <StageEditorCard
+        key={stage.key}
+        position={idx + 1}
+        label={stage.label}
+        timeHint={stage.timeHint}
+        startsAt={stage.startsAt}
+        endsAt={stage.endsAt}
+        requiredMoments={stage.requiredMoments}
+        expectedSetting={stage.expectedSetting}
+        theme={stage.theme}
+        canEdit={canEdit}
+        onLabelChange={(v) => updateStage(stage.key, { label: v })}
+        onStartsAtChange={(v) => updateStage(stage.key, { startsAt: v })}
+        onEndsAtChange={(v) => updateStage(stage.key, { endsAt: v })}
+        onExpectedSettingChange={(v) => updateStage(stage.key, { expectedSetting: v })}
+        onThemeChange={(v) => updateStage(stage.key, { theme: v })}
+        onAddMoment={(label) => addMoment(stage.key, label)}
+        onRemoveMoment={(momentId) => removeMoment(stage.key, momentId)}
+        onRemove={() => removeStage(stage.key)}
+      />
+    );
+  }
 
   return (
     <section className="mb-10 glass-card p-6 rounded-3xl border border-white/10 shadow-xl">
@@ -164,26 +214,7 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
 
       {canEdit && (
         <div className="mb-6 p-5 rounded-2xl bg-black/40 border border-white/5 space-y-3">
-          <div className="flex items-center gap-2 text-xs font-semibold text-[var(--gold-300)]">
-            <Sparkles className="w-4 h-4" />
-            <span>AI Itinerary Parser (Gemini + Model Armor)</span>
-          </div>
-          <textarea
-            value={raw}
-            onChange={(e) => setRaw(e.target.value)}
-            placeholder="Paste raw schedule (WhatsApp forward, invitation timeline, run-of-show text)…"
-            rows={3}
-            className="w-full px-4 py-3 rounded-xl bg-black/50 border border-white/10 text-xs text-[var(--ivory)] placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={() => void handleParse()}
-            disabled={parsing || !raw.trim()}
-            className="btn-secondary px-4 py-2 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-[var(--accent)]" />
-            <span>{parsing ? "Extracting Structured Timeline…" : "Auto-Parse Itinerary"}</span>
-          </button>
+          <ItineraryInputTabs onParse={(p) => void handleParse(p)} busy={parsing} />
         </div>
       )}
 
@@ -198,118 +229,24 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
         </div>
       )}
 
-      <div className="space-y-4 mb-6">
-        {stages.map((stage, idx) => (
-          <div key={stage.key} className="rounded-2xl p-5 glass-card bg-black/30 border border-white/10 hover:border-[var(--accent)] transition-all">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-6 h-6 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] flex items-center justify-center font-mono text-xs font-bold">
-                {idx + 1}
+      <div className="space-y-6 mb-6">
+        {groups ? (
+          groups.map((group) => (
+            <div key={String(group.dayIndex)} className="space-y-4">
+              <div className="flex items-center gap-2 pt-1">
+                <Calendar className="w-3.5 h-3.5 text-[var(--gold-300)]" />
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--gold-300)]">
+                  {group.dayIndex !== null
+                    ? `Day ${group.dayIndex} — ${formatLocalDate(dateForDayIndex(event.startsOn as string, group.dayIndex))}`
+                    : "Unscheduled"}
+                </h4>
               </div>
-              <input
-                value={stage.label}
-                disabled={!canEdit}
-                onChange={(e) => updateStage(stage.key, { label: e.target.value })}
-                className="flex-1 font-[family-name:var(--font-display)] text-lg bg-transparent font-medium text-[var(--ivory)] border-b border-transparent hover:border-white/20 focus:border-[var(--accent)] focus:outline-none"
-              />
-              {stage.timeHint && (
-                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-white/5 text-[var(--ink-muted)] shrink-0">
-                  Hint: {stage.timeHint}
-                </span>
-              )}
-              {/* Where this stage happens. Optional, and blank is the normal answer — it exists so the
-                  wall knows that outdoor photos are expected during an outdoor stage *before* any have
-                  arrived. Without it, the first photos of a stage that changes setting look like
-                  outliers and get ranked down. */}
-              <select
-                value={stage.expectedSetting}
-                disabled={!canEdit}
-                onChange={(e) =>
-                  updateStage(stage.key, {
-                    expectedSetting: e.target.value as ExpectedSetting | "",
-                  })
-                }
-                aria-label={`Where ${stage.label || "this stage"} happens`}
-                title="Optional. Helps the wall judge which photos belong to this stage."
-                className="shrink-0 text-[11px] px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[var(--ink-muted)] hover:border-white/25 focus:border-[var(--accent)] focus:outline-none disabled:opacity-50"
-              >
-                <option value="">Where? (optional)</option>
-                {(Object.keys(EXPECTED_SETTING_LABELS) as ExpectedSetting[]).map((value) => (
-                  <option key={value} value={value}>
-                    {EXPECTED_SETTING_LABELS[value]}
-                  </option>
-                ))}
-              </select>
-              {canEdit && (
-                <button
-                  type="button"
-                  onClick={() => removeStage(stage.key)}
-                  className="p-1.5 rounded-full hover:bg-white/10 text-[var(--ink-muted)] hover:text-[var(--danger)] transition-colors"
-                  aria-label="Remove stage"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
+              <div className="space-y-4">{group.stages.map((s) => stageCard(s))}</div>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-              <label className="text-[11px] text-[var(--ink-muted)] font-medium">
-                <span className="flex items-center gap-1 mb-1">
-                  <Clock className="w-3 h-3 text-[var(--gold-300)]" />
-                  <span>Start Window</span>
-                </span>
-                <input
-                  type="datetime-local"
-                  value={stage.startsAt}
-                  disabled={!canEdit}
-                  onChange={(e) => updateStage(stage.key, { startsAt: e.target.value })}
-                  className="block w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-[var(--ivory)] focus:border-[var(--accent)] focus:outline-none"
-                />
-              </label>
-              <label className="text-[11px] text-[var(--ink-muted)] font-medium">
-                <span className="flex items-center gap-1 mb-1">
-                  <Clock className="w-3 h-3 text-[var(--gold-300)]" />
-                  <span>End Window</span>
-                </span>
-                <input
-                  type="datetime-local"
-                  value={stage.endsAt}
-                  disabled={!canEdit}
-                  onChange={(e) => updateStage(stage.key, { endsAt: e.target.value })}
-                  className="block w-full px-3 py-2 rounded-xl bg-black/50 border border-white/10 text-xs text-[var(--ivory)] focus:border-[var(--accent)] focus:outline-none"
-                />
-              </label>
-            </div>
-
-            <div className="space-y-2 pt-2 border-t border-white/5">
-              <div className="flex items-center gap-1 text-[11px] text-[var(--ink-muted)]">
-                <Tag className="w-3 h-3" />
-                <span>Required Moments for Story Director:</span>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {stage.requiredMoments.map((m) => (
-                  <span
-                    key={m.momentId}
-                    className="text-xs px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[var(--ivory)] flex items-center gap-1.5"
-                  >
-                    <span>{m.label}</span>
-                    {canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => removeMoment(stage.key, m.momentId)}
-                        className="hover:text-[var(--danger)]"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    )}
-                  </span>
-                ))}
-              </div>
-              {canEdit && (
-                <MomentAdder onAdd={(label) => addMoment(stage.key, label)} />
-              )}
-            </div>
-          </div>
-        ))}
+          ))
+        ) : (
+          <div className="space-y-4">{stages.map((s) => stageCard(s))}</div>
+        )}
       </div>
 
       {canEdit && (
@@ -352,35 +289,5 @@ export function ItineraryPanel({ event, eventId }: { event: HostEventDoc; eventI
         </p>
       )}
     </section>
-  );
-}
-
-function MomentAdder({ onAdd }: { onAdd: (label: string) => void }) {
-  const [value, setValue] = useState("");
-  return (
-    <div className="flex gap-2 pt-1">
-      <input
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            onAdd(value);
-            setValue("");
-          }
-        }}
-        placeholder="+ Add required moment (e.g. Ring Exchange, First Dance)"
-        className="text-xs px-3 py-1.5 rounded-full bg-black/40 border border-white/10 text-[var(--ivory)] flex-1 placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
-      />
-      <button
-        type="button"
-        onClick={() => {
-          onAdd(value);
-          setValue("");
-        }}
-        className="btn-secondary px-3 py-1.5 text-xs font-semibold shrink-0"
-      >
-        Add Moment
-      </button>
-    </div>
   );
 }

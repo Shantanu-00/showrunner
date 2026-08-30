@@ -16,6 +16,7 @@ import { LifecyclePanel } from "./LifecyclePanel";
 import { ItineraryPanel } from "./ItineraryPanel";
 import { StageOverridePanel } from "./StageOverridePanel";
 import { WrapReportPanel } from "./WrapReportPanel";
+import { SettingsPanel } from "./SettingsPanel";
 
 type AuthState = "checking" | "need-code" | "ready" | "not-found";
 
@@ -257,6 +258,8 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
       />
 
       <ItineraryPanel event={event} eventId={eventId} />
+
+      <SettingsPanel event={event} eventId={eventId} />
 
       {event.wrapReport && <WrapReportPanel report={event.wrapReport} />}
     </div>

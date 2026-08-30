@@ -21,17 +21,104 @@ export type EventTemplateId =
   | "corporate_offsite"
   | "custom";
 
+/** Repurposed (spec 13 pivot) from the wizard's old template-grid labels into the Settings panel's
+ * "start from a preset…" `<select>` labels — neutral wording, never shown as a card grid, never
+ * defaulted. Creation itself is itinerary-first and never sends `templateId` (`hostApi.createEvent`);
+ * a host who wants the sensitivity dials/glossary pre-filled reaches these from the console instead. */
 export const TEMPLATE_LABELS: Record<EventTemplateId, string> = {
-  wedding_generic: "Wedding",
+  wedding_generic: "Generic Wedding",
   wedding_hindu: "Hindu Wedding",
   wedding_christian: "Christian Wedding",
   wedding_muslim: "Muslim Wedding",
-  bachelor_bachelorette: "Bachelor(ette) Party",
+  bachelor_bachelorette: "Bachelor / Bachelorette",
   birthday: "Birthday",
   graduation: "Graduation",
   corporate_offsite: "Corporate Offsite",
   custom: "Custom",
 };
+
+/** Order the preset `<select>` lists them in — matches the task's neutral ordering, `custom` last. */
+export const TEMPLATE_PRESET_ORDER: EventTemplateId[] = [
+  "wedding_generic",
+  "wedding_hindu",
+  "wedding_christian",
+  "wedding_muslim",
+  "bachelor_bachelorette",
+  "birthday",
+  "graduation",
+  "corporate_offsite",
+  "custom",
+];
+
+/** Client-side mirror of `backend/schemas/host.py::EVENT_TEMPLATE_DEFAULTS` — there is no GET for
+ * the server's table, and the Settings panel's preset picker (spec 13) prefills the form *locally*
+ * before the host ever saves, exactly like the old wizard step it replaced ("editable, not silently
+ * authoritative", spec 11 §2). Keep in sync with `schemas/host.py` by hand; both sides are small and
+ * this file says so. */
+export const EVENT_TEMPLATE_PRESETS: Record<
+  EventTemplateId,
+  { vipTopology: "pyramid" | "flat"; sensitivityProfile: SensitivityProfile; culturalGlossary: string[] }
+> = {
+  wedding_generic: {
+    vipTopology: "pyramid",
+    sensitivityProfile: { pda: "context_dependent", alcohol: "public_ok", attire: "standard" },
+    culturalGlossary: ["vows", "ring exchange", "first dance", "bouquet toss"],
+  },
+  wedding_hindu: {
+    vipTopology: "pyramid",
+    sensitivityProfile: { pda: "context_dependent", alcohol: "context_dependent", attire: "standard" },
+    culturalGlossary: ["haldi", "sangeet", "pheras", "kanyadaan", "vidaai"],
+  },
+  wedding_christian: {
+    vipTopology: "pyramid",
+    sensitivityProfile: { pda: "public_ok", alcohol: "public_ok", attire: "standard" },
+    culturalGlossary: ["processional", "vows", "ring exchange", "first dance"],
+  },
+  wedding_muslim: {
+    vipTopology: "pyramid",
+    sensitivityProfile: { pda: "public_ok", alcohol: "context_dependent", attire: "standard" },
+    culturalGlossary: ["nikah", "rukhsati", "walima"],
+  },
+  bachelor_bachelorette: {
+    vipTopology: "flat",
+    sensitivityProfile: { pda: "public_ok", alcohol: "public_ok", attire: "relaxed" },
+    culturalGlossary: [],
+  },
+  birthday: {
+    vipTopology: "pyramid",
+    sensitivityProfile: { pda: "public_ok", alcohol: "context_dependent", attire: "standard" },
+    culturalGlossary: ["cake cutting", "toast"],
+  },
+  graduation: {
+    vipTopology: "pyramid",
+    sensitivityProfile: { pda: "public_ok", alcohol: "private_only", attire: "standard" },
+    culturalGlossary: ["stage crossing", "family portrait"],
+  },
+  corporate_offsite: {
+    vipTopology: "pyramid",
+    sensitivityProfile: { pda: "private_only", alcohol: "context_dependent", attire: "conservative" },
+    culturalGlossary: ["keynote", "team sessions"],
+  },
+  custom: {
+    vipTopology: "pyramid",
+    sensitivityProfile: { pda: "context_dependent", alcohol: "context_dependent", attire: "standard" },
+    culturalGlossary: [],
+  },
+};
+
+/** Stage palette hint (spec 04 §4) — a closed, small vocabulary rather than a free color picker, so
+ * the kiosk theme layer only ever has to know eight names. */
+export const STAGE_THEME_OPTIONS = [
+  "gold",
+  "violet",
+  "crimson",
+  "ocean",
+  "forest",
+  "neon",
+  "slate",
+  "sunrise",
+] as const;
+export type StageTheme = (typeof STAGE_THEME_OPTIONS)[number];
 
 export interface RequiredMoment {
   momentId: string;
@@ -95,6 +182,9 @@ export interface CreateEventResponse {
   eventId: string;
   hostLink: string;
   recoveryCode: string;
+  /** Present only when the event was created invite-only — the plaintext is never stored (only its
+   * sha256), so this response is the one time it is ever readable (`schemas/host.py::CreateEventResponse`). */
+  joinCode: string | null;
 }
 
 export interface HostLinkResponse {
@@ -122,12 +212,25 @@ export interface ParsedStage {
   /** Already coerced to the vocabulary (or "") by `api/host.py::parse_itinerary`, so anything the
    * model invented has been dropped before it reaches the review table. A proposal, not a decision. */
   expectedSetting?: ExpectedSetting | "";
+  /** "YYYY-MM-DDTHH:MM" **local wall-clock** in the event's own timezone, or "" when the source gave
+   * no anchorable date (`api/host.py::_coerce_proposed_instants`). Feeds the review table's
+   * `datetime-local` pickers directly — no timezone math on the client, because the value is already
+   * expressed in the event's own local time. */
+  proposedStartLocal: string;
+  proposedEndLocal: string;
 }
 
 export interface ItineraryParseOut {
   stages: ParsedStage[];
   warnings: string[];
+  /** The schedule text the model transcribed out of a PDF/screenshot, verbatim — empty when the
+   * input was already pasted text. Not rendered anywhere load-bearing; kept for parity with the
+   * backend response shape. */
+  sourceText: string;
 }
+
+/** What `POST …/itinerary/parse`'s `fileMime` may be — mirrors `schemas/host.py::ITINERARY_FILE_MIMES`. */
+export type ItineraryFileMime = "application/pdf" | "image/jpeg" | "image/png" | "image/webp";
 
 export interface LifecycleResponse {
   eventId: string;
@@ -226,6 +329,13 @@ export interface HostEventDoc {
   timezone: string;
   status: EventStatus;
   class?: "protected_demo" | "internal_dev" | "public";
+  /** ISO local dates ("2026-10-12") in `timezone`, not UTC instants (spec 13) — `null`/absent means
+   * "no day structure", the pre-spec-13 default every event still degrades to. See
+   * `backend/schemas/event.py::Event.startsOn` and `dayIndexFromLocalDate` below, which is this
+   * file's client-side mirror of `backend/shared/eventtime.py`. */
+  startsOn?: string | null;
+  endsOn?: string | null;
+  expectedParticipants?: number | null;
   stages: EventStageDoc[];
   activeStage?: string | null;
   stageOverride?: string | null;
@@ -250,4 +360,61 @@ export interface HostEventDoc {
   /** Seats taken. Incremented transactionally by `POST /join`, in the same transaction as the
    * `guests/{uid}` create, so the counter and the roster cannot disagree. */
   guestCount?: number;
+}
+
+/** A stable, host-editable stage/moment id from its label — shared by `ItineraryPanel` and the
+ * wizard's review step, both of which mint a `stageId`/`momentId` for a row the host typed or
+ * renamed by hand rather than one the parser already assigned. */
+export function slugify(label: string): string {
+  return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "stage";
+}
+
+// ---------------------------------------------------------------------------
+// Day-grouping (spec 13) — the client mirror of `backend/shared/eventtime.py`, deliberately narrow.
+//
+// Every stage-editing surface (the wizard's review step, `ItineraryPanel`) holds its working
+// `startsAt`/`proposedStartLocal` values as a bare "YYYY-MM-DDTHH:MM" **local** string — the exact
+// value a `datetime-local` input wants, and (for stages loaded from a saved UTC `startsAt`) the same
+// naive `.slice(0, 16)` truncation `ItineraryPanel.tsx` already used before spec 13. That naive
+// treatment is kept deliberately, not corrected here: inventing real per-string timezone conversion
+// in this file would silently disagree with whatever convention the picker itself already commits
+// to on save. Day-grouping only ever needs the *date* portion of that same string, so it inherits
+// whichever convention produced it, correct or naive, without knowing the difference.
+
+/** 1-based day index of a "YYYY-MM-DD…" local string against the event's own `startsOn` local date,
+ * or `null` when either side is missing/unparseable — an undated event or an unscheduled stage gets
+ * no day header, never a wrong one. Both sides are compared as UTC midnight purely so the day-count
+ * arithmetic can't be nudged a day by the *browser's* zone; this is not a claim about the event's
+ * real timezone. */
+export function dayIndexFromLocalDate(
+  startsOn: string | null | undefined,
+  localDateTime: string | null | undefined
+): number | null {
+  if (!startsOn || !localDateTime) return null;
+  const datePart = localDateTime.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart) || !/^\d{4}-\d{2}-\d{2}$/.test(startsOn)) return null;
+  const start = new Date(`${startsOn}T00:00:00Z`);
+  const day = new Date(`${datePart}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(day.getTime())) return null;
+  return Math.round((day.getTime() - start.getTime()) / 86_400_000) + 1;
+}
+
+/** The calendar date ("YYYY-MM-DD") that `dayIndex` (1-based) falls on, given the event's `startsOn`. */
+export function dateForDayIndex(startsOn: string, dayIndex: number): string {
+  const d = new Date(`${startsOn}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + (dayIndex - 1));
+  return d.toISOString().slice(0, 10);
+}
+
+/** `"Wed, Oct 15"` from a "YYYY-MM-DD" string — read as UTC midnight so the *label* can't drift a day
+ * from the browser's own zone either, matching `dayIndexFromLocalDate`'s convention. */
+export function formatLocalDate(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
