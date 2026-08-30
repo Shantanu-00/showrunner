@@ -264,7 +264,7 @@ def live_half(api: str) -> None:
     )
     media_id = new_ulid()
     intent = register_intent(api, event_id, guest_token, media_id, PHOTO.read_bytes(), "pool")
-    put_bytes(intent, PHOTO.read_bytes())
+    put_bytes(intent["signedUrl"], PHOTO.read_bytes())
     deadline = time.time() + 180
     shard = {}
     while time.time() < deadline:
