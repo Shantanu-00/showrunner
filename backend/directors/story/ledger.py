@@ -206,6 +206,10 @@ class Ledger:
     #: `Event.expectedParticipants` — people, not sessions (spec 13 §1). `None` disables the
     #: group-coverage gap entirely.
     expected_participants: int | None = None
+    #: The Event Diary (spec 13 §8): `stageId → memo` for chapters that already closed. Advisory
+    #: prose like `world_model` — it flavors the copy the model writes, never its identifiers.
+    #: Filled by `director.py` after the build, like `armed_this_tick`.
+    diary: dict[str, str] = field(default_factory=dict)
     stages: list[StageView] = field(default_factory=list)
     people: list[Person] = field(default_factory=list)
     gaps: list[Gap] = field(default_factory=list)
@@ -323,6 +327,15 @@ class Ledger:
             lines.append(
                 "Use this to say WHERE to go in guestFacingCopy. Never invent a place it does not name."
             )
+
+        if self.diary:
+            # Beside the other advisory prose, after the identifier blocks, for the same reason as
+            # the PHYSICAL SETTING placement above: this is texture for guestFacingCopy ("we've got
+            # plenty of temple shots — get the four of you at dinner"), never a source of ids.
+            lines.append("")
+            lines.append("--- WHAT THE CLOSED CHAPTERS FELT LIKE (advisory only) ---")
+            for stage_id, memo in sorted(self.diary.items()):
+                lines.append(f"- {stage_id}: {memo}")
 
         if self.host_preferences:
             lines.append("")

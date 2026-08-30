@@ -136,6 +136,12 @@ def _generate(client, prompt: str) -> bytes:
     raise RuntimeError(f"Nano Banana returned no image: {text[:200]!r}")
 
 
+#: Public alias so a sibling seeder (`scripts/seed_trip.py`) can generate its own cast's portraits
+#: through the same Nano Banana call — retry/backoff and all — without a second copy of this
+#: function. No behavior change: same object, just a name other modules are meant to import.
+generate_portrait = _generate
+
+
 def ensure_cast(*, regenerate: bool = False) -> list[CastMember]:
     """Generate (or reuse cached) portraits for all six cast members. ~$0.045 each, first run only."""
     from google import genai

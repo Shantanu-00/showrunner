@@ -193,6 +193,15 @@ export interface HostLinkResponse {
   expiresAt: string;
 }
 
+/** `POST …/people/host-enroll` (spec 13 §7) — mirrors `backend/schemas/identity.py::HostEnrollResponse`.
+ * Grants no identity by itself (see `hostApi.hostEnrollPerson`'s doc comment); it only confirms the
+ * person document now exists with the tier the host chose. */
+export interface HostEnrollResponse {
+  personId: string;
+  displayName: string;
+  tier: number;
+}
+
 export interface RedeemHostResponse {
   eventId: string;
   eventName?: string | null;

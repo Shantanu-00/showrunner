@@ -184,6 +184,13 @@ export interface PersonDoc {
   featured: boolean;
   consent: { selfieEnrolled: boolean; enrolledAt?: string | null };
   createdAt?: string | null;
+  /** Host-console-only fields (spec 13 §7) — absent from every guest read path, present on every
+   * document. `hostEnrolled` marks a person the host added from a reference photo rather than one
+   * who selfie-enrolled themselves; `claimApproved` is the actual access gate (spec 02 §3) — true
+   * by construction for a host-enrolled person (the host *is* the approver), independent of
+   * whether the real person has since claimed the album with their own selfie. */
+  hostEnrolled?: boolean;
+  claimApproved?: boolean;
 }
 
 /** `GET /v1/events/{eventId}/public` — the narrow, non-sensitive event bootstrap. */
@@ -360,7 +367,12 @@ export interface BountyDoc {
   points: number;
   status: "active" | "escalated" | "fulfilled" | "expired" | "cancelled";
   targetVipName?: string | null;
-  audience?: "all" | "nearStage" | "topContributors";
+  audience?: "all" | "nearStage" | "topContributors" | "assignee";
+  /** Spec 13 §6: which uid `audience: "assignee"` banners for. Resolved server-side (the Act
+   * step's most-recently-active member), and flipped back to `null` alongside `audience: "all"`
+   * the moment the server's own timeout fires — the client does no timeout math, it only ever
+   * compares this to its own uid. */
+  assigneeUid?: string | null;
   kioskTakeover?: boolean;
   /** As the backend serialises them. A **listener** never sees these as strings — Firestore returns
    * `Timestamp` objects — so read the `*Ms` fields below instead, which `listenActiveBounties`

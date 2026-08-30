@@ -67,6 +67,14 @@ PERSONA_LENS: dict[ReelPersona, str] = {
         "they were looking at. Chronology is the spine; the arc is arriving, being in it, and the "
         "quiet frame at the end. Captions speak about them in the second person, warmly, rarely."
     ),
+    ReelPersona.EVENT_RECAP: (
+        "EVENT_RECAP — the whole arc, chronological, one beat per chapter. This is the film the "
+        "group watches afterwards and says 'that was us'. The evidence spans the entire event — "
+        "days, if it ran that long — so let the stages be the chapters: begin where it began, give "
+        "each chapter its single strongest beat, and end on the moment that felt like an ending. "
+        "Never spend two shots where one carries the chapter; breadth is this film's depth. A "
+        "caption may name a chapter ('Day 3 — Kyoto') and then stay out of the way."
+    ),
 }
 
 _TRANSITIONS = ", ".join(t.value for t in Transition)
@@ -103,7 +111,8 @@ plan that only just clears the minimum will not survive. Each shot:
   `cut`, and let the energy pick them: cut and dissolve carry almost everything, fadeblack is a
   chapter break, the wipes and slides belong to kinetic passages.
 - captionLine: optional and usually absent. Under 34 characters. ENGLISH OR HINGLISH IN LATIN SCRIPT
-  ONLY — "Haldi vibes", "Baraat has arrived" — never Devanagari or any non-Latin script, because the
+  ONLY — "Haldi vibes", "Day 3 — Kyoto", "Baraat has arrived" — never Devanagari or any non-Latin
+  script, because the
   renderer cannot shape it and the caption will be dropped. Caption at most a third of the shots.
 - emphasis: true for the two or three shots that are the film's beats. They land on downbeats.
 
@@ -192,6 +201,7 @@ def evidence_block(
     critique: list[str] | None = None,
     previous_shot_ids: list[str] | None = None,
     venue: str = "",
+    diary: dict[str, str] | None = None,
 ) -> str:
     """The whole of what the director is told. Evidence, the lens, and nothing else.
 
@@ -219,6 +229,12 @@ def evidence_block(
     ]
     if venue:
         lines += ["", f"--- SETTING (advisory only) --- {venue}"]
+    if diary:
+        # The Event Diary (spec 13 §8): what each chapter felt like, written when it closed. The
+        # recap film's brief is exactly what this exists for — same advisory posture as `venue`:
+        # prose from an earlier distillation, never a source of mediaIds, changes no eligibility.
+        lines += ["", "--- WHAT EACH CHAPTER FELT LIKE (advisory only — never a source of ids) ---"]
+        lines += [f"- {sid}: {memo}" for sid, memo in sorted(diary.items())]
     if glossary:
         lines += [
             "",

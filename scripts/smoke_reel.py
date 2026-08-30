@@ -180,6 +180,22 @@ def check_persona_divergence(pool: list[Candidate]) -> None:
         fail(f"VIP floor did not reserve a slot for {sorted(missing)}")
     ok(f"VIP floor reserved a slot for all {len(principals)} tier-0/1 people")
 
+    # Spec 13 §8: `event_recap` spans the arc. Every stage with eligible material must land at
+    # least one shot in the film, and no single stage may swallow it — the recap of the trip, not
+    # a montage of its best hour.
+    recap_all = select.choose(pool, persona=ReelPersona.EVENT_RECAP, cap=8)
+    stages_in_pool = {c.stage_id for c in pool if c.aesthetic >= 0.55 or c.is_highlight}
+    stages_in_film = {c.stage_id for c in recap_all}
+    if not stages_in_pool <= stages_in_film:
+        fail(f"event_recap skipped whole chapters: pool={sorted(stages_in_pool)} film={sorted(stages_in_film)}")
+    dominant = max(sum(1 for c in recap_all if c.stage_id == s) for s in stages_in_film)
+    if dominant > len(recap_all) - len(stages_in_film) + 1:
+        fail(f"event_recap let one stage swallow the film ({dominant} of {len(recap_all)})")
+    ok(
+        f"event_recap spans the arc: {len(stages_in_film)} stages across {len(recap_all)} shots, "
+        f"none dominating"
+    )
+
 
 def _plan(pool: list[Candidate], *, flat: bool = False) -> ReelPlan:
     """A well-formed storyboard over the fixture — or a deliberately flat one."""

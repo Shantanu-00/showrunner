@@ -48,6 +48,16 @@ def world_scope(event_id: str) -> str:
     return f"{event_id}:world"
 
 
+def diary_scope(event_id: str, stage_id: str) -> str:
+    """The per-chapter diary scope: `{eventId}:diary:{stageId}` (spec 13 §8).
+
+    Still eventId-prefixed, so spec 11 §4's grep-auditable mandate holds for this scope exactly as
+    it does for the other three. The `diary:` segment keeps a stageId that happens to collide with
+    a personId from ever landing in a person's scope.
+    """
+    return f"{event_id}:diary:{stage_id}"
+
+
 def person_scope(event_id: str, person_id: str) -> str:
     """The per-person scope: `{eventId}:{personId}` (spec 11 §4, verbatim).
 
@@ -138,6 +148,38 @@ async def remember_world_model(event_id: str, prose: str) -> None:
         )
     except Exception as exc:  # noqa: BLE001 - see docstring
         log.warn("memory_bank_world_write_failed", event_id=event_id, err=str(exc))
+
+
+async def remember_diary(event_id: str, stage_id: str, memo: str) -> None:
+    """Mirror one chapter's diary memo into Memory Bank at `{eventId}:diary:{stageId}` (spec 13 §8).
+
+    A mirror, not the system of record — `ledger/diary_{stageId}` holds it and
+    `directors/story/diary.py::recall_all` reads it from there, same split as the world model
+    above. The boundary is the same one every scope in this module lives under: the diary flavors
+    creative surfaces (the recap brief, the wrap headline, bounty copy) and is never read by
+    ranking, visibility or the award path. Best-effort, silently degrading, like every other
+    Memory Bank write here.
+    """
+    engine = settings().agent_engine_id
+    if not engine or not memo:
+        return
+    try:
+        from google.adk.memory.memory_entry import MemoryEntry
+        from google.adk.memory.vertex_ai_memory_bank_service import VertexAiMemoryBankService
+        from google.genai import types as genai_types
+
+        cfg = settings()
+        service = VertexAiMemoryBankService(
+            project=cfg.project, location=cfg.location, agent_engine_id=engine
+        )
+        entry = MemoryEntry(
+            content=genai_types.Content(role="user", parts=[genai_types.Part(text=memo)])
+        )
+        await service.add_memory(
+            app_name="showrunner", user_id=diary_scope(event_id, stage_id), memories=[entry]
+        )
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        log.warn("memory_bank_diary_write_failed", event_id=event_id, stage=stage_id, err=str(exc))
 
 
 async def remember_taste_memo(event_id: str, person_id: str, memo: str) -> None:

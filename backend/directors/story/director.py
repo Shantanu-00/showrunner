@@ -41,6 +41,7 @@ from shared.stages import as_dt
 
 from . import (
     act,
+    diary as diary_mod,
     ledger as ledger_mod,
     memory,
     session as session_mod,
@@ -64,6 +65,8 @@ def _is_idle(event_id: str, event: dict[str, Any], now: dt.datetime) -> bool:
     """
     if event.get("stageOverride"):
         return False
+    if str(event.get("status") or "") == "wrapping":
+        return False  # the finale is in progress — the recap commission and wrap work must run
     stages = list(event.get("stages") or [])
     if not stages:
         return False
@@ -160,6 +163,21 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
         archived_ids, lapsed_gaps = act.archive_lapsed_stages(led, state)
         gaps = gaps + lapsed_gaps
 
+        # The Event Diary (spec 13 §8): each newly-closed chapter gets its qualitative memo, once,
+        # here — the same transition the archive step just detected. `write_for_lapsed` swallows
+        # its own failures; the belt around it is because nothing off the critical path may ever
+        # be the reason a bounty was not issued.
+        if archived_ids:
+            try:
+                await diary_mod.write_for_lapsed(event_id, led, archived_ids)
+            except Exception as exc:  # noqa: BLE001
+                log.warn("diary_step_failed", event_id=event_id, err=str(exc))
+
+        # Advisory prose for the REASON prompt: what the closed chapters felt like, so bounty copy
+        # can say "we've got plenty of temple shots — get the four of you at dinner" with real
+        # context. Never a source of identifiers (the prompt block says so).
+        led.diary = await run_in_threadpool(diary_mod.recall_all, event_id)
+
         outcome.armed = await run_in_threadpool(
             act.arm_stage_moments, event_id, led, state, tick_id=tick_id
         )
@@ -183,6 +201,18 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
             outcome=outcome,
             state=state,
         )
+
+        # Spec 13 §8: the recap film is commissioned by the first tick that sees `wrapping` —
+        # deterministically, the same "anticipate the predictable" posture as arming, because the
+        # one film every event owes its guests must not depend on a model choosing to ask for it.
+        # Exactly one attempt: the session's commission record is the memory, and the host's
+        # "Regenerate recap" button is the retry path if that attempt was refused.
+        if str(event.get("status") or "") == "wrapping" and not any(
+            c.get("persona") == "event_recap" for c in state.commissions
+        ):
+            outcome.commissioned.append(
+                await run_in_threadpool(_commission_recap, event_id, event)
+            )
 
         report: dict[str, Any] = {
             "assessment": (plan.assessment if plan else "") or None,
@@ -248,6 +278,40 @@ async def run_tick(event_id: str, event: dict[str, Any], *, tick_id: str) -> dic
             err=error,
             ms=int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000),
         )
+
+
+def _commission_recap(event_id: str, event: dict[str, Any]) -> dict[str, Any]:
+    """One `event_recap` commission through the ordinary guardrailed path (`commission.py`
+    re-checks status, the panic freeze, one-in-flight-per-persona and the daily ceiling). The
+    outcome — producing or refused, with the reason — is recorded either way, so the wrap report
+    can say the film was wanted and what happened to it."""
+    from directors.reel import commission as reel_commission  # noqa: PLC0415 - keep workers' import path lean
+    from schemas.reel import ReelPersona  # noqa: PLC0415
+
+    result = reel_commission.commission(
+        event_id,
+        persona=ReelPersona.EVENT_RECAP,
+        reason="wrap finale — the event's own recap film",
+        commissioned_by="wrap_tick",
+        event=event,
+    )
+    log.line(
+        "reel_commissioned" if result.ok else "reel_refused",
+        event_id=event_id,
+        persona="event_recap",
+        reel=result.reel_id,
+        why=None if result.ok else result.reason,
+    )
+    return session_mod.remember_commission(
+        {
+            "persona": "event_recap",
+            "stageId": None,
+            "reason": "wrap finale",
+            "status": "producing" if result.ok else "refused",
+            "reelId": result.reel_id,
+            "note": result.reason,
+        }
+    )
 
 
 async def _reason(

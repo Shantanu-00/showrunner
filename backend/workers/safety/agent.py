@@ -73,15 +73,18 @@ note: one short factual sentence for the host, only if the verdict is not public
 speculation about relationships, no praise.
 """
 
-#: Short, text-only, and all three are about the same axis — the one the rubric cannot express as a
-#: threshold. Image few-shots would triple the per-photo prompt cost (spec 09 §2).
+#: Short, text-only, and all of them are about the same axis — the one the rubric cannot express
+#: as a threshold: witnessed ceremonial emotion versus private upset, at any kind of event. Image
+#: few-shots would triple the per-photo prompt cost (spec 09 §2).
 _FEWSHOTS = """\
 Examples (described scenes, and the answer a correct reading gives):
-1. Bride's father in tears as he gives her hand away, family gathered around, everyone attentive ->
-   verdict public_ok, reasons [], ritualEmotion true.
-2. A guest sitting alone at the edge of the room, face in hands, nobody else in frame ->
+1. A father in tears during a ceremony as he gives his daughter's hand away, family gathered
+   around, everyone attentive -> verdict public_ok, reasons [], ritualEmotion true.
+2. Friends crying and laughing at once during a farewell toast on the last night of a trip, arms
+   around each other -> verdict public_ok, reasons [], ritualEmotion true.
+3. A guest sitting alone at the edge of the room, face in hands, nobody else in frame ->
    verdict private_only, reasons [distress_out_of_context], ritualEmotion false.
-3. Toddler in the foreground holding a plate, adults blurred behind ->
+4. Toddler in the foreground holding a plate, adults blurred behind ->
    verdict public_ok, reasons [minor_prominent] (the system routes this to the host on its own).
 """
 

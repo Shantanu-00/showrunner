@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Sparkles,
   ArrowRight,
@@ -17,7 +17,6 @@ import {
   Plus,
   AlertTriangle,
   SkipForward,
-  UserPlus,
 } from "lucide-react";
 import { ensureAnonymousAuth } from "@/lib/firebase";
 import { createEvent, parseItinerary, saveStages } from "@/lib/hostApi";
@@ -29,12 +28,15 @@ import type {
   StageTheme,
 } from "@/lib/hostTypes";
 import { dateForDayIndex, dayIndexFromLocalDate, formatLocalDate, slugify } from "@/lib/hostTypes";
+import type { PersonDoc } from "@/lib/types";
+import { listenPeople } from "@/lib/firestore";
 import { GoogleUpgradeCard } from "./GoogleUpgradeCard";
 import { HostReturnPanel } from "./HostReturnPanel";
 import { rememberEvent } from "./rememberedEvents";
 import { ItineraryInputTabs, type ItineraryParsePayload } from "./ItineraryInputTabs";
 import { StageEditorCard } from "./StageEditorCard";
 import { HostJoinQr } from "./HostJoinQr";
+import { PersonEnrollForm } from "./PersonEnrollForm";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -315,7 +317,7 @@ export function HostWizard() {
             />
           )}
 
-          {step === 4 && <PeopleStep onBack={goBack} onNext={() => setStep(5)} />}
+          {step === 4 && <PeopleStep eventId={eventId} onBack={goBack} onNext={() => setStep(5)} />}
 
           {step === 5 && created && <LinksStep created={created} eventId={created.eventId} />}
         </div>
@@ -828,43 +830,118 @@ function ReviewStep({
 }
 
 // =============================================================================================
-// step 4 — people (shell)
+// step 4 — people
 
-function PeopleStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+function PeopleStep({
+  eventId,
+  onBack,
+  onNext,
+}: {
+  eventId: string | null;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  const [equalFeatured, setEqualFeatured] = useState(false);
+  const [people, setPeople] = useState<PersonDoc[]>([]);
+  const [peopleError, setPeopleError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!eventId) return;
+    return listenPeople(eventId, setPeople, () => setPeopleError("Couldn't load the people you've added."));
+  }, [eventId]);
+
+  // Step 4 only ever renders once the event exists (it comes after Step 1's creation), but a
+  // missing eventId is still handled rather than assumed away — the form has nowhere to send a
+  // photo without one.
+  if (!eventId) {
+    return (
+      <div className="space-y-5">
+        <div className="glass-card p-8 rounded-3xl border border-white/10 text-center">
+          <p className="text-sm text-[var(--ink-muted)]">
+            Create the event on Step 1 before adding people.
+          </p>
+        </div>
+        <StepNav onBack={onBack} onNext={onNext} nextLabel="Skip" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
-      <div className="glass-card p-8 rounded-3xl border border-white/10 text-center">
-        <div className="w-12 h-12 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] flex items-center justify-center mx-auto mb-4">
-          <UserPlus className="w-6 h-6" />
-        </div>
-        <p className="text-sm text-[var(--ivory)] mb-2">Add your group after creating</p>
-        <p className="text-xs text-[var(--ink-muted)] max-w-sm mx-auto leading-relaxed mb-4">
-          Reference photos let Showrunner track who&rsquo;s been photographed and make sure nobody gets
-          missed. Coming to the console shortly after launch.
-        </p>
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-[var(--ink-faint)]">
-          Coming soon
-        </span>
+      <div className="glass-card p-5 rounded-3xl border border-white/10">
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="min-w-0">
+            <span className="block text-xs font-semibold text-[var(--ivory)] uppercase tracking-wider mb-1">
+              Everyone is equally featured
+            </span>
+            <span className="block text-[11px] text-[var(--ink-muted)] leading-relaxed">
+              On: people you add default to inner circle. Off: they default to guest. Either way,
+              you can change any single person&rsquo;s tier later from the host console.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={equalFeatured}
+            onChange={(e) => setEqualFeatured(e.target.checked)}
+            className="w-5 h-5 rounded accent-[var(--accent)] shrink-0"
+          />
+        </label>
       </div>
 
-      <div className="flex items-center justify-between pt-2">
-        <button
-          type="button"
-          onClick={onBack}
-          className="btn-secondary px-5 py-3 text-xs font-semibold flex items-center gap-1.5"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Back</span>
-        </button>
-        <button
-          type="button"
-          onClick={onNext}
-          className="btn-primary px-6 py-3 rounded-full text-xs font-semibold flex items-center gap-1.5"
-        >
-          <span>Next</span>
-          <ArrowRight className="w-3.5 h-3.5" />
-        </button>
-      </div>
+      <PersonEnrollForm eventId={eventId} defaultTier={equalFeatured ? 1 : 3} />
+
+      {peopleError && <p className="text-xs text-[var(--danger)]">{peopleError}</p>}
+
+      {people.length > 0 && (
+        <div className="glass-card p-5 rounded-3xl border border-white/10">
+          <p className="text-xs font-semibold text-[var(--ivory)] uppercase tracking-wider mb-3">
+            Added so far ({people.length})
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {people.map((p) => (
+              <span
+                key={p.personId}
+                className="text-xs px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-[var(--ivory)]"
+              >
+                {p.displayName || "Unnamed"}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <StepNav onBack={onBack} onNext={onNext} nextLabel={people.length > 0 ? "Continue" : "Skip"} />
+    </div>
+  );
+}
+
+function StepNav({
+  onBack,
+  onNext,
+  nextLabel,
+}: {
+  onBack: () => void;
+  onNext: () => void;
+  nextLabel: string;
+}) {
+  return (
+    <div className="flex items-center justify-between pt-2">
+      <button
+        type="button"
+        onClick={onBack}
+        className="btn-secondary px-5 py-3 text-xs font-semibold flex items-center gap-1.5"
+      >
+        <ArrowLeft className="w-3.5 h-3.5" />
+        <span>Back</span>
+      </button>
+      <button
+        type="button"
+        onClick={onNext}
+        className="btn-primary px-6 py-3 rounded-full text-xs font-semibold flex items-center gap-1.5"
+      >
+        <span>{nextLabel}</span>
+        <ArrowRight className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }

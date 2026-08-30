@@ -1,6 +1,6 @@
 .PHONY: up down dev-event smoke smoke-faces smoke-safety smoke-autonomy smoke-director smoke-reel \
         smoke-dlq check \
-        seed eval demo-reset rules-test \
+        seed seed-trip eval demo-reset rules-test \
         deploy-api deploy-intake deploy-dlq deploy-curate deploy-face deploy-safety \
         deploy-video-prep deploy-render deploy-publisher deploy-hosting
 
@@ -67,6 +67,12 @@ check:
 
 seed:
 	$(PY) backend/seed.py --event demo
+
+# Sibling of `seed`: the generic-timeline demo — a 5-day Japan group trip at stable id
+# `japan_trip_2026`, multi-day stages, flat-topology cast, today (Day 4) left with a live
+# group-coverage gap for the Story Director to notice.
+seed-trip:
+	$(PY) scripts/seed_trip.py
 
 # Wipes the demo event without reseeding — the video plan's "make demo-reset" dependency
 # (HANDOFF §7b): every retake after the first needs to run on clean state.

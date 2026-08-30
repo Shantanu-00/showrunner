@@ -218,8 +218,8 @@ export function HowItWorks() {
             cta="Open the guest app"
           >
             Two taps from the QR code to being in. No install, no sign-up, no email address — the
-            guest app signs you in silently and anonymously, because asking a wedding guest to
-            register is how you get zero photos.
+            guest app signs you in silently and anonymously, because asking a guest to register is
+            how you get zero photos.
           </Step>
 
           <Step

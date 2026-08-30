@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, Path, Response
+from fastapi import APIRouter, Depends, Header, Path, Query, Response
 from fastapi.responses import RedirectResponse
 
 from schemas.common import Visibility
@@ -67,9 +67,14 @@ def _reel(event_id: str, reel_id: str) -> dict[str, Any]:
 async def reel_video(
     eventId: str = Path(min_length=1, max_length=128),
     reelId: str = Path(min_length=1, max_length=64),
+    download: bool = Query(False, description="serve as an attachment (the wrap panel's download)"),
     authorization: str | None = Header(default=None),
 ) -> Response:
-    """302 to a short-lived signed URL for the rendered file. See the module docstring for why."""
+    """302 to a short-lived signed URL for the rendered file. See the module docstring for why.
+
+    `?download=1` (spec 13 §8) only changes the signed URL's content-disposition — every
+    visibility re-check above it is identical, and the consent interlock retracts a downloadable
+    recap exactly as it retracts a playing one."""
     doc = _reel(eventId, reelId)
     published = (
         doc.get("status") == ReelStatus.PUBLISHED.value
@@ -95,7 +100,11 @@ async def reel_video(
 
     bucket, path = parsed
     url = gcs.signed_get_url(
-        bucket, path, ttl_minutes=VIDEO_URL_TTL_MINUTES, response_type="video/mp4"
+        bucket,
+        path,
+        ttl_minutes=VIDEO_URL_TTL_MINUTES,
+        response_type="video/mp4",
+        attachment_filename=f"showrunner-{reelId}.mp4" if download else None,
     )
     log.info("reel_video_served", event_id=eventId, reel_id=reelId, published=published)
     # 302 rather than 307: this is a GET and the redirect target is a different resource, and every

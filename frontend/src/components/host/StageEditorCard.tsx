@@ -179,7 +179,7 @@ function MomentAdder({ onAdd }: { onAdd: (label: string) => void }) {
             setValue("");
           }
         }}
-        placeholder="+ Add required moment (e.g. Ring Exchange, First Dance)"
+        placeholder="+ Add required moment (e.g. Group Photo, Sunset Viewpoint)"
         className="text-xs px-3 py-1.5 rounded-full bg-black/40 border border-white/10 text-[var(--ivory)] flex-1 min-w-0 placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
       />
       <button

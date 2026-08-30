@@ -168,7 +168,7 @@ def _memo_agent() -> LlmAgent:
         name="taste_memo_writer",
         model=gemini.adk_model(settings().model_taste_memo),
         instruction=(
-            "You write a short, explainable taste memo for one wedding guest's private photo "
+            "You write a short, explainable taste memo for one event guest's private photo "
             "album, from data the caller already computed — you invent no facts beyond it. Input "
             "is a tag-affinity vector (positive = loved, negative = hidden, both normalised to "
             "[-1, 1]) plus a few example captions of photos this person loved and hid. Write "

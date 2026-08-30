@@ -46,6 +46,11 @@ class ReelPersona(str, Enum):
     STAGE_RECAP = "stage_recap"
     GUEST_ENERGY = "guest_energy"
     MAIN_CHARACTER = "main_character"
+    #: Spec 13 §8: the whole event's best-of film, cut at wrap — `stage_recap`'s lens widened to
+    #: every stage, selection spread chronologically across the arc. Commissioned deterministically
+    #: by the first tick that sees `wrapping` (the "anticipate the predictable" posture), and the
+    #: artifact the wrap report links as the downloadable recap.
+    EVENT_RECAP = "event_recap"
 
 
 class ReelStatus(str, Enum):

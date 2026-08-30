@@ -9,6 +9,7 @@ import type {
   EventStageDoc,
   EventTemplateId,
   EventTypeProfile,
+  HostEnrollResponse,
   HostLinkResponse,
   ItineraryFileMime,
   ItineraryParseOut,
@@ -122,6 +123,32 @@ export async function setFreeze(
 
 export async function getConsoleSummary(eventId: string): Promise<ConsoleSummary> {
   return authedJson(`/v1/events/${eventId}/console`, { method: "GET" });
+}
+
+/** `POST /v1/events/{eventId}/people/host-enroll` (spec 13 §7). The host adds a participant from a
+ * reference photo — coverage tracking only. **Grants no identity**: no uid link, no custom claim.
+ * When the real person later selfie-enrolls, their match against this person is held for the
+ * host's own approval (the impersonation guard, spec 02 §3) exactly like any other claim. */
+export async function hostEnrollPerson(
+  eventId: string,
+  body: { photo: string; displayName: string; tier: number; photoConsent: true }
+): Promise<HostEnrollResponse> {
+  return authedJson(`/v1/events/${eventId}/people/host-enroll`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** `POST /v1/events/{eventId}/people/{personId}/tier` (spec 11 §6) — promote/demote one person. */
+export async function setPersonTier(
+  eventId: string,
+  personId: string,
+  tier: number
+): Promise<{ personId: string; tier: number }> {
+  return authedJson(`/v1/events/${eventId}/people/${personId}/tier`, {
+    method: "POST",
+    body: JSON.stringify({ tier }),
+  });
 }
 
 /** Photos still waiting on the host. `verdict: "blocked"` lists what the explicit-content gate

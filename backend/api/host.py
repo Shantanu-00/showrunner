@@ -68,11 +68,14 @@ from schemas.host import (
 )
 from schemas.itinerary_out import ItineraryParseOut
 from schemas.wrap_out import WrapHeadlineOut
+from directors.story import diary as diary_mod
 from services import armor, gemini
 # One-way: `moderation` imports nothing from this package, so the console badge can share the
 # review queue's own predicate rather than restating it. Do not add the reverse import.
 from . import moderation
 from shared import coverage, errors, fs, internal, log, spend
+from shared import stages as stages_lib
+from shared.eventtime import EventCalendar
 from shared.auth import (
     Principal,
     TooManyEventClaims,
@@ -1304,6 +1307,94 @@ def _honest_gaps(event: dict[str, Any], shards: dict[str, coverage.StageCoverage
     return gaps
 
 
+def _merge_permanent_gaps(event_id: str, event: dict[str, Any], gaps: list[StageGap]) -> list[StageGap]:
+    """Fold `directorState.permanentGaps` into the honest-gaps list (spec 13 §8) — spec 05 §3's
+    original promise, finally kept: the report says not only what is missing but that the system
+    *asked* (an expired bounty) or watched the window close (a lapsed under-covered stage).
+    De-duplicated on (stageId, momentId); the director's record only ever adds the `detail`."""
+    labels = {
+        str(s.get("stageId")): str(s.get("label") or s.get("stageId"))
+        for s in (event.get("stages") or [])
+    }
+    seen = {(g.stageId, g.momentId) for g in gaps}
+    by_key = {(g.stageId, g.momentId): g for g in gaps}
+    try:
+        state = fs.director_state_ref(event_id).get().to_dict() or {}
+    except Exception as exc:  # noqa: BLE001 - the report must render even if this read hiccups
+        log.warn("wrap_permanent_gaps_read_failed", event_id=event_id, err=str(exc))
+        return gaps
+    for record in state.get("permanentGaps") or []:
+        if not isinstance(record, dict):
+            continue
+        stage_id = str(record.get("targetStage") or "")
+        moment_id = str(record.get("targetMoment") or "")
+        if not stage_id or not moment_id:
+            continue
+        detail = (
+            "the stage ended with this still under-covered"
+            if record.get("kind") == "lapsed_stage"
+            else "a bounty asked for this and expired unfilled"
+        )
+        key = (stage_id, moment_id)
+        if key in seen:
+            existing = by_key[key]
+            if not existing.detail:
+                existing.detail = detail
+            continue
+        gap = StageGap(
+            stageId=stage_id,
+            stageLabel=labels.get(stage_id, stage_id),
+            momentId=moment_id,
+            momentLabel=str(record.get("title") or moment_id),
+            detail=detail,
+        )
+        gaps.append(gap)
+        seen.add(key)
+        by_key[key] = gap
+    return gaps
+
+
+def _best_media_per_stage(event_id: str, per_stage: int = 3) -> dict[str, list[str]]:
+    """Top mediaIds per stage by the Curator's stored aesthetic (spec 13 §8) — the reel selector's
+    existing composite index (`visibility, status, curator.aestheticScore desc`), grouped in
+    Python. `pool` included deliberately: the wrap panel is host-authed, and coverage counts
+    evidence, not exposure."""
+    best: dict[str, list[str]] = {}
+    try:
+        query = (
+            fs.media_col(event_id)
+            .where(filter=firestore.FieldFilter("visibility", "in", ["public", "pool"]))
+            .where(filter=firestore.FieldFilter("status", "==", "indexed"))
+            .order_by("curator.aestheticScore", direction=firestore.Query.DESCENDING)
+            .limit(300)
+        )
+        for snap in query.stream():
+            doc = snap.to_dict() or {}
+            if doc.get("deleted") or doc.get("duplicateOf"):
+                continue
+            stage_id = str((doc.get("curator") or {}).get("stageId") or "")
+            if not stage_id:
+                continue
+            bucket = best.setdefault(stage_id, [])
+            if len(bucket) < per_stage:
+                bucket.append(snap.id)
+    except Exception as exc:  # noqa: BLE001 - best-of thumbnails are decoration on the report
+        log.warn("wrap_best_media_failed", event_id=event_id, err=str(exc))
+    return best
+
+
+def _recap_reel_id(event_id: str) -> str | None:
+    """The wrap-commissioned `event_recap`'s reelId from the director's commission record."""
+    try:
+        state = fs.director_state_ref(event_id).get().to_dict() or {}
+        for record in reversed(state.get("commissions") or []):
+            if isinstance(record, dict) and record.get("persona") == "event_recap" and record.get("reelId"):
+                return str(record["reelId"])
+    except Exception as exc:  # noqa: BLE001
+        log.warn("wrap_recap_lookup_failed", event_id=event_id, err=str(exc))
+    return None
+
+
 def _top_contributors(event_id: str, limit: int = 5) -> list[Contributor]:
     query = fs.guests_col(event_id).order_by(
         "points", direction=firestore.Query.DESCENDING
@@ -1337,6 +1428,10 @@ async def _headline(event: dict[str, Any], stats: dict[str, Any], gaps: list[Sta
         facts.append(f"{row.label}: {row.photoCount} photos, {row.highlightCount} highlights")
     for gap in gaps:
         facts.append(f"no photos of {gap.momentLabel} during {gap.stageLabel}")
+    # The Event Diary's chapter memos (spec 13 §8) — the one input here that is texture rather
+    # than a number, which is exactly what a headline needs to sound like the event it is about.
+    for stage_id, memo in sorted(diary_mod.recall_all(str(event.get("eventId") or "")).items()):
+        facts.append(f"how {stage_id} felt: {memo}")
     try:
         agent = LlmAgent(
             name="wrap_writer",
@@ -1377,6 +1472,8 @@ async def finalize_event(
         raise errors.ApiError(500, "INTERNAL", "finalize produced no result")
 
     shards = coverage.read(eventId)
+    calendar = EventCalendar.of(event)
+    best_media = _best_media_per_stage(eventId)
     per_stage = [
         StageReportRow(
             stageId=str(stage.get("stageId") or ""),
@@ -1386,10 +1483,14 @@ async def finalize_event(
             meanAesthetic=round(
                 (shards.get(str(stage.get("stageId"))) or coverage.StageCoverage(stage_id="")).mean_aesthetic, 3
             ),
+            dayLabel=(
+                calendar.day_label(starts) if (starts := stages_lib.as_dt(stage.get("startsAt"))) else ""
+            ),
+            bestMediaIds=best_media.get(str(stage.get("stageId")), []),
         )
         for stage in event.get("stages") or []
     ]
-    gaps = _honest_gaps(event, shards)
+    gaps = _merge_permanent_gaps(eventId, event, _honest_gaps(event, shards))
     total_photos = _count(fs.media_col(eventId))
     total_reels = _count(fs.reels_col(eventId))
     total_photographers = _count(
@@ -1413,6 +1514,7 @@ async def finalize_event(
         perStage=per_stage,
         honestGaps=gaps,
         topContributors=contributors,
+        recapReelId=_recap_reel_id(eventId),
     )
     fs.event_ref(eventId).update({"wrapReport": fs.to_firestore(report.model_dump(by_alias=True))})
     log.info(

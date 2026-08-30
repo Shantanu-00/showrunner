@@ -74,9 +74,10 @@ from . import session as session_mod
 #: is visibly a raise and cannot exceed the ceiling. Recorded in HANDOFF §9.
 ESCALATION_MULTIPLIER = 1.5
 
-#: Spec 06's personas. Named here rather than imported because spec 06's schemas are B4-S11's; this is
-#: the vocabulary a commission may use, and S11 owns what happens to it.
-REEL_PERSONAS = frozenset({"couple", "stage_recap", "guest_energy", "main_character"})
+#: Spec 06's personas (+ spec 13 §8's `event_recap`). Named here rather than imported because spec
+#: 06's schemas are B4-S11's; this is the vocabulary a commission may use, and S11 owns what
+#: happens to it.
+REEL_PERSONAS = frozenset({"couple", "stage_recap", "guest_energy", "main_character", "event_recap"})
 
 #: What an armed bounty says. Deliberately plain: it is a standing instruction from the timetable, not
 #: a pitch a model wrote.

@@ -153,9 +153,14 @@ Examples (described scenes, and the scores a correct answer carries):
 Examples (described scenes, and the scores a correct answer carries):
 1. Two people mid-embrace, faces visible, natural light, sharp -> aestheticScore 0.8,
    isHighlight true, momentTags [embrace], peopleCountEstimate 2.
-2. Empty room with decorations, correct exposure, no subject of interest -> aestheticScore 0.4,
+2. Four friends arm-in-arm in front of a landmark gate, all faces clear, golden-hour light ->
+   aestheticScore 0.8, isHighlight true, momentTags [group_shot], peopleCountEstimate 4,
+   sceneSetting street.
+3. A mountain across a lake at dusk, nobody in frame, deliberate composition -> aestheticScore 0.7,
+   isHighlight false, momentTags [scenery], peopleCountEstimate 0, sceneSetting outdoor_nature.
+4. Empty room with decorations, correct exposure, no subject of interest -> aestheticScore 0.4,
    isHighlight false, momentTags [venue_details], peopleCountEstimate 0.
-3. Photo of a floor, taken accidentally -> aestheticScore 0.0, isHighlight false, momentTags
+5. Photo of a floor, taken accidentally -> aestheticScore 0.0, isHighlight false, momentTags
    [accidental], caption empty, peopleCountEstimate 0.
 """,
 }

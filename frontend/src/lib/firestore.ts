@@ -31,7 +31,7 @@ import {
   where,
   type Unsubscribe,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db, getUid } from "./firebase";
 import type { BountyDoc, KioskPlaylist, LeaderboardEntry, MediaDoc, PersonDoc, ReelDoc } from "./types";
 
 const GRID_LIMIT = 60;
@@ -278,6 +278,31 @@ export function listenPeopleTiers(
   );
 }
 
+/** The event's people roster, whole documents — the host console's People panel (spec 13 §7).
+ * Distinct from `listenPeopleTiers`/`listenPeopleDirectory` above, which narrow to exactly the
+ * one field they need; this is the one place `hostEnrolled`/`claimApproved` are read, and both
+ * are host-console-only fields no guest surface consumes. Ordered by `createdAt` so a host who
+ * just added someone sees them land at a stable position rather than reshuffling on every
+ * unrelated Firestore write. */
+export function listenPeople(
+  eventId: string,
+  onData: (people: PersonDoc[]) => void,
+  onError: (err: Error) => void
+): Unsubscribe {
+  const q = query(collection(db, "events", eventId, "people"), orderBy("createdAt", "asc"));
+  return onSnapshot(
+    q,
+    (snap) =>
+      onData(
+        snap.docs.map((d) => {
+          const p = d.data() as PersonDoc;
+          return { ...p, personId: p.personId ?? d.id };
+        })
+      ),
+    onError
+  );
+}
+
 /** Display-name directory for the leaderboard slot (spec 12 §5.2 point 7): un-enrolled uids
  * render as "Mystery guest 🎭" — never blocked, points are never lost, only the name is missing. */
 export function listenPeopleDirectory(
@@ -334,17 +359,25 @@ export function listenActiveBounties(
   );
   return onSnapshot(
     q,
-    (snap) =>
+    (snap) => {
+      const uid = getUid();
       onData(
-        snap.docs.map((d) => {
-          const raw = d.data();
-          return {
-            ...(raw as BountyDoc),
-            createdAtMs: tsMillis(raw.createdAt),
-            expiresAtMs: tsMillis(raw.expiresAt),
-          };
-        })
-      ),
+        snap.docs
+          .map((d) => {
+            const raw = d.data();
+            return {
+              ...(raw as BountyDoc),
+              createdAtMs: tsMillis(raw.createdAt),
+              expiresAtMs: tsMillis(raw.expiresAt),
+            };
+          })
+          // Display-courtesy filter (spec 13 §6), applied here so the banner, the missions
+          // sheet and the mission-count badge all agree: an `assignee` bounty shows only to
+          // the uid it names. The server flips it to a broadcast on its own if unanswered —
+          // delivery routing only, never who gets paid.
+          .filter((b) => b.audience !== "assignee" || !b.assigneeUid || b.assigneeUid === uid)
+      );
+    },
     onError
   );
 }

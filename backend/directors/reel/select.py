@@ -239,6 +239,10 @@ def _persona_filter(
         elif persona is ReelPersona.STAGE_RECAP:
             if stage_id and c.stage_id != stage_id:
                 continue
+        elif persona is ReelPersona.EVENT_RECAP:
+            # The whole arc is eligible (spec 13 §8) — the floor above is the only cut here; the
+            # cross-stage spread happens in `choose`'s bucketing, not by exclusion.
+            pass
         elif persona is ReelPersona.COUPLE:
             # The couple's film is about the principals, plus the moments they are the subject of.
             # `top_tier <= 1` is the deterministic test — spec 11 §4: VIP is policy, not memory.
@@ -319,12 +323,19 @@ def choose(
                 reserved.append(best)
                 claimed.add(best.media_id)
 
-    # --- diversity round-robin over the rest.
+    # --- diversity round-robin over the rest. For `event_recap` the bucket key leads with the
+    # *stage* (spec 13 §8): the round-robin then spreads the cap across the event's whole arc —
+    # Day 1's arrival gets a shot into the film even when Day 4's viewpoint out-scores it, which
+    # is the difference between a recap of the trip and a montage of its single best hour.
     buckets: dict[str, list[Candidate]] = {}
     for c in by_score:
         if c.media_id in claimed:
             continue
-        buckets.setdefault(f"{c.primary_moment}|{c.primary_cluster}", []).append(c)
+        if persona is ReelPersona.EVENT_RECAP:
+            key = f"{c.stage_id}|{c.primary_cluster}"
+        else:
+            key = f"{c.primary_moment}|{c.primary_cluster}"
+        buckets.setdefault(key, []).append(c)
 
     order = sorted(buckets, key=lambda k: (-buckets[k][0].aesthetic, k))
     chosen = list(reserved)

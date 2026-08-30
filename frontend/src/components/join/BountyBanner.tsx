@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Target, Camera, X, Zap } from "lucide-react";
+import { Target, Camera, X, Zap, Sparkles } from "lucide-react";
 import type { BountyDoc } from "@/lib/types";
 import { listenActiveBounties } from "@/lib/firestore";
+import { getUid } from "@/lib/firebase";
 
 const SNOOZE_MS = 10 * 60 * 1000;
 const RETREAT_MS = 240;
@@ -62,8 +63,14 @@ export function BountyBanner({
   useEffect(() => {
     if (shownId || leaving) return;
     if (Date.now() - lastShownAtRef.current < SNOOZE_MS) return;
+    // Display-courtesy filter (spec 13 §6): an `assignee` bounty banners only for the uid the
+    // server resolved it to. Everyone else simply doesn't see it here — the server itself flips
+    // `audience` back to `all` (and clears `assigneeUid`) if the assignee doesn't respond, and
+    // this component does no timeout math of its own, only a direct uid comparison.
+    const uid = getUid();
     const candidate = [...bounties]
       .filter((b) => !seenRef.current.has(b.bountyId))
+      .filter((b) => b.audience !== "assignee" || b.assigneeUid === uid)
       .sort((a, b) => (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0))[0];
     if (!candidate) return;
     setShownId(candidate.bountyId);
@@ -91,6 +98,7 @@ export function BountyBanner({
   if (!bounty) return null;
 
   const escalated = bounty.status === "escalated";
+  const justForYou = bounty.audience === "assignee" && bounty.assigneeUid === getUid();
 
   return (
     <div className={`fixed top-4 inset-x-0 z-50 px-4 ${leaving ? "banner-out" : "banner-in"}`}>
@@ -104,11 +112,17 @@ export function BountyBanner({
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 mb-1">
+            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
               <Zap className="w-3.5 h-3.5 text-[var(--accent)]" />
               <span className="font-mono text-[10px] uppercase tracking-[0.2em] font-semibold text-[var(--gold-300)]">
                 {escalated ? "URGENT STORY DIRECTIVE" : "PHOTO MISSION DETECTED"}
               </span>
+              {justForYou && (
+                <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.15em] font-semibold text-[var(--accent)] bg-[var(--accent)]/15 border border-[var(--accent)]/30 rounded-full px-2 py-0.5">
+                  <Sparkles className="w-3 h-3" />
+                  <span>Just for you</span>
+                </span>
+              )}
             </div>
             <h3 className="font-[family-name:var(--font-display)] text-lg font-medium text-[var(--ivory)] leading-snug">
               {bounty.copy || bounty.title}

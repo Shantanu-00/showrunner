@@ -303,6 +303,10 @@ class StageGap(BaseModel):
     stageLabel: str
     momentId: str
     momentLabel: str
+    #: Spec 13 §8: how the system *tried* — "a bounty asked for this and expired unfilled", "the
+    #: stage ended under-covered". Empty on plain zero-photo gaps; the honest report finally says
+    #: not just what is missing but that it was asked for (spec 05 §3's original promise).
+    detail: str = ""
 
 
 class StageReportRow(BaseModel):
@@ -311,6 +315,11 @@ class StageReportRow(BaseModel):
     photoCount: int
     highlightCount: int
     meanAesthetic: float
+    #: "Day 3" on dated events, "" otherwise (spec 13 §1 — derived, never stored elsewhere).
+    dayLabel: str = ""
+    #: Top mediaIds by the Curator's stored aesthetic, `visibility ∈ {pool, public}` — what the
+    #: wrap panel renders as the stage's best moments (host-authed media redirects resolve them).
+    bestMediaIds: list[str] = Field(default_factory=list)
 
 
 class Contributor(BaseModel):
@@ -329,6 +338,10 @@ class WrapReport(BaseModel):
     perStage: list[StageReportRow] = Field(default_factory=list)
     honestGaps: list[StageGap] = Field(default_factory=list)
     topContributors: list[Contributor] = Field(default_factory=list)
+    #: Spec 13 §8: the wrap-commissioned `event_recap` reel's id, stamped whether or not the
+    #: render has finished — the wrap panel listens on the reel document itself for the outcome
+    #: (the kiosk `ReelSlot` pattern), so finalize never waits on a render.
+    recapReelId: str | None = None
 
 
 # ---------------------------------------------------------------- console summary

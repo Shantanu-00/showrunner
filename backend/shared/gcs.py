@@ -129,6 +129,7 @@ def signed_get_url(
     *,
     ttl_minutes: int = 60,
     response_type: str | None = None,
+    attachment_filename: str | None = None,
 ) -> str:
     """V4 signed GET — short-lived read access to one private object.
 
@@ -143,11 +144,17 @@ def signed_get_url(
     """
     creds, signer = _signing_credentials()
     blob = client().bucket(bucket).blob(path)
+    # `response-content-disposition` is part of what gets signed, so a caller cannot flip a view
+    # URL into a download URL after the fact — the disposition is this function's decision.
+    disposition = (
+        f'attachment; filename="{attachment_filename}"' if attachment_filename else None
+    )
     return blob.generate_signed_url(
         version="v4",
         expiration=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=ttl_minutes),
         method="GET",
         response_type=response_type,
+        response_disposition=disposition,
         service_account_email=signer,
         access_token=creds.token,
     )

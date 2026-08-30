@@ -34,7 +34,7 @@ from typing import Any
 
 from fastapi.concurrency import run_in_threadpool
 
-from directors.story import world as world_mod
+from directors.story import diary as diary_mod, world as world_mod
 from schemas.reel import (
     Critique,
     CriticVerdict,
@@ -347,6 +347,14 @@ async def _direct_and_critique(
     # One document read, no model call — `world.recall_prose` degrades to "" on any failure, and an
     # empty string means `evidence_block` simply omits the section (see its docstring).
     venue = await run_in_threadpool(world_mod.recall_prose, event_id)
+    # The Event Diary (spec 13 §8), read only for the whole-event film: the chapter memos are what
+    # give the recap's brief its texture, and every other persona's evidence is already scoped to
+    # one stage or one person. Same degrade as `venue`: {} omits the section.
+    diary = (
+        await run_in_threadpool(diary_mod.recall_all, event_id)
+        if persona is ReelPersona.EVENT_RECAP
+        else {}
+    )
 
     for attempt in (1, 2):
         attempts = attempt
@@ -361,6 +369,7 @@ async def _direct_and_critique(
             critique=feedback or None,
             previous_shot_ids=previous_ids or None,
             venue=venue,
+            diary=diary or None,
         )
         plan, plan_usage = await gemini.run_structured(
             agent.direct_agent(),

@@ -17,6 +17,7 @@ import { ItineraryPanel } from "./ItineraryPanel";
 import { StageOverridePanel } from "./StageOverridePanel";
 import { WrapReportPanel } from "./WrapReportPanel";
 import { SettingsPanel } from "./SettingsPanel";
+import { PeoplePanel } from "./PeoplePanel";
 
 type AuthState = "checking" | "need-code" | "ready" | "not-found";
 
@@ -240,6 +241,10 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
       {/* Highest in the column after the lifecycle KPIs on purpose: a held claim is a guest standing
           in the room who cannot see their own photos, and it is only resolvable here. */}
       <ClaimReviewPanel eventId={eventId} />
+
+      {/* The other half of that same trust boundary: adding someone here never opens their album by
+          itself (only the panel above does that), but it is where coverage tracking and tiers live. */}
+      <PeoplePanel eventId={eventId} />
 
       {/* Directly beneath it, and for the same reason: every conservative default in the perception
           pipeline parks a photo here, and until this panel existed none of them could be cleared.
