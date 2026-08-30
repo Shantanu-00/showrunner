@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Play, Tv, Sparkles, Volume2 } from "lucide-react";
+import { Play, Tv, Sparkles, Volume2, AlertTriangle } from "lucide-react";
 import type { EventPublicInfo } from "@/lib/types";
 
 export function KioskSetup({
@@ -12,9 +12,11 @@ export function KioskSetup({
   onStart: () => void;
 }) {
   const [starting, setStarting] = useState(false);
+  const [fullscreenWarning, setFullscreenWarning] = useState<string | null>(null);
 
   async function handleStart() {
     setStarting(true);
+    setFullscreenWarning(null);
     try {
       const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
       const source = ctx.createBufferSource();
@@ -24,17 +26,33 @@ export function KioskSetup({
     } catch {
       // non-fatal
     }
+    // B4: this used to be optional-chained and silent on refusal. Every layout below assumes
+    // fullscreen (the QR/monogram and status glyph are pinned in viewport-relative corners), so a
+    // laptop that reaches "started" without actually going fullscreen needs to be told why, not left
+    // to guess at a cramped, overlapping show.
+    let warning: string | null = null;
     try {
-      await document.documentElement.requestFullscreen?.();
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        warning = "Fullscreen isn't supported in this browser — the show will run in the current window.";
+      }
     } catch {
-      // non-fatal
+      warning = "Fullscreen was blocked. Allow it for this site, or continue in windowed mode.";
     }
     try {
       await (navigator as unknown as { wakeLock?: { request: (t: string) => Promise<unknown> } }).wakeLock?.request(
         "screen"
       );
     } catch {
-      // non-fatal
+      // non-fatal — no wake lock support/grant; the screen may sleep, but the show still runs
+    }
+    setStarting(false);
+    if (warning) {
+      // Stay on this screen rather than call onStart(): KioskSetup unmounts the moment it does, so
+      // this is the only chance to show the operator why the wall isn't actually fullscreen.
+      setFullscreenWarning(warning);
+      return;
     }
     onStart();
   }
@@ -73,6 +91,22 @@ export function KioskSetup({
           <Volume2 className="w-4 h-4 text-[var(--gold-300)]" />
           <span>Enables Lyria audio tracks & maintains Screen Wake Lock</span>
         </div>
+
+        {fullscreenWarning && (
+          <div className="flex flex-col items-center gap-2 mt-6 pt-4 border-t border-white/10 w-full">
+            <div className="flex items-center gap-2 text-xs text-[var(--warn)]">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{fullscreenWarning}</span>
+            </div>
+            <button
+              type="button"
+              onClick={onStart}
+              className="text-xs underline text-[var(--ink-muted)] hover:text-[var(--ivory)]"
+            >
+              Continue anyway
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

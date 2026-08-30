@@ -5,13 +5,29 @@ import type { JustInSlot as JustInSlotType, MediaDoc } from "@/lib/types";
 import { listenJustIn } from "@/lib/firestore";
 import { MediaImg } from "@/lib/MediaImg";
 
+/** B3: no spec pins this number — flagged for HANDOFF §9. `just_in` is otherwise unfiltered
+ * (spec 04 §4: recency-only, no score term), so an off-topic screenshot or a blurry accident got
+ * 8 seconds of screen time unconditionally. A photo the Curator placed on a stage is trusted on
+ * relevance alone; anything else needs to at least clear a basic quality bar to earn the strip. This
+ * is display ordering, not exposure — `visibility` and `recompute_visibility` are untouched. */
+const JUST_IN_MIN_AESTHETIC = 0.6;
+
+function meetsJustInFloor(media: MediaDoc): boolean {
+  return media.curator?.stageId != null || (media.curator?.aestheticScore ?? 0) >= JUST_IN_MIN_AESTHETIC;
+}
+
 /** `just_in` — the "your photo is on the wall" guarantee (spec 04 §4): recency-only, no score
  * term, no curation. A 96px filmstrip of whatever just went public. */
 export function JustInSlot({ eventId, slot }: { eventId: string; slot: JustInSlotType }) {
   const [items, setItems] = useState<MediaDoc[]>([]);
 
   useEffect(() => {
-    return listenJustIn(eventId, slot.liveWindowSec, setItems, () => setItems([]));
+    return listenJustIn(
+      eventId,
+      slot.liveWindowSec,
+      (raw) => setItems(raw.filter(meetsJustInFloor)),
+      () => setItems([])
+    );
   }, [eventId, slot.liveWindowSec]);
 
   const hero = items[0];
