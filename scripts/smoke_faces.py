@@ -16,6 +16,21 @@ Needs a deployed `api` *and* `worker-face` (`WORKER_FACE_URL` set — this scrip
 embedding path directly, the same way `api` does, to derive the VIP's seed embedding).
 
     python scripts/smoke_faces.py --event-id dev_01J...
+    python scripts/smoke_faces.py --offline               # decision building blocks only, no network
+
+**What `--offline` does and does not cover.** `faces_lib.is_ambiguous` and `PersonHit.protected`
+(`shared/faces.py`) are genuinely pure — imported and exercised here unmodified, the same way
+`smoke_safety.py --gate-only` exercises `workers/safety/gate.py::decide`. The *selection* between
+`CLAIM_SIZE`/`HOST_APPROVAL` (a brand-new person's claim) and between
+`PROTECTED_PERSON`/`AMBIGUOUS_MATCH`/`HOST_APPROVAL` (a claim matching someone already enrolled) is
+not: both are one-line ternaries inline inside `api/identity.py`'s Firestore-writing handlers
+(`_create_person_and_claim`, `_hold_identity_match`) rather than a standalone function like
+`gate.decide`. `identity.py` is outside this script's ownership, so that selection is deliberately
+*not* re-implemented here as a shadow copy of the real ternary — a copy that could drift from the
+real thing silently is worse than no offline coverage for it at all. `check_claim_logic` below
+covers everything that genuinely is separable; extracting the two ternaries into pure functions
+(`workers/safety/gate.py`'s pattern) would close the remaining gap, but that is a production-code
+change and not this script's call to make.
 """
 
 from __future__ import annotations
@@ -40,7 +55,7 @@ import google.auth.jwt  # noqa: E402
 import google.auth.transport.requests  # noqa: E402
 
 from schemas.person import Tier  # noqa: E402
-from shared import fs, internal as face_internal  # noqa: E402
+from shared import faces as faces_lib, fs, internal as face_internal  # noqa: E402
 from shared.settings import settings  # noqa: E402
 from shared.ulid import new_ulid  # noqa: E402
 
@@ -176,6 +191,89 @@ def enroll(api: str, token: str, event_id: str, selfie_b64: str, display_name: s
     return resp.json()
 
 
+# ---------------------------------------------------------------- 0. the claim-decision building blocks
+
+
+def check_claim_logic() -> None:
+    """Everything behind a claim's `holdReason` (spec 02 §3) that is pure enough to check with no
+    network and no spend — see the module docstring for exactly where that separability ends."""
+    cfg = settings()
+
+    # spec 02 §3, verbatim: "the face indexer matches at tau_match (0.45), looser than tau_claim
+    # (0.60)". The impersonation guard depends on that gap in both directions — closing it would make
+    # an ordinary indexing match and a claim attempt the same threshold.
+    if not (0.0 < cfg.tau_match < cfg.tau_claim < 1.0):
+        fail(
+            f"tau_match={cfg.tau_match} tau_claim={cfg.tau_claim} — "
+            "expected 0 < tau_match < tau_claim < 1 (spec 02 §3)"
+        )
+    ok(f"tau_match={cfg.tau_match} < tau_claim={cfg.tau_claim} (spec 02 §3's ordering holds)")
+
+    if not (0.0 < cfg.claim_ambiguity_margin < 1.0):
+        fail(f"claim_ambiguity_margin={cfg.claim_ambiguity_margin} — expected between 0 and 1")
+    if cfg.claim_review_threshold <= 0:
+        fail(f"claim_review_threshold={cfg.claim_review_threshold} — expected a positive face count")
+    ok(
+        f"claim_ambiguity_margin={cfg.claim_ambiguity_margin} "
+        f"claim_review_threshold={cfg.claim_review_threshold}"
+    )
+
+    def hit(
+        person_id: str, similarity: float, *, tier: int = 3, host_enrolled: bool = False
+    ) -> faces_lib.PersonHit:
+        return faces_lib.PersonHit(person_id, similarity, {"tier": tier, "hostEnrolled": host_enrolled})
+
+    # `is_ambiguous` only ever looks at the top two, and the margin is exclusive: a gap exactly equal
+    # to the margin does not trigger it (`shared/faces.py`'s own `<`, not `<=`). Cases stay a clear
+    # 0.01 either side of the margin rather than exactly on it, since "exactly on a float boundary" is
+    # not a real invariant to pin down — cosine similarities are never that precise in practice.
+    margin = cfg.claim_ambiguity_margin
+    ambiguity_cases: list[tuple[str, list[faces_lib.PersonHit], bool]] = [
+        ("no hits at all", [], False),
+        ("a single hit has nothing to be ambiguous with", [hit("p1", 0.90)], False),
+        ("top two clearly apart", [hit("p1", 0.90), hit("p2", 0.90 - margin - 0.05)], False),
+        (
+            "top two just outside the margin — not ambiguous",
+            [hit("p1", 0.90), hit("p2", 0.90 - margin - 0.01)],
+            False,
+        ),
+        (
+            "top two just inside the margin — ambiguous",
+            [hit("p1", 0.90), hit("p2", 0.90 - margin + 0.01)],
+            True,
+        ),
+        ("twins: an identical top two", [hit("p1", 0.92), hit("p2", 0.92)], True),
+    ]
+    for label, hits, expected in ambiguity_cases:
+        got = faces_lib.is_ambiguous(hits)
+        if got is not expected:
+            fail(f"is_ambiguous: {label} -> {got}, expected {expected}")
+        print(f"  ok  ambiguous={got!s:<5} {label}")
+    ok(f"{len(ambiguity_cases)} is_ambiguous cases correct (pure function, no network, no spend)")
+
+    # `PersonHit.protected`: tier <= 2 (Principal / InnerCircle / NamedVIP, spec 11 §3) or
+    # hostEnrolled — the two signals spec 02 §3 says a match must never silently grant.
+    protection_cases: list[tuple[str, faces_lib.PersonHit, bool]] = [
+        ("tier 0 (Principal) is always protected", hit("p", 0.9, tier=0), True),
+        ("tier 1 (InnerCircle) is always protected", hit("p", 0.9, tier=1), True),
+        ("tier 2 (NamedVIP) is always protected", hit("p", 0.9, tier=2), True),
+        ("tier 3 (Guest), not host-enrolled, is not protected", hit("p", 0.9, tier=3), False),
+        ("tier 3 (Guest) but host-enrolled IS protected", hit("p", 0.9, tier=3, host_enrolled=True), True),
+    ]
+    for label, ph, expected in protection_cases:
+        got = ph.protected
+        if got is not expected:
+            fail(f"PersonHit.protected: {label} -> {got}, expected {expected}")
+        print(f"  ok  protected={got!s:<5} {label}")
+    ok(f"{len(protection_cases)} PersonHit.protected cases correct (pure property, no network, no spend)")
+
+    print(
+        "  note  holdReason selection itself (CLAIM_SIZE/HOST_APPROVAL and "
+        "PROTECTED_PERSON/AMBIGUOUS_MATCH/HOST_APPROVAL) is inline in api/identity.py, not a "
+        "standalone function — see the module docstring for why it is not re-tested here."
+    )
+
+
 def main() -> int:
     # Before the parser, not after: this populates os.environ from .env (settings.py's loader),
     # which the flag defaults below read — same ordering rule as smoke_upload.py.
@@ -185,7 +283,15 @@ def main() -> int:
     ap.add_argument("--event-id", default=os.environ.get("SMOKE_EVENT_ID"))
     ap.add_argument("--api", default=os.environ.get("NEXT_PUBLIC_API_URL"))
     ap.add_argument("--timeout", type=float, default=90.0)
+    ap.add_argument("--offline", action="store_true", help="claim-decision building blocks only — no network")
     args = ap.parse_args()
+
+    print("── the claim-decision building blocks (spec 02 §3)")
+    check_claim_logic()
+    if args.offline:
+        print("\nPASS  claim-decision building blocks only (--offline)")
+        return 0
+    print()
 
     api = (args.api or "").rstrip("/")
     api_key = os.environ.get("NEXT_PUBLIC_FIREBASE_API_KEY", "")
