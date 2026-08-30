@@ -15,7 +15,7 @@ export function PublicGallery({
   judgeMode,
 }: {
   eventId: string;
-  stages: Array<{ stageId: string; label: string }>;
+  stages: Array<{ stageId: string; label: string; day?: number | null }>;
   judgeMode: boolean;
 }) {
   const [mode, setMode] = useState<"recent" | "highlights">("recent");
