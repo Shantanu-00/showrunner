@@ -184,6 +184,20 @@ class Event(BaseModel):
     access: EventAccess = Field(default_factory=EventAccess)
     guestCount: int = 0
 
+    #: The event's calendar span as ISO **local dates** ("2026-10-12") in `timezone`, not UTC
+    #: instants — "Day N" is a wall-clock concept, and a UTC midnight lands on the wrong day for
+    #: half the planet. `None` (every event created before spec 13, and any host who skips the
+    #: field) means "no day structure": `shared/eventtime.py` returns no day index and every
+    #: renderer falls back to the time-only form it always had. Day indices are always **derived**
+    #: from these via `shared/eventtime.py`, never stored — a host correcting the start date must
+    #: not leave stale day numbers anywhere.
+    startsOn: str | None = None
+    endsOn: str | None = None
+    #: How many *people* the host expects (spec 13) — distinct from `guestCount`, which counts
+    #: sessions (one human = several uids, spec 02 §1). Feeds the group-photo coverage threshold
+    #: and the invite seat-cap default; `None` disables group-coverage logic entirely.
+    expectedParticipants: int | None = None
+
     stages: list[EventStage] = Field(default_factory=list)
     activeStage: str | None = None
     stageOverride: str | None = None  # host override always wins (spec 05 §2)

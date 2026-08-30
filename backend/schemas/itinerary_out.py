@@ -30,6 +30,16 @@ class ParsedStage(BaseModel):
     label: str
     orderIndex: int = 0
     timeHint: str = ""  # the time-of-day text as pasted, e.g. "4:00 PM" — never a computed instant
+    #: Spec 13's amendment to the module docstring above: when the *event's own date range* is in
+    #: the prompt and the source states or plainly implies which day a stage falls on ("Day 3",
+    #: "Oct 14", "Tuesday"), the model may anchor the timeHint to it as a proposed local instant,
+    #: "YYYY-MM-DDTHH:MM" in the event's timezone. This is a **prefill for the host's date/time
+    #: picker, never a saved value** — the review-table discipline is unchanged, and `PUT /stages`
+    #: remains the only writer of real UTC windows. Empty whenever the day is not in the text:
+    #: "never invent" still wins over "convenient". Typed `str` so a malformed value degrades to an
+    #: unfilled picker rather than failing the parse.
+    proposedStartLocal: str = ""
+    proposedEndLocal: str = ""
     requiredMoments: list[ParsedMoment] = Field(default_factory=list)
     #: A `SceneSetting` value, or "" when the paste does not say. Typed `str` for the same reason
     #: `CuratorOut.sceneSetting` is: an unrecognised value must degrade, not fail the whole parse.
@@ -50,9 +60,16 @@ class ParsedStage(BaseModel):
 
 
 class ItineraryParseOut(BaseModel):
-    """One paste in, a proposed (never authoritative) stage table out."""
+    """One paste (or PDF/screenshot, spec 13) in, a proposed (never authoritative) stage table out."""
 
     stages: list[ParsedStage] = Field(default_factory=list)
+    #: Only when the input was a document or image: the plain-text schedule the model read out of
+    #: it. Model Armor cannot pre-screen bytes it never sees as text (§4.7 — Armor is text-only),
+    #: so the endpoint guards *this* after the parse and rejects the whole proposal on a block —
+    #: the same "checked at onboarding" property the pasted path gets up front. Instructed to stay
+    #: empty for plain-text input, where the paste was already guarded and echoing 8k chars back
+    #: would be pure output-token spend.
+    sourceText: str = ""
     #: e.g. "no explicit stage boundaries found — the whole paste read as one stage." Shown to the
     #: host verbatim above the review table; never blocks anything, since Go Live's real gate is
     #: "≥1 stage", not "the parse was confident".

@@ -195,6 +195,25 @@ DRIFT_MIN_VISUAL = 0.6
 #: it still means something when the sample is short.
 DRIFT_VOTE_FRACTION = 0.5
 
+# --- multi-day pacing (spec 13) ----------------------------------------------------------------
+# None of these three is spec-05-pinned; all are spec 13's, chosen this build and flagged in
+# HANDOFF §9 per the never-improvise discipline.
+#: How long after a stage's `endsAt` its uncovered moments stay *live* gaps. Past this, they are
+#: archived once into `directorState.permanentGaps` (the wrap report's honesty record) and stop
+#: bidding for prompt slots and bounty budget — Day 1's missed dinner must not still be shouting
+#: over Day 4's viewpoint. 90 min: long enough that "we're still at the restaurant" photos count.
+STAGE_GAP_GRACE_MINUTES = 90
+#: A tick is *idle* — deterministic steps only, no model call — when nothing is scheduled within
+#: this many minutes ahead (nor within the grace window behind), nobody has uploaded, no bounty is
+#: open and the host is not holding a stage. A 5-day trip is ~3,600 ticks; overnight ones are ~90%
+#: of them, and every one used to be a paid `gemini-3.7-flash` call.
+TICK_IDLE_LOOKAHEAD_MINUTES = 120
+#: Spec 13's evidence-driven advance: a drift signal naming the *same* target stage on this many
+#: consecutive ticks (at REASON confidence ≥ `STAGE_ADVANCE_MIN_CONFIDENCE`) may advance the stage
+#: even outside `STAGE_ADVANCE_WINDOW_MINUTES` — the photos move the timeline; the schedule only
+#: anticipates it. One tick's drift can be a burst of forwarded photos; two consecutive is a place.
+DRIFT_ADVANCE_TICKS = 2
+
 # --- kiosk program rails (spec 04 §4) ---------------------------------------------------------
 KIOSK_PROGRAM_SECONDS = 300  # "~5 min program, recomputed on triggers"
 KIOSK_HERO_HOLD_SEC = 6  # spec 04 §4's slot sketch, verbatim

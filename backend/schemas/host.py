@@ -93,7 +93,19 @@ EVENT_TEMPLATE_DEFAULTS: dict[EventTemplateId, EventTypeProfile] = {
 class CreateEventRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     timezone: str = Field(min_length=1, max_length=64)  # IANA name; EXIF is interpreted through it
-    templateId: EventTemplateId = EventTemplateId.WEDDING_GENERIC
+    #: Spec 13: creation is itinerary-led, not template-led. `custom` (neutral dials, empty
+    #: glossary) is the default and the wizard never sends this field; the template presets survive
+    #: only as starting points inside the console's Settings panel (`POST …/profile`).
+    templateId: EventTemplateId = EventTemplateId.CUSTOM
+    #: ISO local dates ("2026-10-12") in `timezone` — see `Event.startsOn`. Both optional; a dated
+    #: event needs both, and `endDate < startDate` is rejected.
+    startDate: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    endDate: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    #: People, not sessions — see `Event.expectedParticipants`.
+    expectedParticipants: int | None = Field(default=None, ge=1, le=100_000)
+    #: Set the door at creation instead of leaving every new event open until the host finds the
+    #: access panel. `invite` mints the code inside the same request; the response carries it once.
+    accessMode: EventAccessMode | None = None
     #: Honoured only when the caller carries `platformAdmin` (spec 11 §1.1). Silently ignored
     #: otherwise — never a 403, because a public caller asserting this and being told exactly why
     #: it didn't work is a hint about the admin gate that this system should not hand out.
@@ -104,6 +116,10 @@ class CreateEventResponse(BaseModel):
     eventId: str
     hostLink: str  # revocable, 30-day, for co-hosts (spec 08 §1)
     recoveryCode: str  # long-lived, printable, for "lost every host device"
+    #: Present only when the event was created invite-only: the plaintext is never stored (only its
+    #: sha256), so this response is the one time it is ever readable — same contract as
+    #: `AccessResponse.joinCode`.
+    joinCode: str | None = None
 
 
 # ---------------------------------------------------------------- host links (spec 08 §1)
@@ -227,12 +243,38 @@ class ProfileUpdateRequest(BaseModel):
     requiredMomentsTemplate: list[RequiredMoment] | None = None
 
 
+#: What `fileBase64` may decode to. PDFs and photographed/screenshotted schedules — the two shapes
+#: a trip plan actually arrives in. Kept a closed list: the bytes go straight into a model call.
+ITINERARY_FILE_MIMES = ("application/pdf", "image/jpeg", "image/png", "image/webp")
+ITINERARY_PDF_MAX_BYTES = 10 * 1024 * 1024
+ITINERARY_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+
+
 class ParseItineraryRequest(BaseModel):
-    rawText: str = Field(min_length=1, max_length=8000)
+    """Paste, PDF or screenshot — any one alone or paste+file together (spec 13).
+
+    The file rides as base64 in the JSON body, the same shape `EnrollRequest.selfie` already uses,
+    rather than multipart: one endpoint, one content type, and the pre-spec-13 client (which sends
+    only `rawText`) keeps working unchanged. The endpoint enforces "at least one of the two".
+    """
+
+    rawText: str = Field(default="", max_length=8000)
+    fileBase64: str | None = Field(default=None, max_length=15_000_000)  # ~10 MB decoded
+    fileMime: str | None = None
 
 
 class SaveStagesRequest(BaseModel):
     stages: list[EventStage] = Field(min_length=1)
+
+
+class DetailsUpdateRequest(BaseModel):
+    """`POST /v1/events/{eventId}/details` — the fields a host may correct after creation (spec 13:
+    a trip that slips a day is a real, supported edit). All optional; absent fields are untouched."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    startDate: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    endDate: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    expectedParticipants: int | None = Field(default=None, ge=1, le=100_000)
 
 
 # ---------------------------------------------------------------- lifecycle (spec 08 §2, spec 11 §6)
