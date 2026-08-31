@@ -93,8 +93,8 @@ step "Re-enabling public event creation (spec 11 §1.5's kill switch)"
 # events. Both are now enforced by the hourly `orphan-sweep` (`backend/api/sweep.py`, wired by
 # `deploy/scheduler.sh`), on top of the transactional capacity cap that was already running — so the
 # guardrail this flag used to stand in for is live, and public Go Live no longer needs to stay off
-# for the judging period. `class=='protected_demo'` was never affected either way; the /judge
-# disclosure panel reflects the current posture, not the old one.
+# for the judging period. `class=='protected_demo'` was never affected either way; the
+# /how-it-works disclosure panel reflects the current posture, not the old one.
 python - "${PROJECT_ID}" <<'PY'
 import sys
 from google.cloud import firestore
@@ -120,8 +120,8 @@ orphan-sweep left running hourly — it's what makes public event creation safe 
 Idle cost ≈ \$0.50–0.90/day.
 
 Still owed by hand (README-PLAN Part B):
-  · UptimeRobot on /judge and {api}/livez
-  · the nightly reseed job (scripts/seed_judge_event.py on a schedule)
+  · UptimeRobot on /how-it-works and {api}/livez
+  · scripts/seed_global_event.py — one-time creation, no nightly reseed needed (no fixture photos)
   · the daily 5-minute ritual, incl. a glance at platform/liveEventCount
 
 Undo: ./deploy/up.sh  (restores */2, resumes director-tick-demo, re-warms everything)

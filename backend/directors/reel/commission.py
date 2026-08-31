@@ -98,6 +98,17 @@ def commission(
         )
         return Commissioned(False, reason=f"daily ceiling of {MAX_REELS_PER_DAY} reels reached")
 
+    # A standing event with no natural end (spec 13's global demo) sets
+    # `reelCommissionEveryNMedia` instead of relying on the daily ceiling above, which bounds
+    # spend per day but not per photo — a slow trickle of uploads would otherwise still earn a
+    # fresh reel every tick the director looks. `None` (every real host's event) is a no-op.
+    every_n = doc.get("reelCommissionEveryNMedia")
+    since_last = int(doc.get("mediaSinceLastReel") or 0)
+    if every_n is not None and since_last < every_n:
+        return Commissioned(
+            False, reason=f"only {since_last}/{every_n} new photos/videos since the last reel"
+        )
+
     audience_ring = 1 if persona is ReelPersona.MAIN_CHARACTER else 2
     reel_id = store.create(
         event_id,
@@ -108,6 +119,12 @@ def commission(
         commissioned_by=commissioned_by,
         reason=reason,
     )
+
+    # Reset the moment the commission is recorded, not on render success — a launch failure below
+    # still consumed the photos that earned this reel; a retry (`retry()`) reuses the same
+    # commission rather than asking for a second one.
+    if every_n is not None:
+        fs.event_ref(event_id).update({"mediaSinceLastReel": 0})
 
     if not launch:
         return Commissioned(True, reel_id=reel_id, reason="created, not launched")

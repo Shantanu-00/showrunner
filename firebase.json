@@ -4,13 +4,13 @@
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       { "source": "/join", "destination": "/join.html" },
-      { "source": "/join/**", "destination": "/join/judge_demo.html" },
-      { "source": "/kiosk/**", "destination": "/kiosk/judge_demo.html" },
-      { "source": "/events/**/claim", "destination": "/events/judge_demo/claim.html" },
+      { "source": "/join/**", "destination": "/join/global_demo.html" },
+      { "source": "/kiosk/**", "destination": "/kiosk/global_demo.html" },
+      { "source": "/events/**/claim", "destination": "/events/global_demo/claim.html" },
       { "source": "/how-it-works", "destination": "/how-it-works.html" },
       { "source": "/judge", "destination": "/judge.html" },
       { "source": "/host", "destination": "/host.html" },
-      { "source": "/host/**", "destination": "/host/judge_demo.html" },
+      { "source": "/host/**", "destination": "/host/global_demo.html" },
       { "source": "**", "destination": "/index.html" }
     ]
   },

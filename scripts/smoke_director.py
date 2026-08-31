@@ -488,7 +488,6 @@ def seed_event(event_id: str) -> tuple[dict[str, Any], str]:
                 "activeStage": "sangeet",
                 "stageOverride": fs.DELETE_FIELD,
                 "eventTypeProfile": {
-                    "templateId": "wedding_hindu",
                     "vipTopology": "pyramid",
                     "sensitivityProfile": {},
                     "culturalGlossary": ["haldi", "sangeet", "kanyadaan"],

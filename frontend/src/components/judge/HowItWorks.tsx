@@ -22,13 +22,9 @@ import type { EventPublicInfo } from "@/lib/types";
 import { TickCountdownView } from "@/components/host/TickCountdown";
 import { DisclosurePanel } from "./DisclosurePanel";
 
-// The live event this page opens. `NEXT_PUBLIC_JUDGE_EVENT_ID` predates
-// `NEXT_PUBLIC_DEFAULT_EVENT_ID` and stays supported so an already-deployed environment keeps
-// working; the default-event id is the fallback so a fresh checkout needs one variable, not two.
-const EVENT_ID =
-  process.env.NEXT_PUBLIC_JUDGE_EVENT_ID ??
-  process.env.NEXT_PUBLIC_DEFAULT_EVENT_ID ??
-  "judge_demo";
+// The live event this page opens — the one standing `protected_demo` event (`global_demo`),
+// never a per-visitor instance.
+const EVENT_ID = process.env.NEXT_PUBLIC_DEFAULT_EVENT_ID ?? "global_demo";
 const PROJECT = process.env.NEXT_PUBLIC_GCP_PROJECT ?? "showrunner-hq";
 const REPO = process.env.NEXT_PUBLIC_REPO_URL ?? "https://github.com/Shantanu-00/showrunner";
 const VIDEO = process.env.NEXT_PUBLIC_VIDEO_URL ?? "";
@@ -114,7 +110,6 @@ export function HowItWorks() {
   }, [load]);
 
   useEffect(() => {
-    if (info?.templateId) document.documentElement.dataset.theme = info.templateId;
     if (info?.activeStage) document.documentElement.dataset.stage = info.activeStage;
   }, [info]);
 

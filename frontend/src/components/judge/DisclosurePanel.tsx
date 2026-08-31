@@ -29,9 +29,10 @@ export function DisclosurePanel() {
       {open && (
         <div className="px-5 pb-5 pt-2 space-y-3 text-xs text-[var(--ink-muted)] leading-relaxed border-t border-white/5">
           <p>
-            The demo events run on identical Cloud Run services and identical Firestore security rules
-            as any other event. Three <em>values</em> are set differently — and every one of them is a
-            setting a real host could also change, never a code path that checks whose event this is:
+            The open event above runs on identical Cloud Run services and identical Firestore
+            security rules as any other event. A few <em>values</em> are set differently — and every
+            one of them is a setting a real host could also change, never a code path that checks
+            whose event this is:
           </p>
 
           <ul className="space-y-2 pl-4 list-disc text-[var(--ivory-dim)]">
@@ -42,10 +43,10 @@ export function DisclosurePanel() {
               which photograph gets a hero slot.
             </li>
             <li>
-              <strong className="text-[var(--ivory)]">Timeline scale:</strong> the wedding demo&rsquo;s
-              stage windows are minutes rather than hours, so a stage transition is observable inside a
-              short visit. The trip demo does the opposite on purpose — real multi-day windows across
-              five days, because that is the shape being demonstrated.
+              <strong className="text-[var(--ivory)]">Volume caps:</strong> this event has no natural
+              end, so a fixed daily and lifetime cap on uploads bounds what it can ever cost, and a
+              highlight reel is only re-cut once a set number of new photos and videos have landed
+              since the last one — both are ordinary event settings, not a hidden throttle.
             </li>
             <li>
               <strong className="text-[var(--ivory)]">Director cadence:</strong> the Cloud Scheduler
@@ -55,10 +56,11 @@ export function DisclosurePanel() {
           </ul>
 
           <p>
-            Two events are seeded, both through the real upload pipeline rather than written straight
-            into the database: a wedding (the dense, high-pressure case) and a five-day group trip
-            (the everyday one). Neither is wedding-specific in code — the host pastes an itinerary and
-            the system reads it.
+            There is no cast, no script and no pre-loaded photos — every image on the wall arrived
+            through the real upload pipeline from someone who actually sent it, from wherever they
+            happened to be. The event runs continuously across a multi-week timeline rather than a
+            single day, because that is the shape it is actually demonstrating: an agent fleet
+            running unattended for as long as content keeps arriving, not a scripted walkthrough.
           </p>
 
           <p className="text-[11px] text-[var(--ink-faint)] pt-2 border-t border-white/5">

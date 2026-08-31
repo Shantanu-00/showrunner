@@ -126,9 +126,11 @@ def _register_batch(
     """
     cfg = settings()
     guest_ref = fs.guest_ref(event_id, principal.uid)
+    event_ref = fs.event_ref(event_id)
     media_refs = [fs.media_ref(event_id, f.clientMediaId) for f in req.files]
 
     guest_snap = guest_ref.get(transaction=transaction)
+    event_snap = event_ref.get(transaction=transaction)
     media_snaps = list(fs.db().get_all(media_refs, transaction=transaction))
     existing = {snap.reference.id: snap for snap in media_snaps}
 
@@ -149,6 +151,42 @@ def _register_batch(
             retryAfterSeconds=int(
                 (window_started + dt.timedelta(hours=1) - now).total_seconds()
             ),
+        )
+
+    # Event-level volume guardrails (`schemas/event.py::Event.dailyMediaCap`/`lifetimeMediaCap`) —
+    # `None` (every real host's event) skips both checks entirely. Net-new files only, same as the
+    # per-guest limit above: an outbox retry re-registering an already-accepted `clientMediaId`
+    # never counts against either cap.
+    event_doc = event_snap.to_dict() or {}
+    lifetime_cap = event_doc.get("lifetimeMediaCap")
+    daily_cap = event_doc.get("dailyMediaCap")
+    lifetime_count = int(event_doc.get("lifetimeMediaCount") or 0)
+    daily_started = event_doc.get("dailyMediaWindowStartedAt")
+    daily_count = int(event_doc.get("dailyMediaCount") or 0)
+    if not isinstance(daily_started, dt.datetime) or now - daily_started >= dt.timedelta(hours=24):
+        daily_started, daily_count = now, 0
+
+    if new_files and lifetime_cap is not None and lifetime_count + len(new_files) > lifetime_cap:
+        raise errors.forbidden(
+            "EVENT_MEDIA_CAP",
+            f"this event has reached its {lifetime_cap}-photo/video cap",
+        )
+    if new_files and daily_cap is not None and daily_count + len(new_files) > daily_cap:
+        raise errors.rate_limited(
+            f"this event accepts at most {daily_cap} uploads/day; check back later",
+            retryAfterSeconds=int(
+                (daily_started + dt.timedelta(hours=24) - now).total_seconds()
+            ),
+        )
+    if new_files:
+        transaction.update(
+            event_ref,
+            {
+                "lifetimeMediaCount": firestore.Increment(len(new_files)),
+                "dailyMediaCount": daily_count + len(new_files),
+                "dailyMediaWindowStartedAt": daily_started,
+                "mediaSinceLastReel": firestore.Increment(len(new_files)),
+            },
         )
 
     instructions: list[tuple[str, MediaKind, str, str]] = []

@@ -38,9 +38,8 @@ export function KioskShell({ eventId: fallbackEventId }: { eventId: string }) {
   // Spec 12 §3: pure CSS-variable retune, no reload — the kiosk's own stage-change re-theme
   // (≤5s acceptance) additionally happens live via KioskShow's playlist listener.
   useEffect(() => {
-    if (eventInfo?.templateId) document.documentElement.dataset.theme = eventInfo.templateId;
     if (eventInfo?.activeStage) document.documentElement.dataset.stage = eventInfo.activeStage;
-  }, [eventInfo?.templateId, eventInfo?.activeStage]);
+  }, [eventInfo?.activeStage]);
 
   if (!started) {
     return <KioskSetup eventInfo={eventInfo} onStart={() => setStarted(true)} />;

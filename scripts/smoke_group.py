@@ -197,7 +197,7 @@ def live_half(api: str) -> None:
                 }
             ],
             "eventTypeProfile": {
-                "templateId": "custom", "vipTopology": "pyramid",
+                "vipTopology": "pyramid",
                 "sensitivityProfile": {"pda": "context_dependent", "alcohol": "context_dependent",
                                        "attire": "standard"},
                 "culturalGlossary": [], "requiredMomentsTemplate": [],

@@ -218,7 +218,7 @@ def evidence_block(
 
     lines = [
         "--- COMMISSION ---",
-        f"event={event.get('name')!r} type={profile.get('templateId') or 'generic'}",
+        f"event={event.get('name')!r}",
         f"persona={persona.value}"
         + (f" stage={stage_id}" if stage_id else "")
         + (f" subject={names.get(person_id or '', person_id or '')}" if person_id else ""),

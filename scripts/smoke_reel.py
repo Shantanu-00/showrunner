@@ -398,8 +398,7 @@ def check_prompt_shape(pool: list[Candidate]) -> None:
     """The director reads a description of the event, never a photograph — and never a raw identifier
     it is not allowed to use. Cheap to assert, and it is the claim the whole trust story rests on."""
     block = agent.evidence_block(
-        event={"name": "Aarti & Rohan", "eventTypeProfile": {"templateId": "wedding_hindu",
-                                                            "culturalGlossary": ["haldi", "varmala"]}},
+        event={"name": "Aarti & Rohan", "eventTypeProfile": {"culturalGlossary": ["haldi", "varmala"]}},
         persona=ReelPersona.COUPLE,
         candidates=select.choose(pool, persona=ReelPersona.COUPLE),
         names={"p_bride": "Aarti", "p_groom": "Rohan", "p_mother": "Sunita"},

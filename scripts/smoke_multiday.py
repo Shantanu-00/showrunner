@@ -425,7 +425,7 @@ def live_half(api: str) -> None:
                     now - dt.timedelta(minutes=30), now + dt.timedelta(hours=2), "street_moment",
                 ),
             ],
-            "eventTypeProfile": {"templateId": "custom", "vipTopology": "pyramid",
+            "eventTypeProfile": {"vipTopology": "pyramid",
                                  "sensitivityProfile": {"pda": "context_dependent",
                                                         "alcohol": "context_dependent",
                                                         "attire": "standard"},
@@ -560,7 +560,7 @@ def live_half(api: str) -> None:
                     now + dt.timedelta(days=2), now + dt.timedelta(days=2, hours=2), "table_moment",
                 )
             ],
-            "eventTypeProfile": {"templateId": "custom", "vipTopology": "pyramid",
+            "eventTypeProfile": {"vipTopology": "pyramid",
                                  "sensitivityProfile": {"pda": "context_dependent",
                                                         "alcohol": "context_dependent",
                                                         "attire": "standard"},

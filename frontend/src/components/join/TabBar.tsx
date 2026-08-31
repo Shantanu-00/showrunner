@@ -31,7 +31,7 @@ export function TabBar({
       <nav
         role="tablist"
         aria-label="Main navigation"
-        className="pointer-events-auto flex items-center justify-between gap-1 p-1.5 rounded-full glass-pill max-w-md w-full shadow-2xl backdrop-blur-2xl bg-slate-950/80 border border-white/10"
+        className="pointer-events-auto flex items-center justify-between gap-1 p-1.5 rounded-full max-w-sm w-full shadow-[0_16px_40px_rgba(0,0,0,0.85)] backdrop-blur-2xl bg-slate-950/85 border border-white/10"
       >
         {TABS.map((tab) => {
           const isActive = tab.id === active;
@@ -46,10 +46,10 @@ export function TabBar({
                 role="tab"
                 aria-selected={isActive}
                 onClick={() => handleTabChange(tab.id)}
-                className="relative -top-3 flex flex-col items-center justify-center p-3.5 rounded-full btn-glow text-slate-950 shadow-2xl hover:scale-105 active:scale-95 transition-all duration-300 cursor-pointer"
+                className="relative -top-3.5 flex flex-col items-center justify-center rounded-full text-slate-950 shadow-[0_0_25px_-2px_var(--accent-glow)] hover:shadow-[0_0_35px_2px_var(--accent-glow)] hover:scale-105 active:scale-95 transition-all duration-300 cursor-pointer border border-white/20"
                 style={{
-                  width: "56px",
-                  height: "56px",
+                  width: "54px",
+                  height: "54px",
                   background: "linear-gradient(135deg, var(--accent) 0%, var(--accent-soft) 100%)",
                 }}
                 aria-label="Open Camera and Capture Photo"
@@ -66,7 +66,7 @@ export function TabBar({
               role="tab"
               aria-selected={isActive}
               onClick={() => handleTabChange(tab.id)}
-              className={`relative flex-1 flex flex-col items-center justify-center gap-1 py-2 px-3 rounded-full transition-all duration-200 min-h-[44px] active:scale-[0.96] cursor-pointer ${
+              className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 px-3 rounded-full transition-all duration-200 min-h-[42px] active:scale-[0.96] cursor-pointer ${
                 isActive
                   ? "text-white font-semibold"
                   : "text-[var(--text-secondary)] hover:text-white"
@@ -79,11 +79,13 @@ export function TabBar({
                 />
               )}
               <Icon
-                className={`relative z-10 w-5 h-5 transition-transform duration-200 ${
+                className={`relative z-10 w-4.5 h-4.5 transition-transform duration-200 ${
                   isActive ? "scale-110 text-[var(--accent)] stroke-[2.2]" : "stroke-[1.8]"
                 }`}
               />
-              <span className="relative z-10 text-[11px] tracking-wide font-medium">{tab.label}</span>
+              <span className={`relative z-10 text-[10px] tracking-wide font-medium ${isActive ? "text-[var(--accent)] font-semibold" : ""}`}>
+                {tab.label}
+              </span>
             </button>
           );
         })}
