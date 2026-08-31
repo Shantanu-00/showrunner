@@ -45,7 +45,7 @@ from schemas.bounty import (
     dedupe_key,
 )
 from schemas.director import ActionType, DirectorAction, DirectorPlan
-from shared import fs, log
+from shared import fs, log, push
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
@@ -63,6 +63,7 @@ from shared.settings import (
     NEAR_STAGE_WINDOW_MINUTES,
     STAGE_ADVANCE_MIN_CONFIDENCE,
     STAGE_ADVANCE_WINDOW_MINUTES,
+    STAGE_GAP_GRACE_MINUTES,
 )
 from shared.ulid import new_ulid
 
@@ -344,6 +345,15 @@ def _decide_advance(
     `auto_apply=False` is a host-console suggestion card, which is a good outcome and not a failure —
     and while the host holds the stage manually, a suggestion is the only thing the director may ever
     produce (spec 05 §2: "host override always wins instantly").
+
+    **Time only runs forwards.** A lapsed target is rejected outright rather than downgraded to a
+    suggestion card, because "shall we go back to Tuesday's dinner?" is not a question worth putting
+    in front of a host. The `evidence_ok` leg is what makes this reachable at all: `_drift` samples
+    the last `DRIFT_SAMPLE_SIZE` items **ordered by `uploadedAt`**, so somebody dumping forty Day-1
+    photos on Day 3 hands the drift signal a majority for a stage that ended two days ago, and two
+    consecutive ticks of that plus a confident model would have moved the pointer backwards. The
+    ledger already marks lapsed stages `ENDED` in the prompt, so this is the model being *told* not
+    to and the code not *relying* on that — which is this project's whole posture on guardrails.
     """
     target = (action.toStageId or "").strip()
     if target not in stage_ids:
@@ -352,6 +362,13 @@ def _decide_advance(
         return Decision(action.type, False, f"{target} is already the active stage")
 
     stage = next((s for s in led.stages if s.stage_id == target), None)
+    if stage is not None and stage.has_lapsed(now):
+        return Decision(
+            action.type,
+            False,
+            f"{target} ended more than {STAGE_GAP_GRACE_MINUTES} min ago — the event cannot move "
+            "backwards into a stage nobody can photograph any more",
+        )
     confidence = float(action.confidence or 0.0)
     window_ok = False
     window_minutes = float(STAGE_ADVANCE_WINDOW_MINUTES)
@@ -956,6 +973,27 @@ def _write_bounty(
         weight=vip_weight,
         ttl_min=ttl,
     )
+
+    # Reach the phones (`shared/push.py`). *After* the document is written and logged, and inside its
+    # own guard, because the ordering is the trust statement: the bounty is the system of record and
+    # the notification is a courtesy about it. A push that fails must leave a fully valid bounty that
+    # the PWA banner and the kiosk poster still serve — never a tick that failed, and never a guest
+    # who lost points because FCM had a bad minute. `notify_bounty` already swallows everything; the
+    # belt is here because this is inside the tick lease and nothing in this function may raise.
+    try:
+        push.notify_bounty(
+            event_id,
+            bounty_id=bounty_id,
+            title=title,
+            copy=copy,
+            points=points,
+            audience=audience,
+            assignee_uid=assignee_uid,
+            now=now,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warn("push_notify_failed", event_id=event_id, bounty=bounty_id, err=str(exc))
+
     return {
         "bountyId": bounty_id,
         "dedupeKey": bounty.dedupeKey,
