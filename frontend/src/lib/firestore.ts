@@ -425,6 +425,45 @@ export function listenReel(
   );
 }
 
+/** The event's recap film, for the guests it is actually about (`RecapCard`).
+ *
+ * Two equality filters and **no `orderBy`**, deliberately: Firestore serves multiple equality
+ * filters by merging single-field indexes, so this query needs no composite index added to
+ * `firestore.indexes.json` — whereas `where(...).where(...).orderBy('version')` would. The newest
+ * cut is picked in JS from at most a handful of documents instead.
+ *
+ * `visibility == 'public'` is not an optimisation, it is required. `firestore.rules` only grants a
+ * member `reels/{id}` when that document is public, and Firestore fails an entire query if one
+ * returned document is denied rather than skipping it — so dropping this filter does not widen the
+ * result, it breaks the listener outright. Same lesson HANDOFF §4.17(a) records for Highlights and
+ * the private album: the query filters and the security rules are one design.
+ */
+export function listenRecapReel(
+  eventId: string,
+  onData: (reel: (ReelDoc & { version?: number }) | null) => void,
+  onError: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    query(
+      collection(db, "events", eventId, "reels"),
+      where("persona", "==", "event_recap"),
+      where("visibility", "==", "public"),
+      limit(5)
+    ),
+    (snap) => {
+      const cuts = snap.docs.map((d) => d.data() as ReelDoc & { version?: number });
+      if (cuts.length === 0) {
+        onData(null);
+        return;
+      }
+      // Highest `version` wins — spec 06 §4's supersession means a better cut is a new document, and
+      // a retracted one has already dropped out of this query by losing `visibility == 'public'`.
+      onData(cuts.reduce((best, c) => ((c.version ?? 1) > (best.version ?? 1) ? c : best)));
+    },
+    onError
+  );
+}
+
 /** `people/{personId}/reactions` (spec 07 §1) — the one client write in the whole system
  * (`firestore.rules:159`). A heart on the private-album grid is this build's cheap path onto the
  * full swipe deck spec 07 §1 describes: same document shape (`{verdict, at}`), so nothing here

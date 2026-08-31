@@ -32,6 +32,7 @@ from .internal import demo_router, router as internal_router
 from .media import router as media_router
 from .membership import _join_code_router as join_code_router, router as membership_router
 from .moderation import router as moderation_router
+from .push import router as push_router
 from .reels import router as reels_router
 from .sweep import router as sweep_router
 from .uploads import router as uploads_router
@@ -47,8 +48,8 @@ _origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins or ["http://localhost:3000"],
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    allow_headers=["*"],
     max_age=3600,
 )
 
@@ -67,6 +68,9 @@ app.include_router(membership_router)
 app.include_router(join_code_router)
 app.include_router(moderation_router)
 app.include_router(reels_router)
+# Web Push opt-in. After `membership_router` because it requires the claim that one mints: a guest
+# subscribes to the missions of an event they were admitted to, and to no other.
+app.include_router(push_router)
 # Cloud Scheduler's target (spec 09 §2). Not under /v1: it is infrastructure calling infrastructure,
 # and it authenticates its caller itself because `api` is the one service deployed public.
 app.include_router(internal_router)
@@ -169,8 +173,19 @@ async def event_public(
     stage chips, and the kiosk/PWA theme flip (spec 12 §3).
 
     Deliberately narrow: name, status, timezone, active stage, theme, a stage label list. No
-    cost figures, no class, no demo flags, no stage timing/required moments, nothing that would
-    leak platform or operational state to a guest.
+    cost figures, no class, no demo flags, nothing that would leak platform or operational state
+    to a guest.
+
+    **Stage windows are member-only, and that split is the whole design of the guest timeline.**
+    Every guest at a trip wants to see the plan — "Day 3: Fushimi Inari 09:00, dinner 19:00" — and
+    withholding it from the people the plan belongs to was never a privacy position, it was a
+    side-effect of this endpoint serving two different readers with one payload. It still serves
+    two: a **stranger** (authenticated, but not yet admitted) gets exactly the pre-existing
+    day-granularity shape, because the join screen needs a name and a theme and an outsider learning
+    that a private event runs 19:00–23:00 on the 14th is a schedule leak with no upside. A
+    **member** gets `startsAt`/`endsAt` per stage, because they were let in. `requiredMoments` stay
+    out for everybody: those are the director's coverage targets, and a guest who can read the list
+    of moments the system will pay for can farm it.
 
     The one addition (S14) is the `director` block, and it is here rather than in the security rules
     on purpose. `/judge`'s next-tick countdown needs `ledger/directorState.lastTickAt`, which is
@@ -188,6 +203,10 @@ async def event_public(
     status = event.get("status", EventStatus.DRAFT.value)
     stages = event.get("stages") or []
     access = event.get("access") or {}
+    # A claim check on the token the caller already sent — no extra read, no round trip. `is_member_of`
+    # ORs in `hosts`, exactly as `isMember(eventId)` does in `firestore.rules`, so the host previewing
+    # their own guest app sees what their guests will see.
+    is_member = principal.is_member_of(eventId)
     return {
         "director": await run_in_threadpool(_director_block, eventId, event),
         "exists": True,
@@ -208,18 +227,13 @@ async def event_public(
         # guest whose host never pressed the button and whose director has not advanced yet.
         "activeStage": resolve_active(event)[0],
         "templateId": (event.get("eventTypeProfile") or {}).get("templateId"),
-        # `day` is a derived 1-based index (spec 13), null on undated events — day granularity only,
-        # honouring this endpoint's "no stage timing" discipline: a guest's gallery groups chips by
-        # day without learning when anything is scheduled to the minute.
-        "stages": [
-            {
-                "stageId": s.get("stageId"),
-                "label": s.get("label"),
-                "theme": s.get("theme"),
-                "day": _stage_day(event, s),
-            }
-            for s in stages
-        ],
+        # `day` is a derived 1-based index (spec 13), null on undated events. `startsAt`/`endsAt`
+        # ride along only for a member (see the docstring) — `_stage_payload` is the one place that
+        # decision is made, so there is no second code path that could forget it.
+        "stages": [_stage_payload(event, s, member=is_member) for s in stages],
+        # Lets the timeline render "Day 2 of 5" without the client re-deriving a span from the
+        # stage list, and tells it whether this event has a calendar at all.
+        "dayCount": _day_count(event),
         "uploadsOpen": status in {s.value for s in UPLOAD_OPEN_STATUSES},
         "publicFrozen": bool(event.get("publicFrozen")),
         "serverTime": dt.datetime.now(dt.timezone.utc),
@@ -231,3 +245,35 @@ def _stage_day(event: dict, stage: dict) -> int | None:
     if starts is None:
         return None
     return EventCalendar.of(event).day_index(starts)
+
+
+def _stage_payload(event: dict, stage: dict, *, member: bool) -> dict[str, object]:
+    """One stage as a guest app sees it. The member/stranger split lives here and only here.
+
+    Times are emitted as the stored UTC instants and formatted client-side against
+    `Event.timezone` (which this endpoint already returns) — deliberately not pre-formatted here.
+    Spec 13 §1's rule is that day and time are wall-clock concepts derived from the event's own
+    timezone, and `frontend/src/lib/eventTime.ts` is already the mirror of `shared/eventtime.py`
+    that does that; a server-rendered "19:00" string would be a second formatter to keep in step
+    with the first, for no gain.
+    """
+    payload: dict[str, object] = {
+        "stageId": stage.get("stageId"),
+        "label": stage.get("label"),
+        "theme": stage.get("theme"),
+        "day": _stage_day(event, stage),
+    }
+    if member:
+        payload["startsAt"] = stage.get("startsAt")
+        payload["endsAt"] = stage.get("endsAt")
+    return payload
+
+
+def _day_count(event: dict) -> int | None:
+    """How many days this event spans, or None when it is undated (every pre-spec-13 event).
+
+    Derived from `startsOn`/`endsOn` rather than from the stage list: a host can save a timeline
+    before dating the event and can date an event before saving a timeline, and "Day 2 of 5" should
+    mean the calendar the host declared, not however many days happen to have stages on them.
+    """
+    return EventCalendar.of(event).day_count()

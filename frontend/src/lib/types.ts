@@ -207,8 +207,24 @@ export interface EventPublicInfo {
   startsOn?: string | null;
   endsOn?: string | null;
   /** `day` is a 1-based day index (server-computed, spec: timeline-first events), `null` on
-   * undated events. */
-  stages?: Array<{ stageId: string; label: string; theme?: string | null; day?: number | null }>;
+   * undated events.
+   *
+   * `startsAt`/`endsAt` are stored UTC instants and are **member-only** — `GET …/public` omits them
+   * entirely for a caller who has not joined, so the join screen never learns a private event's
+   * schedule (`backend/api/app.py::_stage_payload`). Absent is therefore a normal state, not an
+   * error: `TimelinePanel` renders a label-only row when a stage has no window, which is also what
+   * an undated event and an unscheduled stage both look like. */
+  stages?: Array<{
+    stageId: string;
+    label: string;
+    theme?: string | null;
+    day?: number | null;
+    startsAt?: string | null;
+    endsAt?: string | null;
+  }>;
+  /** How many days the host declared (`endsOn - startsOn + 1`), `null` on an undated event. Lets
+   * the timeline say "Day 2 of 5" without re-deriving a span from whichever days have stages. */
+  dayCount?: number | null;
   uploadsOpen?: boolean;
   publicFrozen?: boolean;
   serverTime?: string;

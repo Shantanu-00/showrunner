@@ -26,6 +26,13 @@ On an **invite-only** event (`access.mode == 'invite'`) that branch requires eve
 the reason `api/media.py` records at length: a reel is a montage of the same guests' photographs, and an
 eventId plus a reelId must stop being enough the moment the host shuts the door. The venue TV gets there
 through a kiosk link (`POST /v1/events/{eventId}/kiosk-links`), which grants `members` and nothing else.
+
+**Downloading is not watching, and it is gated differently.** `?download=1` requires event membership on
+*every* event, open ones included. Playback has to survive without a session because a `<video>` on a
+kiosk cannot carry a header; a download produces a file that leaves this system for good, and spec 06
+§7's consent interlock — which can pull a reel off every surface the instant a subject objects — has no
+reach into somebody's camera roll. Guests of the event and its host can keep a copy. A passer-by holding
+an eventId can watch the wall.
 """
 
 from __future__ import annotations
@@ -72,18 +79,29 @@ async def reel_video(
 ) -> Response:
     """302 to a short-lived signed URL for the rendered file. See the module docstring for why.
 
-    `?download=1` (spec 13 §8) only changes the signed URL's content-disposition — every
-    visibility re-check above it is identical, and the consent interlock retracts a downloadable
+    `?download=1` (spec 13 §8) changes the signed URL's content-disposition to an attachment — and,
+    unlike playback, **it always requires event membership**, on an open event as much as an
+    invite-only one. The asymmetry is deliberate and it is a consent judgement, not a hardening
+    reflex: *watching* is what a kiosk in a venue does, and a `<video>` element cannot send an
+    Authorization header, so the play path has to be reachable without a session or the wall goes
+    dark. *Keeping a copy* is a different act. A downloaded file leaves the consent interlock behind
+    entirely — spec 06 §7 can retract a reel from every surface the moment somebody in it asks not to
+    be shown, and it cannot reach into a stranger's camera roll. So the permanent copy is for the
+    people who were actually there: the guests of this event and its host, verified against a real
+    ID token, and nobody who merely came across an eventId.
+
+    Every visibility re-check is otherwise identical, and the interlock still retracts a downloadable
     recap exactly as it retracts a playing one."""
     doc = _reel(eventId, reelId)
     published = (
         doc.get("status") == ReelStatus.PUBLISHED.value
         and doc.get("visibility") == Visibility.PUBLIC.value
     )
-    if not published or is_invite_only(eventId):
-        # A host may preview an unpublished or failed reel from the console; nobody else may. On an
-        # invite-only event a *published* reel additionally needs a member. The token is only verified
-        # on this branch, so an open event's public path still costs no auth round trip.
+    if not published or download or is_invite_only(eventId):
+        # A host may preview an unpublished or failed reel from the console; nobody else may. A
+        # *published* reel additionally needs a member when the event is invite-only, or whenever a
+        # permanent copy is being asked for. The token is only verified on this branch, so an open
+        # event's kiosk playback still costs no auth round trip.
         try:
             principal = verify_bearer(authorization)
         except Exception:  # noqa: BLE001 - an absent or bad token on a private reel is simply a 404

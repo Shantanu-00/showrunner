@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { Link2, Trash2, Check, Copy, AlertTriangle } from "lucide-react";
 import { ApiError, createClaimLink, deleteMyData } from "@/lib/api";
+import { PushOptIn } from "./PushOptIn";
+import { RecapCard } from "./RecapCard";
 
 export function SettingsRows({
   eventId,
@@ -52,6 +54,11 @@ export function SettingsRows({
 
   return (
     <div className="px-4 mt-8 space-y-3 pb-8">
+      {/* The film first: it is the thing a guest actually came back for once the event is over, and
+       * it renders nothing at all until a recap is published (`RecapCard`). */}
+      <RecapCard eventId={eventId} />
+      <PushOptIn eventId={eventId} />
+
       <div className="rounded-2xl glass-card p-4 border border-white/10">
         <button
           type="button"
