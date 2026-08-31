@@ -47,9 +47,16 @@ function timeRange(
 
 export function TimelineSheet({
   eventInfo,
+  selected,
+  onSelect,
   onClose,
 }: {
   eventInfo: EventPublicInfo | null;
+  /** The stage id (or `day:N`) the gallery is filtered to, or null for everything. */
+  selected?: string | null;
+  /** Tapping a row filters the gallery to that moment and closes the sheet. This is where the day and
+   * phase chips went: the plan is one place, and picking from it is the same gesture as reading it. */
+  onSelect?: (stageId: string | null) => void;
   onClose: () => void;
 }) {
   const stages = eventInfo?.stages ?? [];
@@ -79,7 +86,7 @@ export function TimelineSheet({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-t-3xl p-6 pb-8 max-h-[80vh] overflow-y-auto glass-card border-t border-[var(--hairline-accent)] shadow-2xl"
+        className="w-full max-w-md rounded-t-3xl p-6 pb-8 max-h-[80vh] overflow-y-auto scroll-slim glass-card border-t border-[var(--hairline-accent)] shadow-2xl"
         style={{ background: "rgba(23, 16, 20, 0.96)" }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -117,16 +124,30 @@ export function TimelineSheet({
           </div>
         ) : (
           <div className="space-y-5">
+            {selected && (
+              <button
+                type="button"
+                onClick={() => onSelect?.(null)}
+                className="w-full py-2.5 rounded-xl bg-white/[0.06] border border-white/10 text-xs font-semibold text-[var(--ivory)] hover:border-[var(--accent)]/50 transition-colors"
+              >
+                Show every moment
+              </button>
+            )}
             {dayKeys.map((day) => (
               <div key={day ?? "undated"}>
                 {day !== null && (
-                  <p
-                    className="text-[11px] uppercase mb-2 font-semibold"
+                  <button
+                    type="button"
+                    onClick={() => onSelect?.(selected === `day:${day}` ? null : `day:${day}`)}
+                    className={`text-[11px] uppercase mb-2 font-semibold transition-colors ${
+                      selected === `day:${day}` ? "underline" : "hover:underline"
+                    }`}
                     style={{ color: "var(--accent)", letterSpacing: "0.1em" }}
                   >
                     {dayLabelFromIndex(day)}
                     {eventInfo?.dayCount ? ` of ${eventInfo.dayCount}` : ""}
-                  </p>
+                    <span className="sr-only"> — show only this day&rsquo;s photos</span>
+                  </button>
                 )}
                 <ol className="space-y-1.5">
                   {(groups.get(day) ?? []).map((s) => {
@@ -135,12 +156,16 @@ export function TimelineSheet({
                     const isPast = activeIndex >= 0 && position < activeIndex;
                     const range = timeRange(s.startsAt, s.endsAt, timezone);
                     return (
-                      <li
-                        key={s.stageId}
-                        className={`flex items-center gap-3 rounded-xl px-3 py-2.5 border transition-colors ${
-                          isActive
-                            ? "bg-[var(--accent)]/12 border-[var(--accent)]/40"
-                            : "bg-white/[0.03] border-white/[0.06]"
+                      <li key={s.stageId}>
+                       <button
+                        type="button"
+                        onClick={() => onSelect?.(selected === s.stageId ? null : s.stageId)}
+                        className={`w-full text-left flex items-center gap-3 rounded-xl px-3 py-2.5 border transition-colors active:scale-[0.99] ${
+                          selected === s.stageId
+                            ? "bg-[var(--accent)]/20 border-[var(--accent)]"
+                            : isActive
+                              ? "bg-[var(--accent)]/12 border-[var(--accent)]/40"
+                              : "bg-white/[0.03] border-white/[0.06] hover:border-white/20"
                         }`}
                       >
                         <span
@@ -180,6 +205,7 @@ export function TimelineSheet({
                             Now
                           </span>
                         ) : null}
+                       </button>
                       </li>
                     );
                   })}

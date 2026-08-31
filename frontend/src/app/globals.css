@@ -294,3 +294,32 @@ body {
     animation: none !important;
   }
 }
+
+/* A scrollbar that belongs to this app rather than to the operating system.
+ *
+ * The missions sheet is a dark bottom sheet with a bright OS scrollbar sitting on its right edge and
+ * a second one on the page behind it — on a laptop it read as two stray white bars over the artwork.
+ * Applied per container (`scroll-slim`) rather than globally: the kiosk and the host console's long
+ * forms are still ordinary scrolling surfaces. */
+.scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.scroll-slim::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+
+.scroll-slim::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}

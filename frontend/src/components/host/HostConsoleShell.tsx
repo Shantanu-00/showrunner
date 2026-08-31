@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ShieldCheck, KeyRound, ArrowRight, LayoutDashboard, Calendar, RefreshCw } from "lucide-react";
+import { ShieldCheck, KeyRound, ArrowRight, LayoutDashboard, Calendar, RefreshCw, Camera, Tv } from "lucide-react";
 import { ensureAnonymousAuth, refreshClaims, type Claims } from "@/lib/firebase";
 import { redeemHostCode, getConsoleSummary } from "@/lib/hostApi";
 import { listenHostEvent } from "@/lib/hostFirestore";
@@ -65,8 +65,20 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
         );
       }
     }
-    const claims = await refreshClaims();
-    setAuthState(grantsHostOf(claims, eventId) ? "ready" : "need-code");
+    // `_grant_host` writes the custom claim synchronously before create/redeem ever responds, but
+    // that write and this forced token refresh hit different Firebase Identity Platform endpoints —
+    // immediately after creating (or redeeming a link), the refresh can occasionally still race the
+    // claim's propagation. A brief retry absorbs that instead of bouncing a brand-new host into the
+    // code prompt for an event they were just handed.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const claims = await refreshClaims();
+      if (grantsHostOf(claims, eventId)) {
+        setAuthState("ready");
+        return;
+      }
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 400));
+    }
+    setAuthState("need-code");
   }, [eventId]);
 
   useEffect(() => {
@@ -219,7 +231,36 @@ export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string
           </h1>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          {/* The two surfaces a host could not reach from their own console.
+           *
+           * A host is at the event too — they are usually the one taking the most photographs — and
+           * this screen offered no camera and no gallery, so the only way in was to find the guest
+           * link they had shared with everybody else. `POST /join` is idempotent and a host is
+           * already a member, so this is just the door they were standing next to.
+           *
+           * And the wall: a kiosk had no entry point on any screen in the product. Both open in a new
+           * tab, because both are somewhere the host comes back from. */}
+          <a
+            href={`/join/${encodeURIComponent(eventId)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-secondary inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold"
+            title="Open this event as a guest — camera, gallery and your own album"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            <span>Join &amp; shoot</span>
+          </a>
+          <a
+            href={`/kiosk/${encodeURIComponent(eventId)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-secondary inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold"
+            title="Put the show on a screen"
+          >
+            <Tv className="w-3.5 h-3.5" />
+            <span>Open the wall</span>
+          </a>
           <FreezeButton
             eventId={eventId}
             frozen={event.publicFrozen ?? false}

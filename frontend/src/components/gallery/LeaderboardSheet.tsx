@@ -23,7 +23,7 @@ export function LeaderboardSheet({ eventId, onClose }: { eventId: string; onClos
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-t-3xl p-6 pb-8 max-h-[75vh] overflow-y-auto glass-card border-t border-[var(--hairline-accent)] shadow-2xl"
+        className="w-full max-w-md rounded-t-3xl p-6 pb-8 max-h-[75vh] overflow-y-auto scroll-slim glass-card border-t border-[var(--hairline-accent)] shadow-2xl"
         style={{ background: "rgba(23, 16, 20, 0.96)" }}
         onClick={(e) => e.stopPropagation()}
       >

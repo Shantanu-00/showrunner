@@ -23,7 +23,7 @@ export function MeTab({ eventId, uid }: { eventId: string; uid: string }) {
   const [segment, setSegment] = useState<Segment>("album");
   const [showRitual, setShowRitual] = useState(false);
   const [deleted, setDeleted] = useState(false);
-  const { tapHaptic } = useHaptics();
+  const { tapHaptic, successHaptic } = useHaptics();
 
   useEffect(() => {
     void refreshClaims().then((claims) => {
@@ -41,6 +41,37 @@ export function MeTab({ eventId, uid }: { eventId: string; uid: string }) {
       }
     });
   }, [uid, eventId]);
+
+  // Approval arrives as a **custom claim**, and a custom claim is only visible to this device after
+  // its ID token is refreshed — there is no document the guest is allowed to watch that says "you're
+  // approved". So while a claim is held, and only then, re-read the token on a slow cadence. Without
+  // this the host approving somebody changed nothing on their phone until they thought to reload the
+  // page, which is precisely what they were told they would not have to do ("this album fills in the
+  // moment they approve"). Stops the instant it succeeds, and pauses with the tab.
+  useEffect(() => {
+    if (!claimHeld) return;
+    let cancelled = false;
+
+    const check = async () => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      const claims = await refreshClaims();
+      if (cancelled || !claims.personId) return;
+      setPersonId(claims.personId);
+      setClaimHeld(false);
+      clearPendingEnrollment(eventId);
+      successHaptic();
+    };
+
+    const interval = setInterval(() => void check(), 10_000);
+    // ...and once on the way back from wherever the guest went while waiting.
+    const onVisible = () => void check();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [claimHeld, eventId, successHaptic]);
 
   if (deleted) {
     return (
