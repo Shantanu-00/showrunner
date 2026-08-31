@@ -210,30 +210,20 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
         </div>
       )}
 
-      <header className="px-5 pt-8 pb-4 max-w-2xl mx-auto">
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <div className="flex items-center gap-2">
-            <span className="p-1.5 rounded-lg bg-[var(--gold-500)]/10 text-[var(--accent)] border border-[var(--gold-500)]/20">
-              <Sparkles className="w-4 h-4" />
-            </span>
-            <span className="text-[11px] font-mono uppercase tracking-[0.2em] text-[var(--accent)]">
-              {eventInfo?.name ?? "Showrunner"}
-            </span>
-          </div>
-          {authReady ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] text-[var(--ink-muted)]">
-              <span className="live-dot" />
-              <span>Live Synced</span>
-            </div>
-          ) : (
-            <span className="text-xs text-[var(--ink-muted)] animate-pulse">Connecting…</span>
-          )}
+      <header className="px-5 pt-6 pb-3 max-w-4xl mx-auto">
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="p-1 rounded-md bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20">
+            <Sparkles className="w-3.5 h-3.5" />
+          </span>
+          <span className="text-[11px] font-mono uppercase tracking-[0.18em] text-[var(--accent)] font-semibold">
+            Showrunner Director
+          </span>
         </div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold text-gold-gradient">
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)]">
           {eventInfo?.name ?? "Event Gallery"}
         </h1>
-        <p className="text-xs mt-1.5 text-[var(--ink-muted)] leading-relaxed">
-          AI media director actively curating, indexing faces, and projecting to the live kiosk.
+        <p className="text-xs mt-1 text-[var(--text-secondary)] leading-relaxed max-w-xl">
+          AI media director actively curating, indexing faces, and projecting highlights in real time.
         </p>
       </header>
 

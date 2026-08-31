@@ -18,7 +18,7 @@ import {
   AlertTriangle,
   SkipForward,
 } from "lucide-react";
-import { ensureAnonymousAuth } from "@/lib/firebase";
+import { ensureAnonymousAuth, refreshClaims } from "@/lib/firebase";
 import { createEvent, parseItinerary, saveStages } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
 import type {
@@ -168,6 +168,7 @@ export function HostWizard() {
       if (participants) body.expectedParticipants = participants;
       if (accessMode === "invite") body.accessMode = "invite";
       const res = await createEvent(body);
+      await refreshClaims();
       rememberEvent(res.eventId, name.trim());
       setCreated(res);
       setStep(2);

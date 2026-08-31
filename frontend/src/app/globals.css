@@ -54,7 +54,7 @@ body {
   background-color: var(--bg-0);
   background-image: 
     radial-gradient(ellipse 80% 50% at 50% -10%, var(--accent-glow), transparent 70%),
-    radial-gradient(ellipse 60% 40% at 50% 120%, rgba(99, 102, 241, 0.08), transparent 70%);
+    radial-gradient(ellipse 60% 40% at 50% 120%, var(--accent-glow), transparent 70%);
   background-attachment: fixed;
 }
 

@@ -97,43 +97,25 @@ export function PublicGallery({
         </div>
       )}
 
-      {/* Floating Filter Pill Header (All / Photos / Reels / Videos) & Mode Toggle */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 pb-3">
-        {/* Media Kind Filter Pills */}
-        <div className="flex items-center p-1 rounded-full glass-pill bg-slate-950/80 border border-white/10 shadow-lg">
-          {(
-            [
-              { id: "all", label: "All" },
-              { id: "photos", label: "Photos", icon: ImageIcon },
-              { id: "highlights", label: "Highlights", icon: Sparkles },
-              { id: "videos", label: "Videos", icon: VideoIcon },
-            ] as Array<{ id: MediaFilterType; label: string; icon?: React.ElementType }>
-          ).map((tab) => {
-            const isActive = mediaFilter === tab.id;
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => {
-                  tapHaptic();
-                  setMediaFilter(tab.id);
-                }}
-                className={`flex items-center gap-1.5 text-xs px-3.5 py-1.5 rounded-full transition-all duration-200 cursor-pointer active:scale-95 ${
-                  isActive
-                    ? "bg-[var(--accent)] text-slate-950 font-bold shadow-md"
-                    : "text-[var(--text-secondary)] hover:text-white"
-                }`}
-              >
-                {Icon && <Icon className="w-3.5 h-3.5" />}
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Latest vs Director's Picks Segment */}
+      {/* Unified Streamlined Control Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 px-4 pb-2.5">
+        {/* Mode Segment: Curated Picks vs Latest */}
         <div className="flex items-center p-1 rounded-full glass-pill bg-white/5 border border-white/10 shadow-md">
+          <button
+            type="button"
+            onClick={() => {
+              tapHaptic();
+              setMode("highlights");
+            }}
+            className={`flex items-center gap-1.5 text-xs px-3.5 py-1.5 rounded-full transition-all duration-200 cursor-pointer active:scale-95 ${
+              mode === "highlights"
+                ? "bg-[var(--accent)] text-slate-950 font-bold shadow-md"
+                : "text-[var(--text-secondary)] hover:text-white"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Curated Picks</span>
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -147,44 +129,62 @@ export function PublicGallery({
             }`}
           >
             <Clock className="w-3.5 h-3.5" />
-            <span>Latest</span>
+            <span>Latest Stream</span>
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              tapHaptic();
-              setMode("highlights");
-            }}
-            className={`flex items-center gap-1.5 text-xs px-3.5 py-1.5 rounded-full transition-all duration-200 cursor-pointer active:scale-95 ${
-              mode === "highlights"
-                ? "bg-white/15 text-white font-semibold shadow-inner"
-                : "text-[var(--text-secondary)] hover:text-white"
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-[var(--accent)]" />
-            <span>Director&rsquo;s Picks</span>
-          </button>
+        </div>
+
+        {/* Compact Media Type Filter: All / Photos / Videos */}
+        <div className="flex items-center p-0.5 rounded-full glass-pill bg-white/5 border border-white/10 shadow-sm">
+          {(
+            [
+              { id: "all", label: "All" },
+              { id: "photos", label: "Photos", icon: ImageIcon },
+              { id: "videos", label: "Videos", icon: VideoIcon },
+            ] as Array<{ id: MediaFilterType; label: string; icon?: React.ElementType }>
+          ).map((tab) => {
+            const isActive = mediaFilter === tab.id;
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  tapHaptic();
+                  setMediaFilter(tab.id);
+                }}
+                className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full transition-all duration-200 cursor-pointer active:scale-95 ${
+                  isActive
+                    ? "bg-white/15 text-white font-semibold"
+                    : "text-[var(--text-secondary)] hover:text-white"
+                }`}
+                title={tab.label}
+              >
+                {Icon && <Icon className="w-3 h-3" />}
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Stage ceremony chips */}
+      {/* Stage ceremony / multi-day timeline chips */}
       <StageChips stages={stages} active={stageFilter} onChange={setStageFilter} />
 
       {/* Masonry Grid Layout: 2 cols on mobile, 3-4 cols on laptop */}
       {visible.length === 0 ? (
-        <div className="text-center mt-14 px-6 py-14 rounded-3xl glass-card mx-4 border border-dashed border-white/10 shadow-2xl animate-spring-in">
-          <div className="w-14 h-14 rounded-full bg-white/5 flex items-center justify-center text-[var(--text-secondary)] mx-auto mb-3 shadow-inner">
-            <Sparkles className="w-6 h-6 text-[var(--accent)]" />
+        <div className="text-center mt-10 px-6 py-12 rounded-3xl glass-card mx-4 border border-dashed border-white/10 shadow-2xl animate-spring-in">
+          <div className="w-12 h-12 rounded-full bg-[var(--accent)]/10 flex items-center justify-center text-[var(--accent)] mx-auto mb-3 shadow-inner">
+            <Sparkles className="w-5 h-5" />
           </div>
-          <p className="font-[family-name:var(--font-display)] text-lg font-semibold text-[var(--text-primary)] mb-1">
-            Waiting for first uploads
+          <p className="font-semibold text-base text-[var(--text-primary)] mb-1">
+            Waiting for first moments
           </p>
           <p className="text-xs text-[var(--text-secondary)] max-w-sm mx-auto leading-relaxed">
-            Scan the QR code or tap the Camera button to capture moments. The AI Story Director curates and ranks them automatically in real time.
+            Scan the QR code or tap the Camera button to capture moments. The AI Director curates and projects highlights in real time.
           </p>
         </div>
       ) : (
-        <div className="columns-2 sm:columns-3 lg:columns-4 gap-3 px-3 mt-3 [column-fill:_balance]">
+        <div className="columns-2 sm:columns-3 lg:columns-4 gap-3 px-3 mt-2 [column-fill:_balance]">
           {visible.map((media, index) => {
             const isVideo = media.kind === "video" || Boolean(media.proxyUri) || Boolean(media.durationSec);
             const isHighlight = media.curator?.isHighlight;
@@ -207,10 +207,12 @@ export function PublicGallery({
                     variant="thumb"
                     alt={media.curator?.caption ?? ""}
                     className="w-full h-auto block object-cover group-hover:scale-105 transition-transform duration-400 ease-out"
-                    fallback={<div className="w-full aspect-[4/5] skeleton-shimmer" />}
+                    fallback={<div className="w-full aspect-[4/5] bg-white/5 animate-pulse rounded-2xl" />}
                   />
                 ) : (
-                  <div className="w-full aspect-[4/5] skeleton-shimmer" />
+                  <div className="w-full aspect-[4/5] bg-white/5 flex items-center justify-center rounded-2xl border border-white/5">
+                    <ImageIcon className="w-6 h-6 text-white/20" />
+                  </div>
                 )}
 
                 {/* Video Duration Pill & Optical Play Icon — only for actual video content */}

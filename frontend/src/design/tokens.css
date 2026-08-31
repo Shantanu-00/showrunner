@@ -1,24 +1,24 @@
 /* Showrunner UI/UX Design System Tokens (OKLCH Color Engine & Obsidian Surfaces) */
 :root {
-  /* OKLCH Base Canvas & Obsidian Elevation */
-  --canvas-primary: oklch(0.12 0.012 260);
-  --canvas-secondary: oklch(0.15 0.015 260);
-  --surface-card: oklch(0.16 0.018 260);
-  --surface-elevated: oklch(0.20 0.022 260);
-  --surface-overlay: rgba(10, 14, 26, 0.75);
+  /* OKLCH Base Canvas & Obsidian Elevation (Universal Cinema Slate) */
+  --canvas-primary: oklch(0.13 0.012 250);
+  --canvas-secondary: oklch(0.16 0.016 250);
+  --surface-card: oklch(0.18 0.020 250);
+  --surface-elevated: oklch(0.22 0.025 250);
+  --surface-overlay: rgba(12, 16, 26, 0.80);
 
   /* Legacy & semantic mapping */
   --bg-0: var(--canvas-primary);
   --bg-1: var(--surface-card);
   --bg-2: var(--surface-elevated);
-  --bg-glass: rgba(18, 22, 38, 0.72);
+  --bg-glass: rgba(20, 24, 38, 0.72);
   --bg-glass-subtle: rgba(255, 255, 255, 0.04);
   --bg-overlay: rgba(8, 10, 18, 0.88);
 
-  /* OKLCH Core Accents */
-  --electric-indigo: oklch(0.64 0.24 275);
-  --electric-indigo-glow: oklch(0.64 0.24 275 / 25%);
-  --electric-indigo-soft: oklch(0.74 0.18 275);
+  /* Universal Accents: Champagne Titanium Gold, Emerald Live, Sunset Film Amber */
+  --champagne-gold: oklch(0.80 0.14 78);
+  --champagne-gold-glow: oklch(0.80 0.14 78 / 25%);
+  --champagne-gold-soft: oklch(0.88 0.10 78);
 
   --emerald-live: oklch(0.72 0.20 150);
   --emerald-live-glow: oklch(0.72 0.20 150 / 30%);
@@ -27,10 +27,10 @@
   --sunset-orange-glow: oklch(0.68 0.21 40 / 30%);
 
   /* Default Accents */
-  --accent: var(--electric-indigo);
+  --accent: var(--champagne-gold);
   --accent-2: var(--sunset-orange);
-  --accent-soft: var(--electric-indigo-soft);
-  --accent-glow: var(--electric-indigo-glow);
+  --accent-soft: var(--champagne-gold-soft);
+  --accent-glow: var(--champagne-gold-glow);
 
   /* Status Colors */
   --ok: var(--emerald-live);
@@ -41,9 +41,9 @@
   --danger-glow: oklch(0.65 0.22 25 / 30%);
 
   /* Typography Ramp */
-  --text-primary: oklch(0.96 0.005 260);
-  --text-secondary: oklch(0.65 0.02 260);
-  --text-tertiary: oklch(0.35 0.02 260);
+  --text-primary: oklch(0.97 0.005 250);
+  --text-secondary: oklch(0.68 0.018 250);
+  --text-tertiary: oklch(0.38 0.015 250);
 
   --ivory: var(--text-primary);
   --ivory-dim: var(--text-secondary);
@@ -65,10 +65,10 @@
   --hairline-card: 1px solid oklch(1 0 0 / 8%);
   --hairline: 1px solid oklch(1 0 0 / 10%);
   --hairline-subtle: 1px solid oklch(1 0 0 / 6%);
-  --hairline-accent: 1px solid oklch(0.64 0.24 275 / 45%);
+  --hairline-accent: 1px solid oklch(0.80 0.14 78 / 40%);
   --shadow-luxe: 0 12px 36px -8px rgba(0, 0, 0, 0.75), 0 0 24px -4px var(--accent-glow);
   --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
-  --shadow-glow: 0 0 24px rgba(99, 102, 241, 0.18);
+  --shadow-glow: 0 0 24px rgba(212, 175, 106, 0.18);
 
   /* Geometry & Squircle Radii (8pt Soft Grid) */
   --radius-sm: 8px;
@@ -154,10 +154,10 @@
 }
 
 [data-theme="custom"] {
-  --accent: var(--electric-indigo);
+  --accent: var(--champagne-gold);
   --accent-2: var(--sunset-orange);
-  --accent-soft: var(--electric-indigo-soft);
-  --accent-glow: var(--electric-indigo-glow);
+  --accent-soft: var(--champagne-gold-soft);
+  --accent-glow: var(--champagne-gold-glow);
 }
 
 /* Spec 12 §3 — kiosk stage-of-the-moment accents, event-generic (supersedes the old

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ShieldCheck, KeyRound, ArrowRight, LayoutDashboard, Calendar, RefreshCw } from "lucide-react";
-import { ensureAnonymousAuth, refreshClaims } from "@/lib/firebase";
+import { ensureAnonymousAuth, refreshClaims, type Claims } from "@/lib/firebase";
 import { redeemHostCode, getConsoleSummary } from "@/lib/hostApi";
 import { listenHostEvent } from "@/lib/hostFirestore";
 import { useRouteEventId } from "@/lib/routeParams";
@@ -22,12 +22,11 @@ import { PeoplePanel } from "./PeoplePanel";
 type AuthState = "checking" | "need-code" | "ready" | "not-found";
 
 /** The `host` custom claim is moving from a single event id to a list, so one browser can hold
- * several events at once. Read both shapes: a client that only understood the scalar would lock the
- * host out of their own console the moment the claim became an array. */
-function grantsHostOf(claims: { host?: string }, eventId: string): boolean {
-  const host = claims.host as string | string[] | undefined;
-  if (Array.isArray(host)) return host.includes(eventId);
-  return host === eventId;
+ * several events at once. Read both shapes: check the array first, fallback to legacy scalar. */
+function grantsHostOf(claims: Claims, eventId: string): boolean {
+  if (claims.hosts?.includes(eventId)) return true;
+  if (claims.host === eventId) return true;
+  return false;
 }
 
 export function HostConsoleShell({ eventId: fallbackEventId }: { eventId: string }) {
