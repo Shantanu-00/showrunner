@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Showrunner — System Architecture (overview)</title>
+<link rel="stylesheet" href="arch.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     PAGE 1 — THE ONE-GLANCE ARCHITECTURE
+
+     Authored as data. `BANDS`, `NODES`, `EDGES` and `BUSES` below are laid out
+     on an explicit 1532 x 776 grid, and the SVG edge layer shares that exact
+     coordinate space — so a connector can never point at a stale box position.
+     Every box holds at most three lines: depth is opt-in, on pages 2-7.
+     ══════════════════════════════════════════════════════════════════════════ -->
+
+<div class="page" id="p1">
+
+  <div class="masthead">
+    <div>
+      <p class="kicker">All Things Agentic · Taskmaster track · solo build · google cloud region us-central1</p>
+      <h1>Showrunner <span class="thin">— autonomous event media director</span></h1>
+      <p class="thesis">An <b>event-driven data plane</b> feeding a <b>goal-driven control plane</b>, with <b>governance as a cross-cutting rail</b>. A director agent finds the holes in the coverage and <b>tasks the crowd to close them</b>. <b>Judgment by agents, enforcement by policy:</b> no model here can widen an exposure, award a point, or decide who matters.</p>
+    </div>
+    <div class="facts">
+      <div class="fact"><div class="n">8+1</div><div class="l">Cloud Run<br/>svc + job</div></div>
+      <div class="fact"><div class="n">5</div><div class="l">fleet<br/>members</div></div>
+      <div class="fact"><div class="n">12</div><div class="l">least-priv<br/>identities</div></div>
+      <div class="fact"><div class="n">6</div><div class="l">throttled<br/>queues</div></div>
+      <div class="fact"><div class="n">107</div><div class="l">rules<br/>assertions</div></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="lg"><span class="gl" style="color:var(--mdl)">◆</span><b>LLM agent</b> · ADK</div>
+    <div class="lg"><span class="gl" style="color:var(--dat)">▲</span><b>ML worker</b> · no LLM</div>
+    <div class="lg"><span class="gl" style="color:var(--gov)">●</span><b>Deterministic</b> code</div>
+    <div class="lg"><span class="gl" style="color:var(--ink-2)">▣</span><b>Managed</b> service</div>
+    <div class="sep"></div>
+    <div class="lg"><span class="sw" style="border-color:var(--exp);background:var(--exp-bg)"></span>experience</div>
+    <div class="lg"><span class="sw" style="border-color:var(--dat);background:var(--dat-bg)"></span>data plane</div>
+    <div class="lg"><span class="sw" style="border-color:var(--ctl);background:var(--ctl-bg)"></span>control plane</div>
+    <div class="lg"><span class="sw" style="border-color:var(--gov);background:var(--gov-bg)"></span>governance</div>
+    <div class="lg"><span class="sw" style="border-color:var(--mdl);background:var(--mdl-bg)"></span>models</div>
+    <div class="sep"></div>
+    <div class="lg">solid = flow · dashed = subscription or optional · <b>①…</b> = one photograph's journey</div>
+  </div>
+
+  <div class="canvas" id="canvas"><div class="cvinner" id="cvinner">
+    <svg class="edges" id="edges" viewBox="0 0 1532 776">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4a5058"/></marker>
+        <marker id="ah-heavy" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#14161a"/></marker>
+        <marker id="ah-exp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1b6fe0"/></marker>
+        <marker id="ah-ctl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b4530a"/></marker>
+        <marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a11b2b"/></marker>
+      </defs>
+    </svg>
+  </div></div>
+
+  <div class="pagefoot">
+    <div><b>1 of 7 — page 1 is the architecture.</b> Detail follows: ② deployment topology &amp; identity · ③ the data plane · ④ the control loop, state &amp; memory · ⑤ the reel pipeline · ⑥ trust &amp; governance · ⑦ failure, scale &amp; cost.</div>
+    <div class="mono">project showrunner-hq · us-central1 · drawn from the live deployment, 2026-09-01</div>
+  </div>
+
+</div>
+
+<script>
+/* ────────────────────────────────────────────────────────────────────────────
+   1. The diagram, declared as data.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+const BANDS = [
+  { x:0, y:6,   w:1248, h:102, cls:'exp', lx:12,  label:'Experience',
+    sub:'— Next.js App Router PWA, static export → Firebase Hosting · Firebase Auth: anonymous uid + custom claims · no chat window anywhere in the product' },
+  { x:0, y:120, w:1248, h:300, cls:'dat', lx:600, label:'Data plane',
+    sub:'— event-driven · push · rate-limited · at-least-once, therefore idempotent on a status transition' },
+  { x:0, y:436, w:1248, h:226, cls:'ctl', lx:12,  label:'Control plane',
+    sub:'— goal-driven · scheduler-triggered · serialised by a per-event transactional lease' },
+  { x:1264, y:6, w:268, h:656, cls:'mdl', lx:12,  label:'Agent & model stack', sub:'' },
+  { x:0, y:678, w:1532, h:94, cls:'gov', lx:12,  label:'Governance rail',
+    sub:'— invariants that hold regardless of what either plane believes. Judgment by agents; enforcement by policy.' },
+];
+
+const C5 = i => 12 + i * 246, W5 = 237;
+
+const NODES = [
+  /* ── EXPERIENCE ─────────────────────────────────────────────────────────── */
+  { id:'guest', cls:'exp', tint:1, x:C5(0), y:20, w:W5, h:82, gl:'●', title:'Guest PWA', svc:'/join/{eventId}',
+    body:'QR or invite code · anonymous sign-in · <b>IndexedDB outbox</b> survives app close · bounty banner + Web Push' },
+  { id:'kiosk', cls:'exp', tint:1, x:C5(1), y:20, w:W5, h:82, gl:'●', title:'Live wall', svc:'/kiosk/{eventId}',
+    body:'The screen in the venue. Renders the <b>published program</b>: hero, just-in strip, leaderboard, premieres.' },
+  { id:'host', cls:'exp', tint:1, x:C5(2), y:20, w:W5, h:82, gl:'●', title:'Host console', svc:'/host/{eventId}',
+    body:'Lifecycle master switch · itinerary paste · claim review · moderation · coverage grid · wrap report' },
+  { id:'tour', cls:'exp', tint:1, x:C5(3), y:20, w:W5, h:82, gl:'●', title:'Guided walkthrough', svc:'/how-it-works',
+    body:'A live <b>next-tick countdown</b> read from the API, and a non-optional disclosure of this demo event’s config.' },
+  { id:'claim', cls:'exp', tint:1, x:C5(4), y:20, w:W5, h:82, gl:'●', title:'Album claim link', svc:'/events/{id}/claim',
+    body:'Minted by the album’s own owner. Every other route to an album is a <b>claim the host approves</b>.' },
+
+  /* ── DATA PLANE · row A — ingest ────────────────────────────────────────── */
+  { id:'api', cls:'dat', x:C5(0), y:134, w:W5, h:74, seq:'1', gl:'●', title:'api', svc:'Cloud Run · sa-api',
+    body:'Registers intent <i>before</i> bytes exist, hands back a signed <b>V4 PUT</b> URL with content-length pinned.' },
+  { id:'raw', cls:'dat', tint:1, store:1, x:C5(1), y:134, w:W5, h:74, seq:'2', gl:'▣', title:'Storage — raw', svc:'showrunner-raw-media',
+    body:'The burst shock absorber. Bytes go <b>phone → bucket direct</b>; no server ever touches the file.' },
+  { id:'eventarc', cls:'dat', x:C5(2), y:134, w:W5, h:74, seq:'3', gl:'▣', title:'Eventarc', svc:'object.v1.finalized → intake',
+    body:'At-least-once · 5 attempts · 10s→600s backoff · <b>dead-letter</b> on the Pub/Sub subscription.' },
+  { id:'intake', cls:'dat', x:C5(3), y:134, w:W5, h:74, seq:'4', gl:'●', title:'intake', svc:'Cloud Run · sa-intake',
+    body:'Size · <b>md5 dedupe</b> · EXIF at the event’s tz · lossless <b>GPS strip</b> · 3 renders · stage fan-out' },
+  { id:'tasks', cls:'dat', tint:1, x:C5(4), y:134, w:W5, h:74, seq:'5', gl:'▣', title:'Cloud Tasks — 6 queues', svc:'classify 8/s · face 10/s · priority 20/s',
+    body:'<b>The single throttle.</b> Only Tasks has a server-side dispatch rate — and that rate <i>is</i> the spend cap.' },
+
+  /* ── DATA PLANE · row B — perception ────────────────────────────────────── */
+  { id:'curate', cls:'dat', x:C5(0), y:222, w:W5, h:100, seq:'6', gl:'◆', title:'Curator', svc:'worker-curate · ADK LlmAgent',
+    body:'<code>gemini-3.5-flash-lite</code> on the thumbnail: stage, moment tags, aesthetic score, caption, scene — fused with an EXIF temporal prior. <b>Judges; never acts.</b>' },
+  { id:'face', cls:'dat', x:C5(1), y:222, w:W5, h:100, seq:'7', gl:'▲', title:'Face Indexer', svc:'worker-face · no LLM',
+    body:'SCRFD detect + align → ArcFace <b>512-d</b> ONNX → Firestore <code>findNearest</code> (flat exact KNN) → cluster. Google sells no face-identity API; Gemini never touches identity.' },
+  { id:'safety', cls:'dat', x:C5(2), y:222, w:W5, h:100, seq:'8', gl:'◆', title:'Guardian', svc:'worker-safety · two passes',
+    body:'Split by <i>kind of question</i>: Vision <b>SafeSearch</b> ● decides categories unappealably; a <code>flash-lite</code> <b>dignity rubric</b> ◆ judges context and may only make a verdict <i>more</i> conservative.' },
+  { id:'vprep', cls:'dat', x:C5(3), y:222, w:W5, h:100, seq:'9', gl:'●', title:'Video prep', svc:'worker-video-prep · ffmpeg',
+    body:'ffprobe · poster frame · keyframes · web proxy. The one stage a video takes instead of the three a photo takes.' },
+  { id:'dlq', cls:'bad', x:C5(4), y:222, w:W5, h:44, gl:'●', title:'dlq consumer',
+    svc:'← Eventarc DLQ · quarantine + error alert' },
+  { id:'derived', cls:'dat', tint:1, store:1, x:C5(4), y:278, w:W5, h:44, gl:'▣', title:'Storage — derived / curated',
+    svc:'thumb · display_1600 · reel mp4' },
+
+  /* ── DATA PLANE · row C — the enforcement point, and the system of record ─ */
+  { id:'recompute', cls:'gov', tint:1, x:12, y:336, w:480, h:74, seq:'10', gl:'●', title:'recompute_visibility( )',
+    svc:'shared/visibility.py — the only writer of media.visibility, anywhere in the system',
+    body:'Six inputs: consent ring · Guardian verdict · aesthetic floor · subject veto · panic freeze · deletion. Derives <code>status=\'indexed\'</code> and bumps the <b>coverage shards</b> in the <b>same transaction</b>.' },
+  { id:'fs', cls:'dat', tint:1, store:1, x:500, y:336, w:736, h:74, seq:'11', gl:'▣', title:'Firestore — system of record, and realtime fan-out',
+    svc:'media · faces · enrollments · people · bounties · reels · kiosk · ledger · ops · guests · claimAudits',
+    body:'One database is both the state machine and the push channel — <b>no client in this product polls anything</b>. A native <b>512-d vector index</b> (flat, cosine) does the face KNN; 11 composite indexes serve the rest. Security rules are the boundary, so query shape and rule shape are one design, tested together.' },
+
+  /* ── CONTROL PLANE · row A ──────────────────────────────────────────────── */
+  { id:'story', cls:'ctl', x:12, y:450, w:798, h:102, gl:'◆', title:'Story Director — one tick',
+    svc:'directors/story · gemini-3.7-flash · runs inside the tick lease on Cloud Run, not on Agent Runtime, because the guardrails are the product',
+    steps:[['VALIDATE','det'],['EXPIRE','det'],['ARM','det'],['LEDGER · O(1), 6 reads','det'],['REASON ◆ one model call','llm'],['ACT · re-derived from Firestore','det']],
+    body:'Goal: full coverage, per stage and per named person. Guardrails, every field re-derived from the documents rather than trusted from the plan: <b>≤2 new bounties per tick · ≤6 open at once · no duplicate per (stage, moment, person) · points = clamp(base × vipWeight, 50, 300)</b> · an auto stage-advance needs confidence ≥ 0.8 <i>and</i> the schedule to agree within 45 min. An idle tick skips the model call entirely — zero tokens overnight.' },
+  { id:'pub', cls:'ctl', x:818, y:450, w:200, h:102, gl:'●', title:'publisher', svc:'Cloud Run · sa-publisher · min 1',
+    body:'Ranks and writes <code>kiosk/playlist</code> under a <b>per-event lease</b>, and only when the <i>decisions</i> change.' },
+  { id:'pulse', cls:'ctl', x:1026, y:450, w:210, h:102, gl:'●', title:'platform/tickPulse', svc:'written by every tick',
+    body:'Autonomy that cannot be checked is a claim, not a property. One heartbeat document per tick — whether or not it found work to do.' },
+
+  /* ── CONTROL PLANE · row B ──────────────────────────────────────────────── */
+  { id:'sched', cls:'ctl', tint:1, x:12, y:562, w:196, h:88, gl:'▣', title:'Cloud Scheduler', svc:'3 jobs, all ENABLED',
+    body:'<code>director-tick</code> */2 · <code>director-tick-demo</code> */1 with a +30 s Task interleave · <code>orphan-sweep</code> hourly' },
+  { id:'tick', cls:'ctl', x:216, y:562, w:214, h:88, gl:'●', title:'/internal/tick', svc:'api · OIDC allowlist',
+    body:'<code>api</code> is the one public service, so the <b>allowlist of calling service accounts</b> is the access control. Takes the lease.' },
+  { id:'reel', cls:'ctl', x:438, y:562, w:560, h:88, gl:'◆', title:'Reel Director — one commission, one job execution',
+    svc:'Cloud Run Job: render · sa-render · started via the Run Admin API (Tasks cannot start a Job)',
+    steps:[['SELECT','det'],['DIRECT ◆','llm'],['CRITIC ◆','llm'],['SCORE','det'],['EDL','det'],['RENDER','det'],['PUBLISH','det']],
+    body:'ffmpeg filtergraph + <b>librosa beat grid</b>, so beat error is 0.000 ms <i>by construction</i> · Lyria soundtrack · Veo opener cached once per event · the <b>manifest is re-validated against current visibility before publish</b>.' },
+  { id:'memos', cls:'ctl', x:1006, y:562, w:230, h:88, gl:'◆', title:'Soft-context writers', svc:'world model · diary · taste memo',
+    body:'Gemma and flash-lite write prose <i>from</i> deterministic counters. <b>Creative surfaces only</b> — read by no ranking, exposure or award path.' },
+
+  /* ── AGENT & MODEL STACK ────────────────────────────────────────────────── */
+  { id:'adk', cls:'mdl', tint:1, x:1276, y:20, w:244, h:84, gl:'◆', title:'Google ADK v2 · GenAI SDK', svc:'google-adk · google-genai',
+    body:'Every call is an <code>LlmAgent</code> with a Pydantic <b>output schema</b>, behind one wrapper that splits <b>transient from permanent</b> failure before a worker sees it.' },
+  { id:'models', cls:'mdl', x:1276, y:112, w:244, h:290, gl:'◆', title:'Models, and who calls them', svc:'8 LLM roles across 5 fleet members',
+    body:'<b>gemini-3.5-flash-lite</b> — Curator · Guardian rubric · bounty validator · itinerary parser · event diary<br/><br/><b>gemini-3.7-flash</b> — Story Director REASON · Reel DIRECT · Reel CRITIC<br/><br/><b>gemma-4-26b-a4b-it</b> — world-model prose and the private taste memo. Deliberately off the critical path.<br/><br/><b>lyria-3-clip-preview</b> — every reel’s soundtrack, $0.04 a clip. A failed clip yields a silent reel, never a failed one.<br/><br/><b>veo-3.1-fast</b> — the 8 s opener, made once per event and cached.<br/><br/>Guest media rides the <b>billed first-party path only</b> — the free tier trains on submitted data.' },
+  { id:'geap', cls:'mdl', dashed:1, x:1276, y:410, w:244, h:124, gl:'◆', title:'Memory Bank (GEAP)', svc:'optional · AGENT_ENGINE_ID empty in prod',
+    body:'Wired through <code>VertexAiMemoryBankService</code>, scoped <code>{eventId}:host</code>, holding <b>soft context only</b>. With no Agent Engine configured the same host free-text is read straight off the event document — the honest way of saying <b>that input was never load-bearing</b>.' },
+  { id:'arc', cls:'mdl', x:1276, y:542, w:244, h:112, gl:'▲', title:'InsightFace ArcFace · ONNX', svc:'no LLM · CPU · weights baked in',
+    body:'Identity is arithmetic, and the thresholds are config: τ_match 0.45 · τ_cluster 0.55 · τ_claim 0.60 · ambiguity margin 0.08. Calling this an agent would be agent-washing, so the census calls it a <b>specialized ML worker</b> and moves on.' },
+
+  /* ── GOVERNANCE RAIL ────────────────────────────────────────────────────── */
+  { id:'g1', cls:'gov', tint:1, x:12,   y:690, w:243, h:70, gl:'●', title:'Firestore security rules', svc:'deny-by-default · claims only · no get()',
+    body:'<b>107 assertions across 8 personas</b>, on the emulator, with no cloud credentials.' },
+  { id:'g2', cls:'gov', tint:1, x:264,  y:690, w:243, h:70, gl:'●', title:'Consent is three rings', svc:'self · pool (default) · public',
+    body:'Ring 2 <i>also</i> needs a <code>public_ok</code> verdict, an aesthetic floor and no subject veto.' },
+  { id:'g3', cls:'gov', tint:1, x:516,  y:690, w:243, h:70, gl:'●', title:'Tools isolated and scoped', svc:'12 single-purpose service accounts',
+    body:'No perception worker holds <i>any</i> grant on the raw bucket. <b>No key file exists anywhere.</b>' },
+  { id:'g4', cls:'gov', tint:1, x:768,  y:690, w:243, h:70, gl:'●', title:'Biometrics have no read rule', svc:'events/{id}/enrollments/{personId}',
+    body:'A collection with <b>no <code>allow</code> rule at all</b> — unreadable by every client, host included.' },
+  { id:'g5', cls:'gov', tint:1, x:1020, y:690, w:243, h:70, gl:'●', title:'Model Armor, twice', svc:'ADK plugin + ingress guard',
+    body:'Once where a human types, and once in front of <i>every</i> director model call.' },
+  { id:'g6', cls:'gov', tint:1, x:1272, y:690, w:248, h:70, gl:'●', title:'Failure is designed', svc:'transient vs permanent · DLQ · chaos switch',
+    body:'A refusal defaults to <code>host_review</code>, never <code>public_ok</code>. Guarded executors reject bad plans.' },
+];
+
+/* Point-to-point edges. `a`/`b` are "id:side[frac]"; side ∈ t b l r. */
+const EDGES = [
+  /* The two client edges run in gutters, with their labels set along them, so no
+     connector ever crosses a box: the left margin, and the col-0/col-1 gutter. */
+  { a:'api:l',        b:'guest:l',      lbl:'upload intent + consent   ⇄   signed URL', style:'exp', both:1, gap:6, seg:1, rot:-90 },
+  { a:'guest:r',      b:'raw:l',        lbl:'the bytes — straight from the phone', style:'heavy', clsl:'em', gap:4.5, seg:1, rot:-90 },
+  { a:'raw:r',        b:'eventarc:l',   style:'thin' },
+  { a:'eventarc:r',   b:'intake:l',     style:'thin' },
+  { a:'intake:r',     b:'tasks:l',      style:'thin' },
+  { a:'intake:r0.85', b:'derived:l',    style:'thin', gap:4.5 },
+  { a:'sched:r',      b:'tick:l',       style:'ctl' },
+  { a:'tick:t0.5',    b:'story:b0.24',  lbl:'lease → tick', style:'ctl', seg:1 },
+  { a:'story:t0.5',   b:'fs:b0.5',      lbl:'bounties · points · coverage ledger · director state', style:'ctl', clsl:'em', seg:1 },
+  { a:'story:b0.72',  b:'reel:t0.3',    lbl:'commission', style:'ctl', seg:1 },
+  { a:'pub:t0.5',     b:'fs:b0.86',     lbl:'program', style:'ctl', seg:1 },
+];
+
+/* One-to-many / many-to-one buses: a spine at `y` with stubs to each end. The
+   realtime fan-out rises through the col-1/col-2 gutter, which is why the
+   perception columns are aligned across both ingest rows in the first place. */
+const BUSES = [
+  { from:['tasks:b0.5'], to:['curate:t0.5','face:t0.5','safety:t0.5','vprep:t0.5'],
+    y:215, style:'thin', lbl:'rate-limited dispatch', lx:985 },
+  { from:['curate:b0.5','face:b0.5','safety:b0.5','vprep:b0.5'], to:['recompute:t0.5'],
+    y:328, style:'thin', lbl:'stage verdicts', lx:745 },
+  { from:['fs:t0.0'], to:['guest:b0.5','kiosk:b0.5','host:b0.5','tour:b0.5'],
+    y:112, style:'exp', lbl:'realtime snapshot listeners · ~1–2 s · nothing in this product polls',
+    lx:500, ly:225, rot:-90, clsl:'em' },
+];
+
+/* ────────────────────────────────────────────────────────────────────────────
+   2. Layout engine.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+const canvas = document.getElementById('cvinner');
+const svg = document.getElementById('edges');
+const SVGNS = 'http://www.w3.org/2000/svg';
+const reg = {};
+
+for (const b of BANDS) {
+  const el = document.createElement('div');
+  el.className = 'band ' + b.cls;
+  el.style.cssText = `left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px`;
+  el.innerHTML = `<div class="bl" style="margin-left:${b.lx}px">${b.label}${b.sub ? ' <span>' + b.sub + '</span>' : ''}</div>`;
+  canvas.appendChild(el);
+}
+
+for (const n of NODES) {
+  reg[n.id] = n;
+  const el = document.createElement('div');
+  el.className = ['node', n.cls, n.tint ? 'tint' : '', n.store ? 'store' : '', n.dashed ? 'dashed' : ''].filter(Boolean).join(' ');
+  el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px`;
+  const arrow = '<span class="step" style="border:none;background:none;padding:2px 1px 1px;color:#757c86">→</span>';
+  el.innerHTML =
+    `<div class="hd">${n.seq ? `<span class="seq">${n.seq}</span>` : ''}<span class="gl">${n.gl}</span><span>${n.title}</span></div>` +
+    (n.svc ? `<div class="svc">${n.svc}</div>` : '') +
+    (n.steps ? '<div class="steps">' + n.steps.map(s => `<span class="step ${s[1]}">${s[0]}</span>`).join(arrow) + '</div>' : '') +
+    (n.body ? `<div class="bd">${n.body}</div>` : '');
+  canvas.appendChild(el);
+}
+
+function anchor(spec) {
+  const m = /^([A-Za-z0-9_]+):([tblr])([\d.]*)$/.exec(spec);
+  const n = reg[m[1]], side = m[2], f = m[3] === '' ? 0.5 : parseFloat(m[3]);
+  if (side === 't') return { x: n.x + n.w * f, y: n.y,          dir: [0, -1] };
+  if (side === 'b') return { x: n.x + n.w * f, y: n.y + n.h,    dir: [0,  1] };
+  if (side === 'l') return { x: n.x,           y: n.y + n.h * f, dir: [-1, 0] };
+  return                   { x: n.x + n.w,     y: n.y + n.h * f, dir: [ 1, 0] };
+}
+
+const STYLE = {
+  thin:  { stroke:'#4a5058', w:1.3, dash:'',      mk:'ah' },
+  heavy: { stroke:'#14161a', w:2.6, dash:'',      mk:'ah-heavy' },
+  exp:   { stroke:'#1b6fe0', w:1.5, dash:'5 3.5', mk:'ah-exp' },
+  ctl:   { stroke:'#b4530a', w:1.5, dash:'',      mk:'ah-ctl' },
+  bad:   { stroke:'#a11b2b', w:1.4, dash:'3 2.5', mk:'ah-bad' },
+};
+
+/* Orthogonal router: straight when an axis already agrees, otherwise a single
+   elbow taken in the direction the source port faces. */
+function route(p, q, gap = 9) {
+  const pts = [[p.x, p.y]];
+  if (p.dir[0] !== 0) {
+    if (Math.abs(p.y - q.y) < 1.5) { pts.push([q.x, q.y]); return pts; }
+    const mx = p.x + p.dir[0] * gap;
+    pts.push([mx, p.y], [mx, q.y], [q.x, q.y]);
+  } else {
+    if (Math.abs(p.x - q.x) < 1.5) { pts.push([q.x, q.y]); return pts; }
+    const my = p.y + p.dir[1] * gap;
+    pts.push([p.x, my], [q.x, my], [q.x, q.y]);
+  }
+  return pts;
+}
+
+/* Rounded elbows, so the drawing does not read as a wiring diagram. */
+function pathOf(pts, r = 6) {
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+    const v1 = [x1 - x0, y1 - y0], v2 = [x2 - x1, y2 - y1];
+    const l1 = Math.hypot(...v1) || 1, l2 = Math.hypot(...v2) || 1;
+    const rr = Math.min(r, l1 / 2, l2 / 2);
+    d += ` L ${x1 - v1[0] / l1 * rr} ${y1 - v1[1] / l1 * rr}`;
+    d += ` Q ${x1} ${y1} ${x1 + v2[0] / l2 * rr} ${y1 + v2[1] / l2 * rr}`;
+  }
+  const e = pts[pts.length - 1];
+  return d + ` L ${e[0]} ${e[1]}`;
+}
+
+function stroke(d, st, opts = {}) {
+  const p = document.createElementNS(SVGNS, 'path');
+  p.setAttribute('d', d);
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', st.stroke);
+  p.setAttribute('stroke-width', st.w);
+  p.setAttribute('stroke-linecap', 'round');
+  if (st.dash) p.setAttribute('stroke-dasharray', st.dash);
+  if (opts.end !== false) p.setAttribute('marker-end', `url(#${st.mk})`);
+  if (opts.start) p.setAttribute('marker-start', `url(#${st.mk})`);
+  svg.appendChild(p);
+}
+
+function label(x, y, text, cls, rot) {
+  const el = document.createElement('div');
+  el.className = 'elabel ' + (cls || '');
+  const r = rot ? ` rotate(${rot}deg)` : '';
+  el.style.cssText = `left:${x}px;top:${y}px;transform:translate(-50%,-50%)${r}`;
+  el.textContent = text;
+  canvas.appendChild(el);
+}
+
+for (const e of EDGES) {
+  const p = anchor(e.a), q = anchor(e.b);
+  const pts = route(p, q, e.gap);
+  const st = STYLE[e.style] || STYLE.thin;
+  stroke(pathOf(pts), st, { start: !!e.both });
+  if (!e.lbl) continue;
+  /* Place the label on the requested segment, else on the longest one. */
+  let seg = e.seg;
+  if (seg === undefined) {
+    let bl = -1;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+      if (l > bl) { bl = l; seg = i; }
+    }
+  }
+  seg = Math.min(seg, pts.length - 2);
+  label((pts[seg][0] + pts[seg + 1][0]) / 2, (pts[seg][1] + pts[seg + 1][1]) / 2, e.lbl, e.clsl, e.rot);
+}
+
+for (const b of BUSES) {
+  const st = STYLE[b.style] || STYLE.thin;
+  const src = b.from.map(anchor), dst = b.to.map(anchor);
+  const xs = [...src, ...dst].map(a => a.x);
+  stroke(`M ${Math.min(...xs)} ${b.y} L ${Math.max(...xs)} ${b.y}`, st, { end: false });
+  for (const a of src) stroke(`M ${a.x} ${a.y} L ${a.x} ${b.y}`, st, { end: false });
+  for (const a of dst) stroke(`M ${a.x} ${b.y} L ${a.x} ${a.y}`, st);
+  if (b.lbl) label(b.lx, b.ly === undefined ? b.y : b.ly, b.lbl, b.clsl, b.rot);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   3. Fit the authored canvas into whatever room the masthead left.
+   ──────────────────────────────────────────────────────────────────────────── */
+(function fit() {
+  const box = document.getElementById('canvas');
+  const s = Math.min(box.clientWidth / 1532, box.clientHeight / 776);
+  canvas.style.transform = `scale(${s})`;
+  canvas.style.left = ((box.clientWidth - 1532 * s) / 2) + 'px';
+})();
+</script>
+</body>
+</html>

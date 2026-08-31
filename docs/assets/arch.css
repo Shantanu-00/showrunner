@@ -1,0 +1,452 @@
+/* Showrunner architecture artifacts — shared stylesheet.
+ *
+ * One page = 1600 x 1000 CSS px. Chrome maps 96px -> 72pt, so `@page` at
+ * 423.33mm x 264.58mm renders every page 1:1 with no print shrink (verified:
+ * MediaBox [0 0 1200 750]). Everything below is authored against that grid.
+ *
+ * No external fonts, icons, logos or wordmarks by design — hackathon rules §6
+ * bars third-party trademarks and endorsement implications in submitted content,
+ * and a self-contained file renders identically with no network.
+ */
+
+:root {
+  /* Paper and ink — a light blueprint, not dark neon: it survives a projector,
+     a printed page, a slide deck and a 300px-wide thumbnail equally. */
+  --paper: #fbfaf7;
+  --card: #ffffff;
+  --ink: #14161a;
+  --ink-2: #4a5058;
+  --ink-3: #757c86;
+  --rule: #ded9cf;
+  --rule-2: #ebe7df;
+
+  /* Plane colours. One hue per architectural plane; nothing is decorative. */
+  --exp: #1b6fe0; /* experience / client        */
+  --dat: #0e7c66; /* data plane                 */
+  --ctl: #b4530a; /* control plane              */
+  --gov: #6c3fc5; /* governance rail            */
+  --mdl: #c0176b; /* models & agent framework   */
+  --bad: #a11b2b; /* failure paths, cut, limits */
+
+  --exp-bg: #eef4fd;
+  --dat-bg: #e9f5f1;
+  --ctl-bg: #fdf1e7;
+  --gov-bg: #f2edfc;
+  --mdl-bg: #fdecf3;
+  --bad-bg: #fdedee;
+
+  --sans: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --mono: Consolas, "DejaVu Sans Mono", "Courier New", monospace;
+}
+
+* { box-sizing: border-box; }
+
+/* Identifiers and shell commands must be copyable and literal. Programming
+ * fonts ligate `--` into an en dash, which silently corrupts every gcloud flag
+ * on these pages, so ligatures are off wherever monospace is used. */
+code, .mono, .svc, .step, .tag, .fact .l, td.mono, th.mono {
+  font-variant-ligatures: none;
+  -webkit-font-feature-settings: "liga" 0, "clig" 0, "calt" 0;
+  font-feature-settings: "liga" 0, "clig" 0, "calt" 0;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #6b6f76;
+  font-family: var(--sans);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+/* ── page shell ──────────────────────────────────────────────────────────── */
+
+.page {
+  position: relative;
+  width: 1600px;
+  height: 1000px;
+  background: var(--paper);
+  overflow: hidden;
+  margin: 0 auto;
+  padding: 30px 34px 26px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* No top margin on screen: a screenshot is taken at exactly 1600x1000, so any
+ * leading offset would push the last band out of frame. */
+@media screen {
+  .page { margin: 0 auto 26px; box-shadow: 0 8px 34px rgba(0, 0, 0, 0.3); }
+}
+
+@media print {
+  @page { size: 423.33mm 264.58mm; margin: 0; }
+  html, body { background: #fff; }
+  .page { margin: 0; break-after: page; box-shadow: none; }
+  .page:last-child { break-after: auto; }
+}
+
+/* ── page furniture ──────────────────────────────────────────────────────── */
+
+.masthead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 9px;
+  flex: 0 0 auto;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.05;
+}
+.masthead h1 .thin { font-weight: 400; color: var(--ink-2); }
+
+.masthead .kicker {
+  margin: 0 0 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.masthead .thesis {
+  margin: 5px 0 0;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  max-width: 980px;
+  line-height: 1.35;
+}
+.masthead .thesis b { color: var(--ink); font-weight: 600; }
+
+.facts { display: flex; gap: 7px; flex: 0 0 auto; }
+.fact {
+  border: 1px solid var(--rule);
+  background: var(--card);
+  border-radius: 3px;
+  padding: 5px 9px 6px;
+  min-width: 92px;
+}
+.fact .n { font-size: 17px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+.fact .l {
+  font-size: 8px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 3px;
+  font-weight: 600;
+}
+
+.pagefoot {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 9.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+.pagefoot b { color: var(--ink-2); font-weight: 600; }
+.pagefoot .mono { font-family: var(--mono); }
+
+/* ── legend ──────────────────────────────────────────────────────────────── */
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 0 0 auto;
+  margin: 9px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--rule);
+  background: #f5f2ec;
+  border-radius: 3px;
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+.legend .lg { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.legend .lg b { color: var(--ink); font-weight: 600; }
+.legend .sep { width: 1px; height: 15px; background: var(--rule); }
+.legend .gl {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  width: 15px;
+  text-align: center;
+}
+.legend .sw { width: 22px; height: 9px; border-radius: 2px; border: 1px solid; }
+
+/* ── the diagram canvas (page 1) ─────────────────────────────────────────── */
+
+/* The canvas is authored at a fixed 1532 x 776 and then scaled to whatever room
+ * the masthead leaves. Authoring in one coordinate space is what lets the edge
+ * router share numbers with the boxes; scaling at the end is what stops a
+ * one-line change in the headline from silently clipping the bottom band. */
+.canvas { position: relative; flex: 1 1 auto; margin-top: 10px; overflow: hidden; }
+.cvinner { position: absolute; top: 0; left: 0; width: 1532px; height: 776px; transform-origin: top left; }
+.edges { position: absolute; inset: 0; width: 1532px; height: 776px; overflow: visible; }
+
+.band {
+  position: absolute;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--ink);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.45);
+}
+.band > .bl {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translateY(-50%);
+  margin-left: 11px;
+  background: var(--paper);
+  padding: 0 7px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.band > .bl span { font-weight: 500; letter-spacing: 0.06em; color: var(--ink-3); text-transform: none; }
+
+.band.exp { border-left-color: var(--exp); }
+.band.dat { border-left-color: var(--dat); }
+.band.ctl { border-left-color: var(--ctl); }
+.band.gov { border-left-color: var(--gov); }
+.band.mdl { border-left-color: var(--mdl); }
+
+/* ── node boxes ──────────────────────────────────────────────────────────── */
+
+.node {
+  position: absolute;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-top: 2.5px solid var(--ink-3);
+  border-radius: 3px;
+  padding: 6px 8px 7px;
+  overflow: hidden;
+}
+.node .hd {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.005em;
+}
+.node .gl { font-family: var(--mono); font-size: 11px; font-weight: 700; flex: 0 0 auto; }
+.node .seq {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--ink);
+  border-radius: 2px;
+  padding: 1px 3px 0;
+  line-height: 1.3;
+}
+.node .svc {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 3px 0 0;
+  font-family: var(--mono);
+}
+.node .bd { font-size: 10px; line-height: 1.4; color: var(--ink-2); margin: 3px 0 0; }
+.node .bd b { color: var(--ink); font-weight: 600; }
+.node .bd code, .node .svc code { font-family: var(--mono); font-size: 9.2px; }
+.node .bd .hi { color: var(--bad); font-weight: 600; }
+
+.node.exp { border-top-color: var(--exp); }
+.node.dat { border-top-color: var(--dat); }
+.node.ctl { border-top-color: var(--ctl); }
+.node.gov { border-top-color: var(--gov); }
+.node.mdl { border-top-color: var(--mdl); }
+.node.bad { border-top-color: var(--bad); }
+
+.node.exp .gl { color: var(--exp); }
+.node.dat .gl { color: var(--dat); }
+.node.ctl .gl { color: var(--ctl); }
+.node.gov .gl { color: var(--gov); }
+.node.mdl .gl { color: var(--mdl); }
+.node.bad .gl { color: var(--bad); }
+
+.node.tint.exp { background: var(--exp-bg); }
+.node.tint.dat { background: var(--dat-bg); }
+.node.tint.ctl { background: var(--ctl-bg); }
+.node.tint.gov { background: var(--gov-bg); }
+.node.tint.mdl { background: var(--mdl-bg); }
+.node.tint.bad { background: var(--bad-bg); }
+
+.node.store { border-radius: 3px 3px 12px 12px; }
+.node.dashed { border-style: dashed; border-top-style: solid; }
+
+/* a compact chip used for step chains inside a node */
+.steps { display: flex; gap: 3px; margin-top: 5px; flex-wrap: wrap; }
+.step {
+  font-family: var(--mono);
+  font-size: 8.7px;
+  font-weight: 700;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 2px 4px 1px;
+  background: #f7f5f0;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.step.llm { border-color: var(--mdl); color: var(--mdl); background: var(--mdl-bg); }
+.step.det { border-color: var(--dat); color: var(--dat); background: var(--dat-bg); }
+
+/* edge labels drawn in HTML above the SVG for crisp text */
+.elabel {
+  position: absolute;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: var(--paper);
+  padding: 0 4px;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  border-radius: 2px;
+}
+.elabel.em { color: var(--ink); font-weight: 700; }
+.elabel.warn { color: var(--bad); }
+
+/* ── prose pages (LLD) ───────────────────────────────────────────────────── */
+
+.cols { display: flex; align-items: flex-start; gap: 16px; flex: 1 1 auto; min-height: 0; margin-top: 11px; }
+.col { display: flex; flex-direction: column; justify-content: flex-start; gap: 11px; min-width: 0; }
+
+/* `flex: 0 0 auto` is load-bearing: without it a column taller than its row
+ * shrinks its own sections and silently swallows the last paragraph. */
+.sec { flex: 0 0 auto; border: 1px solid var(--rule); background: var(--card); border-radius: 3px; padding: 9px 11px 10px; }
+.sec.flush { padding: 0; overflow: hidden; }
+.sec > h2 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.sec > h2 .num {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: #fff;
+  background: var(--ink);
+  border-radius: 2px;
+  padding: 1px 4px 0;
+  letter-spacing: 0.02em;
+}
+.sec > h2 .note { margin-left: auto; font-weight: 500; letter-spacing: 0.02em; text-transform: none; color: var(--ink-3); font-size: 9.5px; }
+.sec > p { margin: 0 0 6px; font-size: 10.3px; line-height: 1.45; color: var(--ink-2); }
+.sec > p:last-child { margin-bottom: 0; }
+.sec p b, .sec li b, td b { color: var(--ink); font-weight: 600; }
+.sec code, td code, li code { font-family: var(--mono); font-size: 9.3px; background: #f4f1ea; padding: 0 2px; border-radius: 2px; }
+
+.sec ul { margin: 0; padding-left: 15px; }
+.sec li { font-size: 10.3px; line-height: 1.45; color: var(--ink-2); margin-bottom: 3px; }
+.sec li:last-child { margin-bottom: 0; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  text-align: left;
+  vertical-align: top;
+  font-size: 9.9px;
+  line-height: 1.36;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--rule-2);
+  color: var(--ink-2);
+}
+th {
+  font-size: 8.4px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: #f5f2ec;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: none; }
+td.mono, th.mono { font-family: var(--mono); font-size: 9.2px; }
+td.k { color: var(--ink); font-weight: 600; }
+td.c, th.c { text-align: center; }
+
+.tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 8.3px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 1px 4px 0;
+  border-radius: 2px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.tag.live { color: var(--dat); border-color: var(--dat); background: var(--dat-bg); }
+.tag.opt  { color: var(--ctl); border-color: var(--ctl); background: var(--ctl-bg); }
+.tag.cut  { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); }
+.tag.llm  { color: var(--mdl); border-color: var(--mdl); background: var(--mdl-bg); }
+.tag.det  { color: var(--gov); border-color: var(--gov); background: var(--gov-bg); }
+
+/* pull-quote / invariant callout */
+.inv {
+  border-left: 3px solid var(--ink);
+  background: #f5f2ec;
+  padding: 7px 11px;
+  font-size: 10.8px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.inv b { font-weight: 700; }
+.inv.warn { border-left-color: var(--bad); background: var(--bad-bg); }
+
+/* horizontal step chain used on LLD pages */
+.chain { display: flex; align-items: stretch; gap: 0; margin: 4px 0 2px; }
+.chain .cx {
+  flex: 1 1 0;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 5px 6px 6px;
+  background: #fcfbf8;
+  min-width: 0;
+}
+.chain .cx .t { font-size: 9.6px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.chain .cx .s { font-size: 9.1px; line-height: 1.35; color: var(--ink-2); margin-top: 3px; }
+.chain .cx .s code { font-size: 8.6px; }
+.chain .cx.llm { border-color: var(--mdl); background: var(--mdl-bg); }
+.chain .cx.llm .t { color: var(--mdl); }
+.chain .cx.det { border-color: var(--dat); background: var(--dat-bg); }
+.chain .cx.det .t { color: var(--dat); }
+.chain .ar {
+  flex: 0 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-3);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* swimlane sequence diagram (page 3) */
+.lanes { position: relative; width: 100%; }
+.lanes svg { display: block; width: 100%; }

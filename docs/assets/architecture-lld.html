@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Showrunner — Low-Level Design (pages 2–7)</title>
+<link rel="stylesheet" href="arch.css" />
+<style>
+  /* Each LLD page is authored at 1532px wide and whatever height the content
+   * needs, then scaled down to the page box if it overruns. Overflow becomes a
+   * 2% type reduction instead of a truncated table. */
+  .fitwrap { position: relative; flex: 1 1 auto; overflow: hidden; margin-top: 11px; }
+  .fitinner { position: absolute; top: 0; left: 0; width: 1532px; transform-origin: top left; }
+  .fitinner > .cols { margin-top: 0; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     PAGE 2 — DEPLOYMENT TOPOLOGY & IDENTITY
+     ═════════════════════════════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="masthead">
+    <div>
+      <p class="kicker">Showrunner · low-level design · page 2 of 7</p>
+      <h1>Deployment topology <span class="thin">— what is running, under which identity, with which grant</span></h1>
+      <p class="thesis">Every number on this page is checkable with one command, which is the point: an architecture claim that cannot be falsified is marketing. <b>One job per deployable, one identity per deployable, and the narrowest role that lets that identity do its job.</b></p>
+    </div>
+    <div class="facts">
+      <div class="fact"><div class="n">8</div><div class="l">run<br/>services</div></div>
+      <div class="fact"><div class="n">1</div><div class="l">run<br/>job</div></div>
+      <div class="fact"><div class="n">12</div><div class="l">service<br/>accounts</div></div>
+      <div class="fact"><div class="n">0</div><div class="l">key files<br/>anywhere</div></div>
+    </div>
+  </div>
+
+  <div class="fitwrap"><div class="fitinner"><div class="cols">
+
+    <div class="col" style="flex:1.05">
+      <div class="sec flush">
+        <h2 style="padding:9px 11px 6px;margin:0"><span class="num">2.1</span>The live inventory, and how to falsify it</h2>
+        <table>
+          <thead><tr><th>Resource</th><th class="c">n</th><th>Verify</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Cloud Run services</td><td class="c">8</td><td class="mono">gcloud run services list --region us-central1</td></tr>
+            <tr><td class="k">Cloud Run jobs</td><td class="c">1</td><td class="mono">gcloud run jobs list</td></tr>
+            <tr><td class="k">Service accounts</td><td class="c">12</td><td class="mono">gcloud iam service-accounts list</td></tr>
+            <tr><td class="k">Cloud Tasks queues</td><td class="c">6</td><td class="mono">gcloud tasks queues list --location us-central1</td></tr>
+            <tr><td class="k">GCS buckets (app)</td><td class="c">3</td><td class="mono">gcloud storage ls</td></tr>
+            <tr><td class="k">Eventarc triggers</td><td class="c">1</td><td class="mono">gcloud eventarc triggers list</td></tr>
+            <tr><td class="k">Cloud Scheduler jobs</td><td class="c">3</td><td class="mono">gcloud scheduler jobs list</td></tr>
+            <tr><td class="k">Firestore composite indexes</td><td class="c">11</td><td class="mono">firestore.indexes.json</td></tr>
+            <tr><td class="k">Firestore vector index</td><td class="c">1</td><td class="mono">faces.embedding · 512-d · flat · cosine</td></tr>
+            <tr><td class="k">Rules assertions, 8 personas</td><td class="c">107</td><td class="mono">make rules-test &nbsp;(no cloud creds)</td></tr>
+            <tr><td class="k">Golden-fixture eval checks</td><td class="c">169</td><td class="mono">make eval &nbsp;(25 fixtures)</td></tr>
+            <tr><td class="k"><b>Agent Runtime deployments</b></td><td class="c">0</td><td>deliberate — see <b>4.5</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">2.2</span>Deliberately not used<span class="note">knowing why is part of the design</span></h2>
+        <table>
+          <tbody>
+            <tr><td class="k" style="width:34%">GKE</td><td>Identical container semantics to Cloud Run with a cluster to operate. Nothing here needs one.</td></tr>
+            <tr><td class="k">Cloud SQL / AlloyDB</td><td>No relational workload. Firestore is the database <i>and</i> the push channel; adding SQL would add a second source of truth.</td></tr>
+            <tr><td class="k">Vertex AI Vector Search</td><td>~$65+/month of idle ScaNN infrastructure for ~10k vectors, where flat exact KNN is <i>more</i> accurate. Evolution path stated in <b>7.3</b>.</td></tr>
+            <tr><td class="k">Transcoder API</td><td>Concat and trim only — no transitions, no text, no Ken Burns. It cannot make a reel.</td></tr>
+            <tr><td class="k">Agent Gateway</td><td>The one heavy GEAP component (network provisioning, 1–2 days). Registry/Identity would arrive with an Agent Runtime deployment this build deliberately does not make.</td></tr>
+            <tr><td class="k">Pub/Sub fan-out to workers</td><td>Pub/Sub has no server-side dispatch rate. The throttle <i>is</i> the architecture, so Cloud Tasks wins.</td></tr>
+            <tr><td class="k">Firestore triggers</td><td>Every event-driven surface here is Storage → Eventarc. A second event system for an occasional prose memo is an operational cost with no payoff; the tick already visits every live event.</td></tr>
+            <tr><td class="k">Dataflow / BigQuery</td><td>No streaming-analytics workload. Sharded Firestore counters feed the coverage ledger at O(1).</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">2.5</span>The experience layer<span class="note">one codebase, four surfaces, zero polling</span></h2>
+        <ul>
+          <li><b>A statically exported Next.js App Router PWA on Firebase Hosting</b> — so the guest app is a CDN asset with no server rendering to keep alive, and the only backend a phone talks to is <code>api</code> plus Firestore's own listener channel.</li>
+          <li><b>An IndexedDB outbox, not an upload form.</b> Intent is registered first, URLs are cached against their expiry, and items left <code>uploading</code> by a closed tab are rewound at the start of the next drain. Closing the app mid-send is a normal event, not a lost photograph.</li>
+          <li><b>A three-tier media ladder</b> — memory, then an IndexedDB blob store with oldest-first eviction, then a signed URL — because an authenticated image cannot be fetched with a bearer token <i>and</i> follow a cross-origin redirect: a preflight cannot be redirected, and no bucket CORS policy can grant a <i>request</i> header. So the endpoint returns the URL as JSON and the browser loads it directly. <b>That was a real, product-wide defect, found on a phone rather than in an emulator.</b></li>
+          <li><b>Four surfaces, one token file</b> — guest, wall, host console, walkthrough. And <b>no surface personalizes a shared feed per viewer</b>: featuring somebody is either a re-ranking every viewer sees, or it lives in that person's own private album.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="col" style="flex:1.35">
+      <div class="sec flush">
+        <h2 style="padding:9px 11px 6px;margin:0"><span class="num">2.3</span>Identity and grant matrix<span class="note">the "tools properly isolated and scoped" answer, in full</span></h2>
+        <table>
+          <thead><tr><th>Deployable</th><th>Identity</th><th>Scale</th><th>Grants held</th><th>Notably <i>not</i> held</th></tr></thead>
+          <tbody>
+            <tr><td class="k">api <span class="tag live">public</span></td><td class="mono">sa-api</td><td class="mono">0–n</td><td>datastore.user · cloudtasks.enqueuer · firebaseauth.admin · aiplatform.user · modelarmor.user · <b>signBlob on itself</b></td><td>no <i>bucket object</i> read on raw beyond signing</td></tr>
+            <tr><td class="k">intake</td><td class="mono">sa-intake</td><td class="mono">0–n</td><td>datastore.user · cloudtasks.enqueuer · eventarc.eventReceiver · raw read · derived write</td><td><b>no GenAI grant at all</b> — intake cannot call a model</td></tr>
+            <tr><td class="k">worker-curate <span class="tag llm">◆</span></td><td class="mono">sa-curate</td><td class="mono">0–n</td><td>datastore.user · aiplatform.user · <b>derived</b> read</td><td><b>no grant on the raw bucket</b> — it classifies a thumbnail, not an original</td></tr>
+            <tr><td class="k">worker-face <span class="tag det">▲</span></td><td class="mono">sa-face</td><td class="mono">0–n</td><td>datastore.user · derived read</td><td>no GenAI grant — identity never touches a language model</td></tr>
+            <tr><td class="k">worker-safety <span class="tag llm">◆</span></td><td class="mono">sa-safety</td><td class="mono">0–n</td><td>datastore.user · aiplatform.user · serviceUsageConsumer (Vision) · derived read</td><td>no raw grant</td></tr>
+            <tr><td class="k">worker-video-prep</td><td class="mono">sa-video-prep</td><td class="mono">0–n</td><td>datastore.user · cloudtasks.enqueuer · derived r/w</td><td>no GenAI grant</td></tr>
+            <tr><td class="k">publisher</td><td class="mono">sa-publisher</td><td class="mono">1–5</td><td>datastore.user only</td><td>no bucket, no model. It ranks documents.</td></tr>
+            <tr><td class="k">dlq</td><td class="mono">sa-dlq</td><td class="mono">0–n</td><td>datastore.user only</td><td>touches no media, ever</td></tr>
+            <tr><td class="k">render <span class="tag opt">job</span></td><td class="mono">sa-render</td><td class="mono">1 exec</td><td>datastore.user · aiplatform.user · modelarmor.user · derived read · <b>curated objectCreator</b></td><td><b>no raw grant</b>; <code>objectCreator</code> not <code>objectAdmin</code> — a reel is immutable, a better cut is a new id</td></tr>
+            <tr><td class="k">Cloud Tasks OIDC</td><td class="mono">sa-tasks</td><td class="mono">—</td><td>serviceAccountUser on the four worker identities it may invoke</td><td>cannot invoke <code>api</code> as anything else</td></tr>
+            <tr><td class="k">Cloud Scheduler OIDC</td><td class="mono">sa-scheduler</td><td class="mono">—</td><td>the only principal on the <code>/internal/tick</code> allowlist</td><td>no data grants of its own</td></tr>
+            <tr><td class="k">Eventarc / Pub-Sub</td><td class="mono">sa-eventarc</td><td class="mono">—</td><td>eventarc.eventReceiver + token creation for push</td><td>no data grants</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="inv"><b>The load-bearing consequence:</b> the two services that read a guest's photograph have no permission to open the original, the service that runs the planner cannot read a photograph at all (the bounty validator is prompted with the Curator's <i>caption</i>, not the image — ~200 tokens instead of ~460, and no bucket read), and the only identity that can write a finished reel cannot overwrite one. <b>Signed URLs are minted through IAM <code>signBlob</code> on <code>sa-api</code> impersonating itself, which is why this repository contains no service-account key file and local development uses ADC.</b></div>
+
+      <div class="sec">
+        <h2><span class="num">2.4</span>Build and release<span class="note">no local Docker on the build machine, by choice</span></h2>
+        <ul>
+          <li><b>One image, fanned out.</b> <code>gcloud run deploy --source</code> hands the build to Cloud Build; the resulting tag is deployed only to the services whose changed modules are actually on their import path. A deploy note records which services were <i>deliberately</i> not redeployed — that is a decision, not an omission.</li>
+          <li><b>Infrastructure is nine idempotent shell scripts</b> (<code>sa · buckets · queues · firestore · eventarc · scheduler · render · up · scale-down</code>). Re-running any of them is a no-op, so bootstrap and repair are the same command.</li>
+          <li><b>The face worker's image is multi-stage</b> — the builder carries a toolchain, the runtime does not — and the ArcFace weights are baked in, so a cold start does not download a 326 MB model.</li>
+          <li><b>Post-submission posture is scale <i>down</i>, not tear down</b> (<code>deploy/judge-mode.sh</code>): a slower director cadence, warm workers, and the demo event left standing, because a project that dies 48 h after the deadline fails the part of the judging window that runs for a month.</li>
+        </ul>
+      </div>
+    </div>
+
+  </div></div></div>
+
+  <div class="pagefoot">
+    <div><b>2 of 7</b> — deployment topology &amp; identity</div>
+    <div class="mono">Showrunner · showrunner-hq · us-central1</div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     PAGE 3 — THE DATA PLANE
+     ═════════════════════════════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="masthead">
+    <div>
+      <p class="kicker">Showrunner · low-level design · page 3 of 7</p>
+      <h1>The data plane <span class="thin">— a photograph's journey, and the state machine underneath it</span></h1>
+      <p class="thesis">Push everywhere, at-least-once everywhere, therefore <b>idempotent on a status transition rather than on a task id</b>. The stages complete in any order; <code>status</code> is derived, never assigned.</p>
+    </div>
+    <div class="facts">
+      <div class="fact"><div class="n">~6 s</div><div class="l">bytes to<br/>the wall</div></div>
+      <div class="fact"><div class="n">5</div><div class="l">parallel<br/>stages</div></div>
+      <div class="fact"><div class="n">1</div><div class="l">writer of<br/>visibility</div></div>
+    </div>
+  </div>
+
+  <div class="fitwrap"><div class="fitinner"><div class="cols">
+
+    <div class="col" style="flex:1.25">
+      <div class="sec flush">
+        <h2 style="padding:9px 11px 6px;margin:0"><span class="num">3.1</span>A photograph's journey<span class="note">measured warm, on the live deployment</span></h2>
+        <table>
+          <thead><tr><th class="c">#</th><th>Actor</th><th>Step</th><th>Why it is safe</th><th class="c">t</th></tr></thead>
+          <tbody>
+            <tr><td class="c mono">1</td><td class="k">phone → api</td><td><code>POST /uploads</code>: intent for N files + the consent ring for the batch</td><td>Intent is registered <i>before</i> bytes exist, so an abandoned upload is a known state, not a mystery object</td><td class="c mono">—</td></tr>
+            <tr><td class="c mono">2</td><td class="k">api</td><td>N media docs at <code>awaiting_upload</code>; N signed V4 PUT URLs, 15 min, <b>content-type and content-length pinned</b></td><td>A pinned length is the upload size limit — enforced by the storage layer, not by trusting a client</td><td class="c mono">—</td></tr>
+            <tr><td class="c mono">3</td><td class="k">phone → GCS</td><td>PUT the bytes, 3 concurrent, resumed from an IndexedDB outbox if the app was closed</td><td>Bytes never transit a service, so a burst costs bucket throughput and no compute</td><td class="c mono">—</td></tr>
+            <tr><td class="c mono">4</td><td class="k">Eventarc</td><td><code>object.v1.finalized</code> → <code>intake</code></td><td>At-least-once with a dead-letter after 5 attempts. Handlers are idempotent, so a redelivery is free</td><td class="c mono">—</td></tr>
+            <tr><td class="c mono">5</td><td class="k">intake</td><td>size check · md5 dedupe · EXIF read <i>at the event's timezone</i> · lossless GPS strip · 3 derived renders · fan-out</td><td>Derived output goes to a <b>different bucket</b>, which is what prevents an ingestion retrigger loop</td><td class="c mono">—</td></tr>
+            <tr><td class="c mono">6</td><td class="k">Cloud Tasks</td><td>3 <b>unnamed</b> tasks (photo) or 1 (video), dispatched at the queue's rate</td><td>Unnamed on purpose: a named task blocks its own replay for hours, and replay is the recovery path</td><td class="c mono">—</td></tr>
+            <tr><td class="c mono">7</td><td class="k">worker-curate ◆</td><td>Curator verdict: stage, moments, aesthetic, caption, scene setting</td><td>Structured output; a schema-invalid answer twice is a <i>permanent</i> failure, not a retry storm</td><td class="c mono">1.8 s</td></tr>
+            <tr><td class="c mono">8</td><td class="k">worker-safety ◆</td><td>SafeSearch hard gate, then the dignity rubric — and the rubric is skipped entirely when SafeSearch is decisive</td><td>A refusal writes <code>host_review</code>. There is no path from a model failure to <code>public_ok</code></td><td class="c mono">1.5 s</td></tr>
+            <tr><td class="c mono">9</td><td class="k">worker-face ▲</td><td>detect → align → 512-d embed → <code>findNearest</code> → link or cluster</td><td>Auto-linking is gated on <code>claimApproved</code>, so a pending claim accretes nothing while it waits</td><td class="c mono">6–9 s</td></tr>
+            <tr><td class="c mono">10</td><td class="k">recompute_visibility ●</td><td>Derives <code>visibility</code> <b>and</b> <code>status</code> <b>and</b> the coverage-shard bump in one transaction</td><td>One writer, whole-document read-modify-write: no race can leak a photo and no verdict can disagree with its exposure</td><td class="c mono">—</td></tr>
+            <tr><td class="c mono">11</td><td class="k">publisher ●</td><td>Rebuilds the kiosk program, debounced 1.5 s, written only if the <i>decisions</i> changed</td><td>The wall restarts its show on a new revision, so an unchanged rebuild must be <i>absent</i>, not merely idempotent</td><td class="c mono">1.3–3.7 s</td></tr>
+            <tr><td class="c mono">12</td><td class="k">every client</td><td>Snapshot listeners repaint</td><td>Nothing polls. The <code>just_in</code> strip is a separate listener, so it is faster than the program</td><td class="c mono">~1–2 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="inv"><b>End to end, warm: 3.6–4.4 s from <code>uploadedAt</code> to <code>status=indexed</code>, then 1.3–3.7 s to the wall</b> — and about 42 s on the first upload after idle, because two workers sit at <code>min-instances 0</code>. That number is stated rather than hidden: it is the honest price of scaling to zero between events, and it is why the demo event pre-warms.</div>
+
+      <div class="sec">
+        <h2><span class="num">3.5</span>What each perception worker is <i>allowed</i> to conclude<span class="note">schema design is the guardrail</span></h2>
+        <table>
+          <thead><tr><th>Worker</th><th>Output, as a closed schema</th><th>Structurally cannot</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Curator &#9670;</td><td>a stage id <i>from this event</i> · moment tags · aesthetic score · caption · <code>sceneSetting</code> from a nine-value enum · cultural elements filtered against a host-reviewed glossary</td><td>invent a stage · infer the stage from time of day or lighting · name a person · set any exposure field</td></tr>
+            <tr><td class="k">Guardian &#9670;</td><td>one of four verdicts — <code>public_ok</code>, <code>private_only</code>, <code>host_review</code>, <code>blocked</code> — bounded above by the host's declared sensitivity ceiling</td><td>make a verdict <i>less</i> conservative than SafeSearch already did · reach <code>public_ok</code> from any failure path</td></tr>
+            <tr><td class="k">Face Indexer &#9650;</td><td>face boxes, a 512-d unit vector, and a nearest-neighbour link or a new cluster</td><td>use a model to decide identity · link to an unapproved person · be read by any client</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:6px"><b>Why the scene vocabulary is <i>closed</i>, and why that is an architecture decision rather than a lint rule:</b> the accumulated distribution of those nine values <i>is</i> the world model. The count of indoor-venue against outdoor-nature across an event is what tells the system, without being told, whether it is in a ballroom or on a hillside — which is what lets a photograph of a valley be on-topic at a hill-station wedding and off-topic at a ballroom one. An open vocabulary makes that distribution uncountable (<code>indoor</code>, <code>inside</code>, <code>hall</code> and <code>banquet_hall</code> are four keys for one fact) and the arithmetic silently stops meaning anything. <b>The signal was never in the pixels; it is in the distribution of the other photographs.</b></p>
+      </div>
+    </div>
+
+    <div class="col" style="flex:1">
+      <div class="sec">
+        <h2><span class="num">3.2</span>The media state machine<span class="note">parallel flags, derived status</span></h2>
+        <p>Five stage flags, each <code>pending → done | failed | failed_permanent</code>, completing <b>in any order</b>. A photo takes <code>thumb · curate · faces · safety</code>; a video takes <code>thumb · video_prep</code>.</p>
+        <table>
+          <thead><tr><th>status</th><th>Means</th></tr></thead>
+          <tbody>
+            <tr><td class="k mono">awaiting_upload</td><td>intent registered, no object yet</td></tr>
+            <tr><td class="k mono">uploaded</td><td>object finalized, not yet fanned out</td></tr>
+            <tr><td class="k mono">processing</td><td>at least one stage outstanding</td></tr>
+            <tr><td class="k mono">indexed</td><td><b>every</b> stage reached <code>done</code>. Derived inside the visibility transaction, and the precondition every public-surface query filters on</td></tr>
+            <tr><td class="k mono">quarantined</td><td>a transient failure exhausted its attempts — we do not know what this is, so it stops and a human is told</td></tr>
+            <tr><td class="k mono">rejected / abandoned</td><td>host verdict · no object ever arrived</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">3.3</span>The failure taxonomy is asymmetric, and the asymmetry is a trust decision</h2>
+        <table>
+          <thead><tr><th>Kind</th><th>Stage</th><th>Item</th><th>Alert</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Transient, exhausted<br/><span style="font-weight:400">(rate limit, 5xx, timeout)</span></td><td class="mono">failed</td><td class="mono">quarantined</td><td><span class="tag cut">error</span></td></tr>
+            <tr><td class="k">Permanent<br/><span style="font-weight:400">(refusal, or schema-invalid twice)</span></td><td class="mono">failed_permanent</td><td><b>unchanged</b> — writes the stage's conservative default</td><td><span class="tag opt">warning</span></td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:6px">A permanent failure deliberately leaves the item alone. The guest keeps their own photograph in their own album and the event pool; because the item never reaches <code>indexed</code>, no public surface can ever serve it. <b>Quarantining here would hide a guest's photo from the guest because a language model had an opinion</b> — which is the exact failure the whole enforcement layer exists to prevent.</p>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">3.4</span>Backpressure, with the numbers</h2>
+        <table>
+          <thead><tr><th>Queue</th><th class="c">disp/s</th><th class="c">conc</th><th>Consumer</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">classify-queue</td><td class="c mono">8</td><td class="c mono">10</td><td>worker-curate ◆</td></tr>
+            <tr><td class="mono">safety-queue</td><td class="c mono">8</td><td class="c mono">10</td><td>worker-safety ◆</td></tr>
+            <tr><td class="mono">face-queue</td><td class="c mono">10</td><td class="c mono">8</td><td>worker-face ▲</td></tr>
+            <tr><td class="mono">priority-queue</td><td class="c mono">20</td><td class="c mono">10</td><td>bounty submissions jump the line</td></tr>
+            <tr><td class="mono">video-prep-queue</td><td class="c mono">2</td><td class="c mono">2</td><td>worker-video-prep</td></tr>
+            <tr><td class="mono">renders-queue</td><td class="c mono">1</td><td class="c mono">2</td><td>configured; <b>unused by the reel path</b> — see <b>5.2</b></td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:6px"><b>The rates are spend-tier arithmetic, not vibes.</b> Two model queues at 8/s bound the sustained call rate onto the classifier tier, and the honest SLA follows from it: p50 ≤ 5 s at up to ~10 uploads/s; above that the queues drain FIFO, latency grows, <b>and nothing fails</b> — the wall simply shows the photographs that have cleared. Backpressure that is visible and bounded beats a system that pretends bursts do not happen.</p>
+      </div>
+    </div>
+
+  </div></div></div>
+
+  <div class="pagefoot">
+    <div><b>3 of 7</b> — the data plane</div>
+    <div class="mono">stage latencies measured warm on the live deployment</div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     PAGE 4 — THE CONTROL LOOP, STATE & MEMORY
+     ═════════════════════════════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="masthead">
+    <div>
+      <p class="kicker">Showrunner · low-level design · page 4 of 7</p>
+      <h1>The control loop <span class="thin">— one tick, six steps, and where the model stops being in charge</span></h1>
+      <p class="thesis">The autonomous half of the product. A Cloud Scheduler job takes a lease, aggregates evidence, asks one model one question, and then <b>re-derives every field of every proposed action from Firestore before executing it</b>. Nobody presses anything.</p>
+    </div>
+    <div class="facts">
+      <div class="fact"><div class="n">6</div><div class="l">deterministic<br/>steps : 1 call</div></div>
+      <div class="fact"><div class="n">O(1)</div><div class="l">ledger cost<br/>in corpus size</div></div>
+      <div class="fact"><div class="n">10</div><div class="l">tick rolling<br/>window</div></div>
+    </div>
+  </div>
+
+  <div class="fitwrap"><div class="fitinner">
+
+    <div class="sec" style="margin-bottom:11px">
+      <h2><span class="num">4.1</span>One tick, in order — and the order is the design<span class="note">directors/story/director.py</span></h2>
+      <div class="chain">
+        <div class="cx det"><div class="t">1 · Validate</div><div class="s">Bounty submissions that reached <code>indexed</code> since the last tick. <b>Runs first</b> so the ledger already reflects the gaps the last tick's bounties closed — reasoning first would re-ask for a photograph we already have.</div></div>
+        <div class="ar">→</div>
+        <div class="cx det"><div class="t">2 · Expire</div><div class="s">Anything past <code>expiresAt</code> becomes a <b>permanent coverage gap</b> on the director state, because the wrap report's honesty depends on remembering what was asked for and not delivered.</div></div>
+        <div class="ar">→</div>
+        <div class="cx det"><div class="t">3 · Arm</div><div class="s">If the stage changed, its required moments go live <b>from the timeline prior, with no model call</b>. A varmala lasts under a minute; reactive detection can only notice its absence once it is over.</div></div>
+        <div class="ar">→</div>
+        <div class="cx det"><div class="t">4 · Ledger</div><div class="s"><b>Six reads, whatever the event's size:</b> coverage shards, open bounties, people, a 20-doc drift sample, two count aggregations. Nothing scans the media collection.</div></div>
+        <div class="ar">→</div>
+        <div class="cx llm"><div class="t">5 · Reason ◆</div><div class="s">The <b>one</b> model call. <code>gemini-3.7-flash</code>, ADK <code>LlmAgent</code>, closed action vocabulary, Model Armor plugin in front. Only ids that already exist are printed into the prompt.</div></div>
+        <div class="ar">→</div>
+        <div class="cx det"><div class="t">6 · Act</div><div class="s">Split into a <b>pure <code>decide()</code></b> and a writer <code>apply()</code>, so the whole adversarial guardrail table runs offline with no network, no Firestore and no spend.</div></div>
+      </div>
+      <p style="margin-top:7px"><b>Two properties hold whatever happens inside.</b> The tick <b>never takes a second lease</b> — it runs inside the one <code>api</code> already holds, and a director that took its own would deadlock against the lease protecting it. And the session write happens in a <code>finally</code>, so a deflected prompt, a rate limit or a schema-invalid answer still leaves the deterministic work committed and the window advanced: <b>a director that loses its memory whenever the model has a bad minute would re-arm the same bounties on the next pass.</b></p>
+    </div>
+
+    <div class="cols" style="margin-top:0">
+      <div class="col" style="flex:1">
+        <div class="sec">
+          <h2><span class="num">4.2</span>The guardrails, which are the product<span class="note">directors/story/act.py</span></h2>
+          <table>
+            <thead><tr><th>Invariant</th><th>Enforced how</th></tr></thead>
+            <tbody>
+              <tr><td class="k">≤ 2 new bounties per tick · ≤ 6 open at once</td><td>counted against the bounties actually open, inside the lease that serialises them</td></tr>
+              <tr><td class="k">No duplicate per (stage, moment, person)</td><td>a dedupe key, re-derived rather than trusted</td></tr>
+              <tr><td class="k mono">points = clamp(base × vipWeight, 50, 300)</td><td><code>vipWeight</code> from the host-declared tier — <b>deterministic metadata, never memory</b></td></tr>
+              <tr><td class="k">Auto stage-advance</td><td>needs confidence ≥ 0.8 <i>and</i> the scheduled window to agree within 45 min <i>and</i> a target stage that has not lapsed</td></tr>
+              <tr><td class="k">Every id in the plan</td><td>looked up in the stages, people and bounties that exist — a plausible-sounding invention is rejected <b>with a logged reason</b></td></tr>
+              <tr><td class="k">Who is in the photograph</td><td>a <code>personId</code> from a 512-d match. <b>The model is never asked an identity question</b></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sec">
+          <h2><span class="num">4.3</span>Two leases, two opposite disciplines</h2>
+          <p><b>The tick lease is mutual exclusion around an action.</b> Acquired at the top, released at the bottom; its 5-minute TTL is purely a crash backstop. Holding it for the TTL would <i>throttle</i> the cadence it exists to protect — a 900 ms tick would block the next four scheduled ones while looking healthy.</p>
+          <p><b>The publisher lease is leadership over a resource</b>, held for as long as the process lives and renewed on a 45-second timer. Here expiry <i>is</i> the failover: an instance that is scaled away stops renewing and another takes the wall over inside the TTL. Verified live: one publisher instance held <b>nine</b> event leases concurrently and wrote nine playlists.</p>
+          <p>Same mechanism, one file. Conflating the two would have degraded a 30-second demo cadence to one tick every five minutes.</p>
+        </div>
+
+        <div class="sec">
+          <h2><span class="num">4.4</span>Evidence that it ran unprompted<span class="note">autonomy that cannot be checked is a claim</span></h2>
+          <ul>
+            <li><b><code>platform/tickPulse</code></b> — one root heartbeat document per tick: <code>{lastTickAt, mode, caller, events, ticked, ms, ticks: Increment(1)}</code>, written <i>whether or not the tick found work</i>, because a tick that found zero live events is exactly as important to record. It is what an offline smoke test waits on to prove the Scheduler fired with nobody watching.</li>
+            <li><b>A cadence a cron cannot fake.</b> The demo event runs a 1-minute Scheduler job plus a +30 s Cloud Task interleave, so consecutive heartbeats land ~30 s apart — an interval a 1-minute cron cannot produce. Measured: :06 → :36 → :08 → :38.</li>
+            <li><b>The director's own reasoning is a document, not a dashboard</b> — assessments, deferred ideas and permanent gaps under <code>ledger/</code>, plus a structured log line per stage per item. The guest-facing countdown reads a narrow projection through the API rather than through a rules exception.</li>
+            <li>A manual trigger exists, rate-limited and demo-only, taking the <i>same</i> lease so it cannot double-issue a bounty — and it is <b>labelled on screen as an override, with the real cadence counting down above it.</b> An unlabelled button beside a claim of autonomy contradicts your own video.</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <div class="col" style="flex:1.08">
+        <div class="sec">
+          <h2><span class="num">4.5</span>Three stores, three jobs — and Memory Bank is not a cache</h2>
+          <table>
+            <thead><tr><th>Store</th><th>Holds</th><th>Must never hold</th></tr></thead>
+            <tbody>
+              <tr><td class="k">Firestore<br/><span class="tag live">system of record</span></td><td>media state machine · verdicts · <code>visibility</code> · bounties · points · coverage ledger · VIP <code>tier</code> · director state</td><td>anything the agent merely <i>believes</i></td></tr>
+              <tr><td class="k">Rolling tick window<br/><span class="tag det">working memory</span></td><td>the last 10 tick summaries: what was issued, deferred, assessed — so the model reasons over a narrative instead of a cold start</td><td>product state</td></tr>
+              <tr><td class="k">Memory Bank<br/><span class="tag opt">soft context</span></td><td>the host's free-text standing preferences at <code>{eventId}:host</code>; per-person taste memos</td><td><b>anything that gates exposure, spend, or who is important</b></td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:6px"><b>Compaction is arithmetic, not summarization.</b> Overflowing ticks fold into a <i>counted</i> sentence written by code. Asking a model to summarize its own history is how a long-running agent's context becomes a story about itself — every compaction is a lossy retelling of the last one, and after fifty ticks the numbers are vibes. <b>Counting cannot drift.</b></p>
+          <p><b>The performance instinct that reaches for a memory store is right; the mechanism is different.</b> Not re-scanning 5,000 photographs every two minutes is solved by a <i>materialized view inside the database</i> — sharded coverage counters bumped in the transaction that already sets <code>status='indexed'</code>. That cache is transactional, shardable and auditable. Memory Bank could not do this job: it is a network call, it has no transactions, and its contents are probabilistic.</p>
+          <p><b>Where the director runs, and why.</b> On Cloud Run, inside the tick, <i>not</i> on Agent Runtime. Every guardrail above has to be serialised by the lease the tick already holds; a remote <code>:query</code> would move the reasoning and leave all of them behind — one extra network hop, two places to look, identical guarantees. <b>The importable <code>root_agent()</code> is still the single artifact <code>adk deploy agent_engine</code> would package, so the door is open, not closed.</b> The cost is a managed reasoning-chain dashboard, and the honest replacement is named in <b>4.4</b>.</p>
+          <p><b>Stated plainly, because it is the kind of thing worth catching before a judge does:</b> <code>AGENT_ENGINE_ID</code> is empty in production, so Memory Bank is <i>inactive</i> and the same host free-text is read off the event document. The integration is real code on a real API and it degrades to the document silently by design — but it is not running, and it is not counted as if it were.</p>
+        </div>
+
+        <div class="sec">
+          <h2><span class="num">4.6</span>The agent census, counted strictly<span class="note">the anti-agent-washing test</span></h2>
+          <p>A component earns the word "agent" only if it makes context-dependent judgments, or plans and chooses actions. Under that test:</p>
+          <table>
+            <tbody>
+              <tr><td class="k" style="width:31%">2 planning agents</td><td><b>Story Director · Reel Director.</b> Goal, plan, tool use, self-correction loop.</td></tr>
+              <tr><td class="k">2 perception agents</td><td><b>Curator · Guardian.</b> Irreducibly contextual judgment, structured verdicts, <b>no actuation by design</b>.</td></tr>
+              <tr><td class="k">1 specialized ML worker</td><td><b>Face Indexer.</b> Deterministic embedding arithmetic, no LLM. Calling it an agent would be agent-washing.</td></tr>
+              <tr><td class="k">Deliberate non-agents</td><td>intake · publisher · <code>recompute_visibility</code> · the render job · the itinerary parser (a one-shot extraction is a tool call, not an agent).</td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:6px">Eight LLM roles in total, counting the critic and the bounty validator. <b>The perception agents deliberately cannot act, and that separation is the entire trust architecture.</b></p>
+        </div>
+
+
+      </div>
+    </div>
+
+  </div></div>
+
+  <div class="pagefoot">
+    <div><b>4 of 7</b> — the control loop, state &amp; memory</div>
+    <div class="mono">"Firestore is the record, the window is the working memory, Memory Bank is taste — and nothing that gates exposure or spend lives in the last two."</div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     PAGE 5 — THE REEL PIPELINE
+     ═════════════════════════════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="masthead">
+    <div>
+      <p class="kicker">Showrunner · low-level design · page 5 of 7</p>
+      <h1>The reel pipeline <span class="thin">— evidence to a cut film, in one job execution</span></h1>
+      <p class="thesis">The second planning agent. A commission walks seven steps in a single Cloud Run Job, and the two hardest quality criteria — no face cropped by a camera move, no cut off the beat — are made <b>true by construction rather than tested for</b>.</p>
+    </div>
+    <div class="facts">
+      <div class="fact"><div class="n">7</div><div class="l">steps, one<br/>execution</div></div>
+      <div class="fact"><div class="n">5</div><div class="l">persona<br/>lenses</div></div>
+      <div class="fact"><div class="n">0.000</div><div class="l">ms beat<br/>error</div></div>
+    </div>
+  </div>
+
+  <div class="fitwrap"><div class="fitinner">
+
+    <div class="sec" style="margin-bottom:11px">
+      <h2><span class="num">5.1</span>One commission, end to end<span class="note">directors/reel/pipeline.py · resumable at stage granularity</span></h2>
+      <div class="chain">
+        <div class="cx det"><div class="t">Select</div><div class="s">Diversity-sampled candidates from a <b>snapshot</b>, per persona: recap spreads chronologically across the arc, <code>main_character</code> narrows to one <code>personId</code>. Aesthetic floor with a candidate-count fallback.</div></div>
+        <div class="ar">→</div>
+        <div class="cx llm"><div class="t">Direct ◆</div><div class="s">A narrative brief built from <i>actual</i> evidence — captions, moment tags, the stage diary, the world model — then a storyboard. Structural freedom inside a persona lens, never a template.</div></div>
+        <div class="ar">→</div>
+        <div class="cx llm"><div class="t">Critic ◆</div><div class="s">A rubric pass over the plan, <b>capped at one retry</b>, behind a deterministic EDL linter. A loop that cannot terminate is not a self-improving agent.</div></div>
+        <div class="ar">→</div>
+        <div class="cx det"><div class="t">Score</div><div class="s">Arithmetic ranking of the accepted plan's shots.</div></div>
+        <div class="ar">→</div>
+        <div class="cx det"><div class="t">EDL</div><div class="s">Shot list quantized onto the beat grid; Ken Burns rectangles <i>derived</i> from face boxes.</div></div>
+        <div class="ar">→</div>
+        <div class="cx det"><div class="t">Render</div><div class="s">One ffmpeg filtergraph, 1080×1920, with the Lyria track and the cached Veo opener.</div></div>
+        <div class="ar">→</div>
+        <div class="cx det"><div class="t">Publish</div><div class="s"><b>The whole manifest is re-validated against current visibility, inside a transaction.</b> A reel that <i>started</i> eligible can still be refused.</div></div>
+      </div>
+      <p style="margin-top:7px">Every step writes its output to the reel document as it lands and is skipped when that output is already present, so a commission that died in <code>render</code> does not pay for a second plan or a second Lyria clip — it re-reads them and re-renders. That is also what makes a retry safe to fire from a later tick. The document walks <code>directing → composing → rendering → published</code>, so when a reel does not appear there is exactly one place to look.</p>
+    </div>
+
+    <div class="cols" style="margin-top:0">
+      <div class="col" style="flex:1">
+        <div class="sec">
+          <h2><span class="num">5.2</span>Why one job, and not a service in front of a job</h2>
+          <ul>
+            <li><b>Cloud Tasks cannot start a Cloud Run Job.</b> Tasks speaks HTTP; a job has no URL and is started through the Run Admin API with per-execution container overrides. So the split costs an extra service, an extra identity and an extra hop — and the EDL has to be persisted on the reel document either way.</li>
+            <li><b>The consequence is stated rather than hidden:</b> <code>renders-queue</code>'s concurrency dial is therefore <i>not</i> the throttle it looks like. It could never express the real invariant anyway — "one active render <i>per persona, per event</i>", not a global number — so that invariant moved to a Firestore read inside the lease the Story Director already holds, with a staleness backstop because a job execution can die and leave its document in <code>rendering</code> forever.</li>
+            <li><b>Cost of the merge:</b> about forty seconds of an 8-vCPU job idling on model calls and the Lyria stream — under a cent, against a whole extra deployment surface.</li>
+          </ul>
+        </div>
+
+        <div class="sec">
+          <h2><span class="num">5.3</span>Two quality criteria, made true instead of tested</h2>
+          <p><b>No face crosses the frame edge.</b> Asking the model for four floats per shot and linting them makes that a property we <i>test</i>. Asking it for a <i>gesture</i> — <code>PUSH_IN</code> — and deriving both rectangles from the detected face boxes makes it a property that <b>cannot be violated</b>, and the proof is three lines: a Ken Burns move is a linear interpolation between two axis-aligned rectangles, so each edge is linear in the interpolation parameter and attains its extremes at the endpoints; if both endpoint rectangles contain the faces' bounding box, every intermediate one does. The code guarantees the premise by walking the zoom back toward 1.0 until it holds — and when even an unzoomed 9:16 crop cannot hold a wide group line-up, the shot switches to a <b>fitted composition</b>: the whole photograph in frame over a blurred, drifting copy of itself. <b>A group photo is never cropped through somebody's head to make an aspect ratio work.</b></p>
+          <p><b>No cut off the beat.</b> The measurement is <b>0.000 ms</b>, not "within ±80 ms", because the EDL only ever emits values that are already on the librosa grid: the minimum and maximum shot-length clamps step to a <i>neighbouring beat</i> instead of applying an offset. Nothing ever leaves the grid to have to be snapped back onto it.</p>
+        </div>
+
+        <div class="sec">
+          <h2><span class="num">5.6</span>Five persona lenses, one parameterized director</h2>
+          <table>
+            <thead><tr><th>Persona</th><th>What SELECT does differently</th><th>Commissioned by</th></tr></thead>
+            <tbody>
+              <tr><td class="k mono">couple</td><td>the event's principals, weighted by tier</td><td>the director, or the host</td></tr>
+              <tr><td class="k mono">stage_recap</td><td>bounded to one stage id, carried on the document</td><td>a stage ending</td></tr>
+              <tr><td class="k mono">guest_energy</td><td>crowd and reaction frames rather than principals</td><td>the director</td></tr>
+              <tr><td class="k mono">main_character</td><td>one <code>personId</code>; the reel is written to <b>audience ring 1</b>, never to the wall</td><td>on demand only — never fanned out per guest</td></tr>
+              <tr><td class="k mono">event_recap</td><td>every stage, spread chronologically across the arc, with its own aesthetic floor and a candidate-count fallback</td><td><b>deterministically, by the first tick that sees <code>wrapping</code></b></td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:6px">The target rides on the reel document, not in the enum, so <b>the persona stays a lens and the target stays data</b>. That is the difference between one parameterized agent and five copy-pasted ones — and it is why a persona/target mismatch is rejected at commission time rather than discovered at render time. Personas are also why the "one active render" invariant is <i>per persona, per event</i>: a recap and a stage cut are not competing for one slot.</p>
+        </div>
+      </div>
+
+      <div class="col" style="flex:1">
+        <div class="sec">
+          <h2><span class="num">5.4</span>The consent interlock is not cosmetic</h2>
+          <ul>
+            <li><b>A published reel is served by a redirect, never by a stored URL.</b> The reel document's <code>videoUri</code> is an <code>api</code> path that re-checks the reel's visibility on <i>every</i> request and 302s to a 60-minute signed URL. Not a public bucket — the object would stay fetchable after the reel is unpublished, which would make this whole interlock decorative. Not a stored signed URL either — it expires while the document still advertises it, which is a reel that plays on demo day and 404s during the judging month.</li>
+            <li><b>Playback is deliberately unauthenticated for a <i>published</i> reel</b>, on the same reasoning the kiosk playlist is world-readable: a <code>&lt;video&gt;</code> element cannot send an Authorization header, and a kiosk is a television in a venue. What makes that safe is that "published" is <i>derived</i> — only <code>recompute_visibility</code> and the publish transaction write it. <b>Downloading, by contrast, requires membership on every event: watching is not keeping.</b></li>
+            <li><b>Retraction runs from the one writer of <code>visibility</code></b>, and only on a public → non-public transition, because an <code>array_contains</code> query on every recompute would cost a query per stage completion per photograph and virtually all of those are pool → pool.</li>
+            <li><b>The renderer reads the same <code>display_1600</code> derived render the gallery serves</b> — so the zoom ceiling is 1.25, and a little softness is the price of not handing the reel renderer five hundred guests' full-resolution originals.</li>
+          </ul>
+        </div>
+
+        <div class="sec">
+          <h2><span class="num">5.5</span>What a reel costs, and what it is allowed to cost</h2>
+          <table>
+            <thead><tr><th>Line item</th><th>Model / resource</th><th class="c">Cost</th></tr></thead>
+            <tbody>
+              <tr><td class="k">Plan + critic</td><td class="mono">gemini-3.7-flash ×2–3</td><td class="c mono">&lt; $0.01</td></tr>
+              <tr><td class="k">Soundtrack</td><td class="mono">lyria-3-clip-preview</td><td class="c mono">$0.04</td></tr>
+              <tr><td class="k">Opener (once per event, cached)</td><td class="mono">veo-3.1-fast · 8 s</td><td class="c mono">$0.80</td></tr>
+              <tr><td class="k">Render</td><td class="mono">8 vCPU job, single-digit minutes</td><td class="c mono">~$0.02</td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:6px"><b>Volume rails, and they are ordinary host-settable configuration rather than a demo-only branch</b> — a daily reel ceiling, a "commission at most one reel per N new media" counter, and per-day / lifetime media caps enforced <i>transactionally</i> in the same transaction as the per-guest upload rate limit. The discipline behind that: <b>a demo convenience is honest only if a real host could set it too.</b> A Lyria failure is explicitly <i>not</i> fatal — a silent reel is still a reel.</p>
+        </div>
+      </div>
+    </div>
+
+  </div></div>
+
+  <div class="pagefoot">
+    <div><b>5 of 7</b> — the reel pipeline</div>
+    <div class="mono">one parameterized director, five persona lenses — not five copy-pasted agents</div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     PAGE 6 — TRUST & GOVERNANCE
+     ═════════════════════════════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="masthead">
+    <div>
+      <p class="kicker">Showrunner · low-level design · page 6 of 7</p>
+      <h1>Trust &amp; governance <span class="thin">— judgment by agents, enforcement by policy</span></h1>
+      <p class="thesis">This system holds other people's photographs and other people's faces. So the exposure decision is a <b>single deterministic transactional function</b>, the biometric lives in a collection with no read rule at all, and <b>no face match grants anything on its own</b>.</p>
+    </div>
+    <div class="facts">
+      <div class="fact"><div class="n">107</div><div class="l">rules<br/>assertions</div></div>
+      <div class="fact"><div class="n">0</div><div class="l">LLM writes of<br/>visibility</div></div>
+      <div class="fact"><div class="n">0</div><div class="l">clients that can<br/>read a face</div></div>
+    </div>
+  </div>
+
+  <div class="fitwrap"><div class="fitinner"><div class="cols">
+
+    <div class="col" style="flex:1">
+      <div class="sec">
+        <h2><span class="num">6.1</span>The exposure decision, in full<span class="note">shared/visibility.py — the only writer</span></h2>
+        <p>Six inputs, one output, no model anywhere near it. Missing inputs are not an error: a half-processed item is <code>pool</code>, never <code>public</code>.</p>
+        <table>
+          <thead><tr><th>Condition</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td>deleted, or the host's <b>panic freeze</b> is on</td><td class="mono k">self</td></tr>
+            <tr><td>Guardian verdict <code>blocked</code></td><td class="mono k">self</td></tr>
+            <tr><td>consent ring 0 (self-only)</td><td class="mono k">self</td></tr>
+            <tr><td>a subject in the frame has vetoed</td><td class="mono k">pool</td></tr>
+            <tr><td>ring 2, but verdict ≠ <code>public_ok</code> <i>or</i> aesthetic &lt; the event's public floor</td><td class="mono k">pool</td></tr>
+            <tr><td>ring 2, <code>public_ok</code>, above the floor, no veto</td><td class="mono k">public</td></tr>
+            <tr><td>otherwise</td><td class="mono k">pool</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:6px"><b>Three things happen in that one transaction:</b> <code>visibility</code> is written, <code>status='indexed'</code> is derived (it requires <i>every</i> stage <code>done</code>), and the coverage shards are bumped. There is never a moment where a verdict and its exposure disagree, and the ledger can never drift from the corpus it summarizes. The acceptance test is a <code>grep</code>: exactly one writer of that field.</p>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">6.2</span>Consent is three rings, and Ring 1 is the default</h2>
+        <table>
+          <tbody>
+            <tr><td class="k mono" style="width:22%">0 · self</td><td>Only the uploader. Not even the people in the photograph.</td></tr>
+            <tr><td class="k mono">1 · pool</td><td><b>The default.</b> The event's members, and the private album of every person detected in it.</td></tr>
+            <tr><td class="k mono">2 · public</td><td>Opt-in <i>per batch</i>, and still subject to every gate in 6.1. <b>Nothing is public by accident.</b></td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:6px">Retroactive within seconds, plus a subject veto that works on a photograph you did not upload, and a real per-subject deletion path that removes the person document and the stored face template — not a flag. A denial of a claim <b>reverses</b> rather than records: it revokes the claim, and deletes the person and the template when that claim is what created them, because a stored template left behind is an unapproved biometric sitting in the match index.</p>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">6.3</span>Model Armor, in two places, because they fail differently</h2>
+        <ul>
+          <li><b>At the surface that accepts the text</b> (the host's pasted itinerary, the bounty brief) — precise about what it rejected, and able to tell a human.</li>
+          <li><b>As an ADK plugin in front of the director models</b> — which is what catches text that reached a prompt by <i>any</i> route: a tool result, a recalled memory, a caption threaded into a brief three hops from where it was typed. The surface check alone would be a list of places to remember.</li>
+          <li><b>Deliberately not attached to the perception workers.</b> A per-photo Armor call would add a network round trip to a stage whose queue rate is calibrated, in order to inspect text the host already had checked at onboarding.</li>
+          <li>A deflection is a <b>permanent</b> failure by construction, so it takes the conservative path every worker already has — no retry storm on text that will match again.</li>
+        </ul>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">6.7</span>The rule that governs every demo affordance</h2>
+        <div class="inv" style="margin-bottom:7px"><b>A demo convenience is honest if it is a configuration value a real host could also set. It is a thumb on the scale if it is a code branch keyed on "this event belongs to a judge."</b></div>
+        <p>Under that rule the guided tour costs nothing in trust: the page, the seeded event, one-tap join, the pre-warm, the compressed timeline and the faster tick cadence are all things the product does for anyone. <b>Two things failed the rule and were deleted rather than defended:</b></p>
+        <ul>
+          <li>A demo-only override of the public aesthetic floor, gated on the event's class. It was a second path to a value the ordinary host-settable field already provided — and it was <b>the only exposure logic in the system whose condition was whose event it is</b>. Deleted; the demo event now sets the plain field any host can set.</li>
+          <li>A flag that auto-promoted a self-enrolling guest to VIP. A genuine branch no real host could trigger, existing only to make a visitor feel featured. It ships off.</li>
+        </ul>
+        <p><b>There is no route, component, flag or query parameter named "judge mode" anywhere in the code</b> — the label itself manufactures the suspicion that a special path exists for being looked at. The ranking-explanation overlay is <code>?explain=1</code>, and it only reveals numbers the publisher already stored: it changes no query, no ordering and no visibility. The demo event's configuration is disclosed on screen, non-optionally. <b>The consequence is binding: a later change that reintroduced a judge-conditional branch would make that disclosure the false statement.</b></p>
+      </div>
+    </div>
+
+    <div class="col" style="flex:1">
+      <div class="sec">
+        <h2><span class="num">6.4</span>Rules grant whole documents, so the data model had to move</h2>
+        <p>Firestore has no field-level read control. <code>people/{personId}</code> <i>must</i> be readable by every event member — the kiosk's uploader credit, the leaderboard's names, and the deterministic <code>tier</code> → <code>vipWeight</code> ranking all read it — and that same document was holding the face template. <b>Any rule permitting the first would have handed every guest a copy of everyone's face.</b></p>
+        <ul>
+          <li>The biometric moved to <code>events/{id}/enrollments/{personId}</code>: <b>a collection with no <code>allow</code> rule at all</b> — unreadable by every client <i>including the host</i>, because a console has no use for an embedding and "the host can see it" is how a biometric ends up in a screenshot.</li>
+          <li><code>people/{id}/private/*</code> is reserved and deny-all for anything else genuinely personal — the Gemma-written taste memo lands there, not on the person document.</li>
+          <li><b>The read boundary is the event, not the sign-in.</b> <code>isMember(eventId)</code> resolves a <code>members[]</code> custom claim minted by <code>POST /join</code>. It replaced a predicate that was literally "is signed in", which let anyone holding any event id read that event's wall, guest list, names and tiers. Membership rides in a claim rather than a document because <b>a rule may not perform a <code>get()</code></b>.</li>
+          <li><b>Query shape and rule shape are one design.</b> Firestore fails an <i>entire</i> query when one returned document is denied rather than skipping it — so every listener carries the filters its rule requires, and the matrix runs those exact queries as those exact personas, <b>including rows that assert dropping a filter correctly breaks</b>.</li>
+        </ul>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">6.5</span>The host approves every album — no exceptions to enumerate</h2>
+        <p>A live defect closed by <b>deleting the automatic grant rather than narrowing it</b>: enrolling with a selfie writes a <i>held</i> claim and grants nothing — no identity claim, no uid link, no <code>personId</code> on any face. Identity is granted in exactly two places: a host approval, and a magic link the album's own owner minted (where possession <i>is</i> the proof).</p>
+        <ul>
+          <li>The face worker's auto-linker is gated on <code>claimApproved</code>, so a <i>pending</i> enrolment cannot quietly accrete an album while it waits for review — otherwise the photographs handed over would already be in a stranger's album by the time the host looked at the card.</li>
+          <li>A VIP match that is also ambiguous is always labelled <code>protected_person</code>, never <code>ambiguous_match</code>: the more actionable signal wins on the review card.</li>
+          <li>The enrolment path carries the same ban check and hourly cap as uploads, on <b>its own window fields</b>, so a photo burst and a selfie probe cannot hide inside each other.</li>
+          <li>The cost is one host tap per guest, which is what a real event looks like.</li>
+        </ul>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">6.6</span>What this build does <i>not</i> claim<span class="note">stated here so it cannot be discovered instead</span></h2>
+        <table>
+          <tbody>
+            <tr><td class="k" style="width:33%">Agent Runtime, Identity,<br/>Registry, Observability</td><td><b>Zero deployments.</b> Nothing is wired to them, so the rows are deleted rather than softened. Memory Bank is wired but inactive (<code>AGENT_ENGINE_ID</code> empty).</td></tr>
+            <tr><td class="k">OpenTelemetry span DAGs</td><td>Not instrumented. The evidence of a tick is a structured one-line-per-stage log, a heartbeat document, and the director state — named on page 7.</td></tr>
+            <tr><td class="k">Reel v2 supersession, collages</td><td>Specified, not built. One version per commission.</td></tr>
+            <tr><td class="k">Data purge / retention job</td><td><b>Does not exist</b>, and an earlier claim that it did was retracted. The working deletion path is per-subject and on request.</td></tr>
+            <tr><td class="k">Two residual read exposures</td><td>A member reads whole media documents; the kiosk playlist is world-readable because narrowing it would require a <code>get()</code>. Documented as limits, not closed.</td></tr>
+            <tr><td class="k">InsightFace weights</td><td>Non-commercial research licence — fine here, and the production swap (AuraFace / SFace) is named.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div></div></div>
+
+  <div class="pagefoot">
+    <div><b>6 of 7</b> — trust &amp; governance</div>
+    <div class="mono">the only exposure logic in this system whose condition was "whose event is this" was deleted, on purpose</div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     PAGE 7 — FAILURE, SCALE & COST
+     ═════════════════════════════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="masthead">
+    <div>
+      <p class="kicker">Showrunner · low-level design · page 7 of 7</p>
+      <h1>Failure, scale &amp; cost <span class="thin">— duration is the premise, fault tolerance is the proof</span></h1>
+      <p class="thesis">A two-second task does not need a dead-letter queue. Long-running is not a virtue on its own — it is the <i>reason</i> failure tolerance has to be designed. Here is every way this system is known to break, and what happens when it does.</p>
+    </div>
+    <div class="facts">
+      <div class="fact"><div class="n">$10<span style="font-size:11px">–</span>40</div><div class="l">realistic cost<br/>per event</div></div>
+      <div class="fact"><div class="n">1</div><div class="l">chaos switch,<br/>class-gated</div></div>
+      <div class="fact"><div class="n">0</div><div class="l">error logs since<br/>the last deploy</div></div>
+    </div>
+  </div>
+
+  <div class="fitwrap"><div class="fitinner"><div class="cols">
+
+    <div class="col" style="flex:1.28">
+      <div class="sec flush">
+        <h2 style="padding:9px 11px 6px;margin:0"><span class="num">7.1</span>Failure and recovery matrix<span class="note">every row has a code path, not an intention</span></h2>
+        <table>
+          <thead><tr><th>Failure</th><th>Detected by</th><th>Response</th><th>Blast radius</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Model rate limit or 5xx</td><td>status classified at the one model wrapper</td><td>Cloud Tasks backoff, up to 5 attempts</td><td>one item, delayed</td></tr>
+            <tr><td class="k">Model refuses, or returns schema-invalid output twice</td><td>the same wrapper, as <b>permanent</b></td><td>write the stage's conservative default; item keeps its album; <span class="tag opt">warning</span></td><td><b>none</b> — it never reaches a public surface</td></tr>
+            <tr><td class="k">Transient failure exhausts its attempts</td><td>attempt counter</td><td>stage <code>failed</code>, item <code>quarantined</code>, <span class="tag cut">error</span> alert</td><td>one item, and a human is told</td></tr>
+            <tr><td class="k">Poisoned event, 5 Eventarc attempts</td><td>Pub/Sub dead-letter subscription</td><td><code>dlq</code> service quarantines and alerts</td><td>one item; the trigger stays healthy</td></tr>
+            <tr><td class="k"><b>A director hallucinates</b> a stage, a person or a bounty that does not exist</td><td>ACT re-derives every field from Firestore</td><td>action <b>rejected with a logged reason</b>; the rest of the plan still applies</td><td><b>none</b></td></tr>
+            <tr><td class="k"><b>A critic loop will not converge</b></td><td>retry counter + a deterministic EDL linter</td><td>capped at one retry, then the linted plan is used</td><td>one reel, slightly worse</td></tr>
+            <tr><td class="k">Two ticks overlap; a tick replays</td><td>transactional lease + per-<code>tickId</code> idempotent recording</td><td>the second is a no-op; no double award is possible</td><td><b>none</b></td></tr>
+            <tr><td class="k">A publisher instance is scaled away mid-lease</td><td>renewal stops; the lease expires</td><td>another instance takes that event's wall over inside the TTL</td><td>one wall, one TTL stale</td></tr>
+            <tr><td class="k">A render job execution dies in <code>rendering</code></td><td>staleness backstop inside the tick</td><td>re-commissioned; completed steps are re-read, not re-paid for</td><td>one reel, delayed</td></tr>
+            <tr><td class="k">Lyria unavailable</td><td>exception at the music step</td><td><b>a silent reel is still a reel</b></td><td>one soundtrack</td></tr>
+            <tr><td class="k">FCM outage</td><td>send never raises</td><td>the bounty still lands via the Firestore listener banner</td><td>one notification</td></tr>
+            <tr><td class="k">Prompt injection in host-pasted text</td><td>Model Armor, at the surface <i>and</i> at the model</td><td>permanent failure, conservative path, <b>zero tokens spent</b></td><td><b>none</b></td></tr>
+            <tr><td class="k">A stage pin goes stale</td><td>a pin is honoured only until its own window ends, plus a grace</td><td>the schedule resumes automatically</td><td><b>none</b> — this was a real defect, found and closed</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="inv"><b>Failure is exercised, not asserted.</b> A class-gated chaos switch injects a transactional, decrementing 503 into a worker, and the recovery is watched end to end: 503 → backoff → attempt 2 → <code>done</code>. Synthetic dead-letter delivery has been driven through the DLQ path. The adversarial guardrail table for the director runs offline — no network, no Firestore, no spend — because <b>a rule that can only be exercised by coaxing a live model into misbehaving is a rule nobody checks.</b></div>
+
+      <div class="sec">
+        <h2><span class="num">7.5</span>Observability, stated honestly<span class="note">what exists, and what does not</span></h2>
+        <p>There is <b>no OpenTelemetry instrumentation and no Agent Observability dashboard in this build</b>, because there is no Agent Runtime deployment to attach one to (<b>4.5</b>). Claiming a reasoning-chain span DAG would be the easiest thing on this page for a judge to falsify, so here is what exists instead — all of it queryable, and none of it a screenshot of a product page:</p>
+        <table>
+          <thead><tr><th>Question</th><th>Answer, and where it lives</th></tr></thead>
+          <tbody>
+            <tr><td class="k" style="width:32%">Is the fleet acting on its own?</td><td><code>platform/tickPulse</code> — a rising counter and a fresh <code>lastTickAt</code>, written by every tick</td></tr>
+            <tr><td class="k">What did the director decide, and why?</td><td><code>ledger/directorState</code> — assessments, the rolling window, deferred commissions, permanent gaps</td></tr>
+            <tr><td class="k">What did it <i>reject</i>, and why?</td><td>a structured log line per rejected action, carrying the guardrail that refused it</td></tr>
+            <tr><td class="k">Where did this photograph spend its time?</td><td><code>stageTimings</code> on the media document, plus one log line per stage with <code>ms</code></td></tr>
+            <tr><td class="k">What has this event cost?</td><td>derived on read from what was actually spent — never an incremented counter that can drift</td></tr>
+            <tr><td class="k">Did anything break?</td><td>the <code>ops/</code> collection, sharded per worker type so no document is hot, with a severity on every alert</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:6px"><b>The trade is stated rather than buried:</b> what a managed runtime would have granted automatically is a span DAG and a token dashboard. What running the director inside the tick buys instead is that <b>every number which decides who gets paid lives in one file and can be checked offline, with no network and no spend.</b> Given the choice between an observability tab and an auditable guardrail, this build took the guardrail.</p>
+      </div>
+    </div>
+
+    <div class="col" style="flex:1">
+      <div class="sec">
+        <h2><span class="num">7.2</span>What breaks at 10× — and the stated evolution path</h2>
+        <table>
+          <thead><tr><th>Dimension</th><th>Today</th><th>First thing to break, and the move</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Faces</td><td>~10k vectors, flat exact KNN</td><td>Exact KNN stays <i>more</i> accurate here and costs nothing idle. At ~1M faces, move to a managed ANN index — that is a swap of one query, because the embedding contract does not change.</td></tr>
+            <tr><td class="k">Ingest burst</td><td>p50 ≤ 5 s to ~10 uploads/s</td><td>Beyond that the queues drain FIFO and latency grows; nothing fails. The dial is the queue rate, and raising it is a <i>spend</i> decision, which is why it lives in configuration.</td></tr>
+            <tr><td class="k">Coverage ledger</td><td>6 reads, O(1) in corpus size</td><td>Already sharded per stage. The next limit is shard write contention, not read cost.</td></tr>
+            <tr><td class="k">Hot documents</td><td>ops telemetry sharded per worker type; spend <b>derived, never incremented</b></td><td>An <code>Increment</code> on the event document would have put 16 writes/s on one key against a ~1/s ceiling — every photo contending with every other. Derivation avoids the hot key entirely.</td></tr>
+            <tr><td class="k">Concurrent live events</td><td>a transactional platform cap, enforced server-side</td><td>Per-event leases mean adding events adds parallelism, not contention: one publisher instance has held nine concurrently.</td></tr>
+            <tr><td class="k">Small events</td><td>the control loop is <b>evidence-driven</b></td><td>At five guests there are no statistical gaps, so the director correctly issues nothing. <b>The system degrades by event size, and that is a property of being evidence-driven rather than template-driven.</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">7.3</span>Cost, and the rails that bound it</h2>
+        <table>
+          <thead><tr><th>Line</th><th>Basis</th><th class="c">Per event</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Perception</td><td>flash-lite on <b>thumbnails</b>, not originals</td><td class="c mono">&lt; $5</td></tr>
+            <tr><td class="k">Director reasoning</td><td>one call per tick; <b>idle ticks cost zero</b></td><td class="c mono">&lt; $1</td></tr>
+            <tr><td class="k">Reels</td><td>$0.04 Lyria + $0.80 cached opener</td><td class="c mono">$1–3</td></tr>
+            <tr><td class="k">Storage, Firestore, Run</td><td>free tiers cover a multi-day event</td><td class="c mono">&lt; $6</td></tr>
+            <tr><td class="k"><b>Total</b></td><td>a full multi-day event, end to end</td><td class="c mono"><b>$10–40</b></td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:6px"><b>The rails are code, not intentions:</b> queue rates as the sustained call cap · <code>costSoFarUsd</code> derived on read so the host console's number is never confidently wrong · per-day and lifetime media caps enforced in the same transaction as the per-guest rate limit · a reel-per-N-media counter · an hourly sweep that wraps a lapsed public event and enforces its ceiling · a platform kill switch · budgets.</p>
+      </div>
+
+      <div class="sec">
+        <h2><span class="num">7.4</span>How to falsify this document</h2>
+        <ul>
+          <li><code>gcloud run services list</code> returns the eight services on page 2, plus one job.</li>
+          <li><code>gcloud scheduler jobs list</code> returns three ENABLED jobs at the stated schedules.</li>
+          <li><code>platform/tickPulse</code> has a <code>lastTickAt</code> inside the last two minutes and a rising counter — <b>the cheapest single check that the fleet is acting on its own.</b></li>
+          <li><code>make rules-test</code> prints 107 assertions across 8 groups, with no cloud credentials.</li>
+          <li><code>make eval</code> grades 25 golden fixtures over 169 checks.</li>
+          <li>A saved, event-filtered Logs Explorer query streams <code>stage=… media=… ms=… verdict=…</code>, one line per stage per item.</li>
+          <li><b>Every box on page 1 maps to something deployed.</b> Anything specified but not built is on page 6, section 6.6, instead.</li>
+        </ul>
+      </div>
+    </div>
+
+  </div></div></div>
+
+  <div class="pagefoot">
+    <div><b>7 of 7</b> — failure, scale &amp; cost</div>
+    <div class="mono">Showrunner · docs/architecture.md carries the prose; the specs carry the contracts</div>
+  </div>
+</div>
+
+<script>
+/* Shrink any page whose content overruns the fixed page box, rather than
+   letting a table get truncated. A page that fits is left at scale 1. */
+for (const wrap of document.querySelectorAll('.fitwrap')) {
+  const inner = wrap.firstElementChild;
+  const need = inner.scrollHeight, have = wrap.clientHeight - 2;
+  const s = Math.min(1, have / need, wrap.clientWidth / 1532);
+  inner.style.transform = `scale(${s})`;
+}
+</script>
+</body>
+</html>
