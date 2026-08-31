@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Share2, EyeOff, Eye, Heart, Sparkles, Download, Check, Sparkle } from "lucide-react";
+import { Share2, EyeOff, Eye, Heart, Sparkles, Download, Check } from "lucide-react";
 import type { MediaDoc } from "@/lib/types";
 import { listenPrivateAlbum, listenReactions, setReaction, type Reaction } from "@/lib/firestore";
-import { ApiError, authedFetch, mediaRenderPath, setSubjectVeto } from "@/lib/api";
+import { ApiError, mediaRenderPath, setSubjectVeto } from "@/lib/api";
+import { mediaBlob, saveMediaToDisk, resolveSignedUrl } from "@/lib/mediaUrls";
 import { useAuthedImage } from "@/lib/useAuthedImage";
 import { Lightbox } from "@/components/gallery/Lightbox";
 import { GlowButton } from "@/components/atoms/GlowButton";
@@ -13,9 +14,13 @@ import { useHaptics } from "@/lib/useHaptics";
 async function shareOrOpen(eventId: string, media: MediaDoc) {
   const variant = media.displayUri ? "display" : media.thumbUri ? "thumb" : null;
   if (!variant) return;
-  const res = await authedFetch(mediaRenderPath(eventId, media.mediaId, variant), { method: "GET" });
-  if (!res.ok) return;
-  const blob = await res.blob();
+  const path = mediaRenderPath(eventId, media.mediaId, variant);
+  const blob = await mediaBlob(path);
+  if (!blob) {
+    const url = await resolveSignedUrl(path);
+    if (url) window.open(url, "_blank", "noopener");
+    return;
+  }
   if (navigator.share) {
     try {
       const file = new File([blob], `${media.mediaId}.jpg`, { type: blob.type || "image/webp" });
@@ -26,17 +31,6 @@ async function shareOrOpen(eventId: string, media: MediaDoc) {
     }
   }
   window.open(URL.createObjectURL(blob), "_blank");
-}
-
-/** Calculate a realistic match confidence percentage from face or aesthetic attributes */
-function getMatchConfidence(media: MediaDoc, index: number): number {
-  if (media.curator?.aestheticScore) {
-    const raw = Math.round(92 + (media.curator.aestheticScore % 7));
-    return Math.min(99, Math.max(92, raw));
-  }
-  // Default realistic high match range
-  const variation = (index * 7) % 6;
-  return 98 - variation;
 }
 
 export function AlbumGrid({ eventId, personId }: { eventId: string; personId: string }) {
@@ -97,17 +91,10 @@ export function AlbumGrid({ eventId, personId }: { eventId: string; personId: st
       for (const media of items) {
         const variant = media.displayUri ? "display" : media.thumbUri ? "thumb" : null;
         if (!variant) continue;
-        const res = await authedFetch(mediaRenderPath(eventId, media.mediaId, variant), { method: "GET" });
-        if (!res.ok) continue;
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `showrunner-${media.mediaId}.jpg`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        await saveMediaToDisk(
+          mediaRenderPath(eventId, media.mediaId, variant),
+          `showrunner-${media.mediaId}.jpg`
+        );
         // Stagger browser downloads slightly
         await new Promise((r) => setTimeout(r, 200));
       }
@@ -248,7 +235,6 @@ function AlbumThumb({
   onLove: (mediaId: string) => void;
 }) {
   const src = useAuthedImage(eventId, media.thumbUri ? media.mediaId : null, "thumb");
-  const confidence = getMatchConfidence(media, index);
 
   return (
     <div
@@ -266,20 +252,14 @@ function AlbumThumb({
           <img
             src={src}
             alt=""
+            loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
         ) : (
           <div className="w-full h-full skeleton-shimmer" />
         )}
       </button>
-
-      {/* Match Confidence Pill Badge with Tabular Numbers */}
-      <div className="absolute top-2 left-2 z-10 pointer-events-none">
-        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono tabular-nums font-bold tracking-tight bg-slate-950/80 backdrop-blur-md text-[var(--accent)] border border-[var(--accent)]/40 shadow-md">
-          <Sparkle className="w-2.5 h-2.5 fill-current" />
-          <span>{confidence}% Match</span>
-        </span>
-      </div>
 
       {/* Favorite / Heart Button */}
       <button

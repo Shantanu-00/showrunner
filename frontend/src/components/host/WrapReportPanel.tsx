@@ -22,15 +22,17 @@ import type { ReelDoc } from "@/lib/types";
  * published` (or `failed`/`unpublished`/`superseded`), same lifecycle `ReelSlot` shows on the
  * kiosk, but read for the host console instead of a premiere takeover.
  *
- * Unlike `ReelSlot`, this always fetches the video through `useAuthedBlobUrl` rather than
- * branching on the event's access mode: a host previewing an unpublished (or failed) reel needs
- * the host bearer regardless of access mode, and sending it for an already-published reel on an
- * open event costs nothing extra — `api/reels.py::reel_video` only inspects the token on the
- * branches that need one. That same already-fetched blob is what backs the "Download film" link
- * below, which is why the panel never calls the `?download=1` variant: a `download` attribute on
- * an anchor forces the browser's save dialog regardless of the blob's own content-disposition, so
- * one authed fetch covers both playback and download, on an open *or* invite-only event, with no
- * second request.
+ * Unlike `ReelSlot`, this always resolves the video through `useAuthedBlobUrl` rather than branching
+ * on the event's access mode: a host previewing an unpublished (or failed) reel needs the host bearer
+ * regardless of access mode, and sending it for an already-published reel on an open event costs
+ * nothing extra — `api/reels.py::reel_video` only inspects the token on the branches that need one.
+ *
+ * Playback and download are now two resolutions rather than one shared blob. That is not a regression
+ * but the consequence of a fix: the bytes cannot be fetched with a token at all (see
+ * `lib/mediaUrls.ts`), so what backs both is a signed GCS URL — and a `download` attribute is ignored
+ * on a cross-origin href, so the save link has to be the `?download=1` variant whose
+ * content-disposition GCS itself sets. Two cheap JSON calls, no video downloaded twice: the player
+ * streams, and the anchor is only followed if the host actually clicks it.
  */
 function RecapFilmBody({
   eventId,
@@ -43,6 +45,7 @@ function RecapFilmBody({
 }) {
   const published = reel?.status === "published";
   const videoSrc = useAuthedBlobUrl(published ? reelVideoPath(eventId, reelId) : null);
+  const downloadSrc = useAuthedBlobUrl(published ? reelVideoPath(eventId, reelId, true) : null);
 
   if (reel?.status === "failed") {
     return (
@@ -91,9 +94,9 @@ function RecapFilmBody({
       ) : (
         <div className="h-40 rounded-xl skeleton-shimmer bg-white/5" />
       )}
-      {videoSrc && (
+      {downloadSrc && (
         <a
-          href={videoSrc}
+          href={downloadSrc}
           download={`showrunner-recap-${reelId}.mp4`}
           className="btn-secondary inline-flex items-center gap-1.5 text-[11px] px-3.5 py-1.5 rounded-full font-medium"
         >

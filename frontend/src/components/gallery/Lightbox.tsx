@@ -4,7 +4,8 @@ import { useState, type ReactNode } from "react";
 import { X, Download, Share2, Clock, Check, Sparkles } from "lucide-react";
 import type { MediaDoc } from "@/lib/types";
 import { MediaImg } from "@/lib/MediaImg";
-import { authedFetch, mediaRenderPath } from "@/lib/api";
+import { mediaRenderPath } from "@/lib/api";
+import { saveMediaToDisk } from "@/lib/mediaUrls";
 import { useHaptics } from "@/lib/useHaptics";
 
 function formatTimestamp(isoStr?: string | null): string {
@@ -44,18 +45,11 @@ export function Lightbox({
     tapHaptic();
     setDownloading(true);
     try {
-      const res = await authedFetch(mediaRenderPath(eventId, media.mediaId, variant), { method: "GET" });
-      if (!res.ok) return;
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `showrunner-${media.mediaId}.jpg`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      successHaptic();
+      const saved = await saveMediaToDisk(
+        mediaRenderPath(eventId, media.mediaId, variant),
+        `showrunner-${media.mediaId}.jpg`
+      );
+      if (saved) successHaptic();
     } catch {
       // safe fallback
     } finally {
@@ -130,6 +124,7 @@ export function Lightbox({
             mediaId={media.mediaId}
             variant={variant}
             forceAuthed={!isPublic}
+            eager
             alt={media.curator?.caption ?? ""}
             className="max-h-[72vh] max-w-full object-contain rounded-2xl sm:rounded-3xl shadow-[0_0_40px_rgba(0,0,0,0.85)] border border-white/10 transition-transform duration-300"
             fallback={<div className="w-full max-w-md h-80 skeleton-shimmer rounded-2xl" />}

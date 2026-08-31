@@ -5,20 +5,17 @@
 // `api/media.py` serves a public, fully-indexed photo with no Authorization header on an **open**
 // event — that is what lets a masonry grid or a kiosk filmstrip be plain image requests — and requires
 // event membership on every branch of an **invite-only** one. An `<img src>` cannot carry a bearer
-// token, so on an invite-only event the bytes have to come through `useAuthedImage`: authed fetch →
-// follow the 302 → blob URL. That was already built for the pool/self tiers (a private album's
-// thumbnails were never public), so closing the door needed **no token scheme, no signed query
-// parameter** — just this component choosing between two paths that both already existed.
+// token, so on an invite-only event the URL has to be resolved first (`?json=1` → signed URL), which
+// is what `useMediaSrc` does. Either way what lands here is a URL an `<img>` can load directly;
+// nothing on this path fetches image bytes through a header any more, because that could not work
+// (see `lib/mediaUrls.ts`).
 //
 // It is a component rather than a hook because the surfaces that need it render inside `.map()`
 // callbacks (`PublicGallery`'s grid, `JustInSlot`'s filmstrip) where a hook cannot be called at all.
-// `AlbumGrid`/`MyUploads` already use `useAuthedImage` directly in their own per-tile components and
-// are unchanged: those tiers are never public, so there is nothing to choose between.
 
 import type { CSSProperties, ReactNode } from "react";
-import { mediaRenderUrl } from "./api";
 import { useAccessMode } from "./eventAccess";
-import { useAuthedImage } from "./useAuthedImage";
+import { useMediaSrc } from "./useAuthedImage";
 
 export function MediaImg({
   eventId,
@@ -33,6 +30,9 @@ export function MediaImg({
   forceAuthed = false,
   imgKey,
   onLoad,
+  /** Off for the handful of images that are the reason the page exists (a kiosk slide, a lightbox);
+   * on for everything in a scrolling grid. */
+  eager = false,
 }: {
   eventId: string;
   mediaId: string | null | undefined;
@@ -44,20 +44,14 @@ export function MediaImg({
   forceAuthed?: boolean;
   imgKey?: string;
   onLoad?: () => void;
+  eager?: boolean;
 }) {
   const mode = useAccessMode(eventId);
   // `undefined` (the bootstrap has not answered yet) takes the authed path on purpose: it works on
-  // both kinds of event, whereas the unauthenticated path works on only one. The cost is one wasted
-  // fetch during the ~100 ms before `accessMode` lands; the alternative is a private event's guests
-  // looking at broken images. See the fail-closed paragraph in `lib/eventAccess.ts`.
+  // both kinds of event, whereas the unauthenticated path works on only one. See the fail-closed
+  // paragraph in `lib/eventAccess.ts`.
   const needsAuth = forceAuthed || mode !== "open";
-  // `shared: true` is what makes the kiosk's prefetch reachable: `lib/kioskPrefetch.ts` warms the
-  // next slides into `lib/mediaCache.ts`, and this is the read side of that same store. It matters
-  // only on the authed path — an open event's prefetch lands in the browser's own HTTP cache, which
-  // the plain `<img src>` below already hits. Harmless on the surfaces that are browsed rather than
-  // cycled (a gallery grid simply finds nothing warmed and fetches as before).
-  const authedSrc = useAuthedImage(eventId, needsAuth ? mediaId : null, variant, { shared: true });
-  const src = !mediaId ? null : needsAuth ? authedSrc : mediaRenderUrl(eventId, mediaId, variant);
+  const src = useMediaSrc(eventId, mediaId, variant, needsAuth);
 
   if (!src) return <>{fallback}</>;
   return (
@@ -68,6 +62,8 @@ export function MediaImg({
       alt={alt}
       className={className}
       style={style}
+      loading={eager ? "eager" : "lazy"}
+      decoding="async"
       onLoad={onLoad}
     />
   );

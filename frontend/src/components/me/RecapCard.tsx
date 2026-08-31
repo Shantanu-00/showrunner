@@ -12,14 +12,15 @@ import type { ReelDoc } from "@/lib/types";
  * never stand in front of) and the host console's wrap panel. The guests the film is *made of* had no
  * way to see it, which is a strange place for the product to end.
  *
- * **Why the blob and not a plain `<video src>`.** `api/reels.py` now requires event membership for
+ * **Why the URL is resolved rather than used directly.** `api/reels.py` requires event membership for
  * `?download=1` on every event, open ones included — watching is a kiosk in a venue, but *keeping a
  * copy* leaves the consent interlock behind for good, and spec 06 §7 can pull a reel off every
- * surface it still controls the moment somebody in it objects. It cannot reach into a camera roll. So
- * the bytes come through `useAuthedBlobUrl` (authed fetch → follow the 302 → blob), which also means
- * one fetch backs both the player and the save button: a `download` attribute on an anchor pointing at
- * a blob forces the save dialog regardless of the response's own content-disposition. Same trick the
- * host's `WrapReportPanel` uses, for the same reason.
+ * surface it still controls the moment somebody in it objects. It cannot reach into a camera roll. A
+ * `<video src>` cannot carry that token, and fetching the bytes with one is impossible for the reason
+ * `lib/mediaUrls.ts` documents — so `useAuthedBlobUrl` asks the API for the signed URL and both
+ * elements point at GCS directly. Playback and save are separate resolutions because the save link
+ * needs the `?download=1` variant's content-disposition: a `download` attribute is ignored on a
+ * cross-origin href. Same shape the host's `WrapReportPanel` uses, for the same reason.
  *
  * Renders nothing at all until a recap is published. A guest mid-trip should not see an empty "your
  * film" placeholder promising something that only exists once the host wraps.
@@ -36,6 +37,9 @@ export function RecapCard({ eventId }: { eventId: string }) {
   // The listener only ever returns `visibility == 'public'` documents (the rule denies anything else
   // to a member), so reaching this line already means the reel is watchable — no second status check.
   const videoSrc = useAuthedBlobUrl(
+    reelId ? `/v1/events/${eventId}/reels/${reelId}/video` : null
+  );
+  const downloadSrc = useAuthedBlobUrl(
     reelId ? `/v1/events/${eventId}/reels/${reelId}/video?download=1` : null
   );
 
@@ -63,7 +67,7 @@ export function RecapCard({ eventId }: { eventId: string }) {
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <video src={videoSrc} controls playsInline className="w-full rounded-xl bg-black" />
           <a
-            href={videoSrc}
+            href={downloadSrc ?? videoSrc}
             download={`showrunner-recap-${reelId}.mp4`}
             className="btn-secondary mt-3 inline-flex items-center gap-1.5 text-[11px] px-3.5 py-1.5 rounded-full font-medium"
           >

@@ -12,7 +12,8 @@ import {
   Smartphone,
   Link2,
 } from "lucide-react";
-import { authedFetch, authedJson, ApiError } from "@/lib/api";
+import { authedJson, ApiError } from "@/lib/api";
+import { resolveSignedUrl } from "@/lib/mediaUrls";
 
 /* ------------------------------------------------------------------ wire shapes
  * Mirrors `backend/schemas/identity.py`'s review-queue models. Spelled out here rather than in
@@ -69,12 +70,18 @@ function reverseClaim(eventId: string, claimId: string): Promise<unknown> {
 }
 
 /* ------------------------------------------------------------------ authed thumbnails
- * Neither the selfie nor an exemplar thumb is a URL an `<img>` can load: every bucket has public
- * access prevention, so both arrive as host-gated API paths that 302 to a short-lived signed URL.
- * Same trick as `lib/useAuthedImage.ts`, generalised over an arbitrary path because a claim's selfie
- * is not a media render. Local to this file for the same reason the wire shapes are.
+ * Neither the selfie nor an exemplar thumb is a URL an `<img>` can load as stored: every bucket has
+ * public access prevention, so both arrive as host-gated API paths.
+ *
+ * This used to *fetch* those paths with the host's token and follow the 302 to a blob — and it never
+ * once worked in the browser. A request carrying `Authorization` is preflighted, the preflight cannot
+ * be redirected onto `storage.googleapis.com`, and a bucket CORS policy cannot allow a request header
+ * anyway: every selfie tile was a permanent shimmer with a CORS error behind it, which made the review
+ * queue undecidable — the host was asked "is this the same person?" about a photo they could not see.
+ * `?json=1` returns the signed URL instead (`api/identity.py`, `api/media.py`), and a plain `<img src>`
+ * needs no header at all. Uses `lib/mediaUrls.ts` so the resolution is cached like every other one.
  */
-function useAuthedBlob(path: string | null | undefined): string | null {
+function useSignedSrc(path: string | null | undefined): string | null {
   const [src, setSrc] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,24 +89,12 @@ function useAuthedBlob(path: string | null | undefined): string | null {
       setSrc(null);
       return;
     }
-    let objectUrl: string | null = null;
     let cancelled = false;
-
-    authedFetch(path, { method: "GET" })
-      .then(async (res) => {
-        if (!res.ok || cancelled) return;
-        const blob = await res.blob();
-        if (cancelled) return;
-        objectUrl = URL.createObjectURL(blob);
-        setSrc(objectUrl);
-      })
-      .catch(() => {
-        if (!cancelled) setSrc(null);
-      });
-
+    void resolveSignedUrl(path).then((url) => {
+      if (!cancelled) setSrc(url);
+    });
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [path]);
 
@@ -115,7 +110,7 @@ function AuthedTile({
   alt: string;
   className: string;
 }) {
-  const src = useAuthedBlob(path);
+  const src = useSignedSrc(path);
   if (!src) {
     return (
       <div
@@ -126,7 +121,12 @@ function AuthedTile({
   }
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt={alt} className={`${className} object-cover border border-white/10`} />
+    <img
+      src={src}
+      alt={alt}
+      decoding="async"
+      className={`${className} object-cover border border-white/10`}
+    />
   );
 }
 

@@ -12,7 +12,7 @@
 // `PREFETCH_DEPTH` slides. Two paths, because the kiosk has two byte paths (`lib/MediaImg.tsx`):
 // an **open** event's photos are plain URLs, warmed through the browser's own HTTP cache; an
 // **invite-only** event's need a bearer token, so they are warmed into the shared blob store in
-// `lib/mediaCache.ts` that the renderer reads from too. Either way the `<img>` finds bytes already
+// `lib/mediaUrls.ts` that the renderer reads from too. Either way the `<img>` finds bytes already
 // present instead of starting a request.
 //
 // **Coverage is first slide to last, not just the middle.** Three things together:
@@ -30,7 +30,7 @@
 
 import { useEffect } from "react";
 import { mediaRenderPath, mediaRenderUrl } from "./api";
-import { warmBlob, warmImage } from "./mediaCache";
+import { cacheBytes, cacheKeyFor, resolveSignedUrl, warmHttpCache } from "./mediaUrls";
 import type { KioskSlot } from "./types";
 
 /** How many slides ahead to warm. Three is the useful number rather than an arbitrary one: at a 6 s
@@ -84,9 +84,14 @@ export function useSlotPrefetch(
 
     for (const mediaId of Array.from(new Set(ids))) {
       if (needsAuth) {
-        void warmBlob(mediaRenderPath(eventId, mediaId, "display"));
+        // Resolve the signed URL, then pull the bytes into `lib/mediaUrls.ts`'s durable store — the
+        // same store `useMediaSrc` reads first, so a warmed slide paints on its first render.
+        const key = cacheKeyFor(eventId, mediaId, "display");
+        void resolveSignedUrl(mediaRenderPath(eventId, mediaId, "display")).then((url) => {
+          if (url) void cacheBytes(key, url);
+        });
       } else {
-        warmImage(mediaRenderUrl(eventId, mediaId, "display"));
+        warmHttpCache(mediaRenderUrl(eventId, mediaId, "display"));
       }
     }
     // `revision` is in the deps because a rewritten programme is a different set of slides even at

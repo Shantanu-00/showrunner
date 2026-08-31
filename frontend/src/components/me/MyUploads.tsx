@@ -115,7 +115,7 @@ function UploadThumb({ eventId, media }: { eventId: string; media: MediaDoc }) {
     <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 glass-card bg-black/40 border border-white/10">
       {src ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt="" className="w-full h-full object-cover" />
+        <img src={src} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
       ) : (
         <div className="w-full h-full skeleton-shimmer" />
       )}
