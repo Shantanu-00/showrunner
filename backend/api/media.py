@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Header, Path, Query, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from schemas.common import Visibility
 from shared import errors, fs, gcs, log
@@ -67,9 +67,26 @@ async def media_render(
     eventId: str = Path(min_length=1, max_length=128),
     mediaId: str = Path(min_length=1, max_length=64),
     variant: str = Query(default="display"),
+    json: bool = Query(
+        default=False,
+        description="return {url, expiresInSec} instead of a 302 — the browser-fetch path",
+    ),
     authorization: str | None = Header(default=None),
 ) -> Response:
-    """302 to a short-lived signed URL for `variant` ('thumb' or 'display'). See module docstring."""
+    """302 to a short-lived signed URL for `variant` ('thumb' or 'display'). See module docstring.
+
+    `?json=1` returns that same URL in a body instead of redirecting, and it exists because of a
+    defect the 302 cannot avoid. A caller that needs a token here — every ring above `public`, and
+    *everything* on an invite-only event — has to send `Authorization`, which makes the request
+    non-simple, so the browser preflights it; the 302 then sends that preflighted request on to
+    `storage.googleapis.com`, and a bucket CORS policy cannot allow the `Authorization` header
+    (`deploy/buckets.sh` lists response headers, not request ones). The preflight fails, the fetch
+    is blocked, and every private thumbnail renders as an empty tile — which is exactly what a
+    guest's own matched album looked like.
+
+    Handing back the URL splits the two hops: the *authorized* one talks only to this API (one
+    preflight it can answer), and the *bytes* hop is then a plain `<img src>` — no header, no
+    preflight, no CORS involvement at all. It is also faster, and cacheable by the browser."""
     field = _VARIANT_FIELD.get(variant)
     if field is None:
         raise errors.bad_request("BAD_VARIANT", "variant must be 'thumb' or 'display'")
@@ -109,4 +126,6 @@ async def media_render(
         bucket, path, ttl_minutes=RENDER_URL_TTL_MINUTES, response_type="image/webp"
     )
     log.info("media_render_served", event_id=eventId, media_id=mediaId, variant=variant)
+    if json:
+        return JSONResponse({"url": url, "expiresInSec": RENDER_URL_TTL_MINUTES * 60})
     return RedirectResponse(url, status_code=302)

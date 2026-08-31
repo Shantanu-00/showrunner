@@ -40,7 +40,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Path, Query, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from schemas.common import Visibility
 from schemas.reel import ReelPersona, ReelStatus
@@ -75,6 +75,7 @@ async def reel_video(
     eventId: str = Path(min_length=1, max_length=128),
     reelId: str = Path(min_length=1, max_length=64),
     download: bool = Query(False, description="serve as an attachment (the wrap panel's download)"),
+    json: bool = Query(False, description="return {url} instead of a 302 — the browser-fetch path"),
     authorization: str | None = Header(default=None),
 ) -> Response:
     """302 to a short-lived signed URL for the rendered file. See the module docstring for why.
@@ -125,6 +126,11 @@ async def reel_video(
         attachment_filename=f"showrunner-{reelId}.mp4" if download else None,
     )
     log.info("reel_video_served", event_id=eventId, reel_id=reelId, published=published)
+    if json:
+        # Same split as `api/media.py::media_render`'s: a caller that must send a token cannot follow
+        # this redirect (its preflight dies on the GCS hop), so it asks for the URL and puts it in a
+        # `<video src>` — which needs no header and therefore no CORS at all.
+        return JSONResponse({"url": url, "expiresInSec": VIDEO_URL_TTL_MINUTES * 60})
     # 302 rather than 307: this is a GET and the redirect target is a different resource, and every
     # browser and every TV webview handles a 302 on a <video src> without a preflight.
     return RedirectResponse(url, status_code=302)

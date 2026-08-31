@@ -41,7 +41,7 @@ import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, Path, Query, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from google.cloud import firestore
 
 from schemas.common import BoundingBox, ConsentRing
@@ -980,6 +980,7 @@ async def list_claims(
 async def claim_selfie(
     eventId: str = Path(min_length=1, max_length=128),
     claimId: str = Path(min_length=1, max_length=64),
+    json: bool = Query(default=False, description="return {url} instead of a 302"),
     principal: Principal = Depends(caller),
 ) -> Response:
     """302 to a short-lived signed URL for the enrollment selfie on a review card.
@@ -988,6 +989,12 @@ async def claim_selfie(
     one way this differs from `api/media.py::media_render`, whose public branch exists because a
     kiosk is a television. This is a biometric submitted for a decision; there is no viewer of it
     other than the host.
+
+    Which is also why `?json=1` is not optional here but the *only* way this ever reaches a screen:
+    host-only means a bearer token, a bearer token means a preflight, and a preflight cannot survive
+    the 302 onto `storage.googleapis.com` (see `api/media.py::media_render`). The host console was
+    fetching this and getting a CORS failure every time — a review queue that showed no selfie to
+    review. It hands back the URL and the console puts it straight in an `<img src>`.
     """
     _require_host(principal, eventId)
     snap = fs.claim_audit_ref(eventId, claimId).get()
@@ -1005,6 +1012,8 @@ async def claim_selfie(
         response_type="image/jpeg",
     )
     log.info("claim_selfie_served", event_id=eventId, claim=claimId, host=principal.uid)
+    if json:
+        return JSONResponse({"url": url, "expiresInSec": CLAIM_REVIEW_URL_TTL_MINUTES * 60})
     return RedirectResponse(url, status_code=302)
 
 
