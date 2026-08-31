@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Camera, Video, Sparkles, Lock, ShieldAlert, CheckCircle2, RotateCw } from "lucide-react";
+import { Camera, Video, Sparkles, Lock, ShieldAlert, CheckCircle2, RotateCw, X } from "lucide-react";
 import { listenMedia } from "@/lib/firestore";
 import type { DoneLedgerEntry, MediaDoc, OutboxItem } from "@/lib/types";
-import { retryItem } from "@/lib/uploadManager";
+import { discardItem, retryItem } from "@/lib/uploadManager";
 
 const MAX_DONE_CHIPS = 6;
 
@@ -71,6 +71,7 @@ function ChipShell({
   thumbDataUrl,
   failed,
   onRetry,
+  onDiscard,
 }: {
   isPending: boolean;
   label: string;
@@ -79,6 +80,7 @@ function ChipShell({
   thumbDataUrl?: string;
   failed?: boolean;
   onRetry?: () => void;
+  onDiscard?: () => void;
 }) {
   return (
     <div className="flex flex-col items-center gap-1.5 shrink-0">
@@ -124,15 +126,30 @@ function ChipShell({
         {label}
       </span>
 
-      {failed && onRetry && (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="flex items-center gap-1 text-[10px] font-medium text-[var(--accent)] hover:underline"
-        >
-          <RotateCw className="w-2.5 h-2.5" />
-          <span>Retry</span>
-        </button>
+      {failed && (
+        <div className="flex items-center gap-2">
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="flex items-center gap-1 text-[10px] font-medium text-[var(--accent)] hover:underline"
+            >
+              <RotateCw className="w-2.5 h-2.5" />
+              <span>Retry</span>
+            </button>
+          )}
+          {onDiscard && (
+            <button
+              type="button"
+              onClick={onDiscard}
+              aria-label="Remove this upload from the tray"
+              className="flex items-center gap-1 text-[10px] font-medium text-[var(--ink-muted)] hover:text-white hover:underline"
+            >
+              <X className="w-2.5 h-2.5" />
+              <span>Dismiss</span>
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -147,14 +164,17 @@ export function Filmstrip({
   doneItems: DoneLedgerEntry[];
   eventId: string;
 }) {
-  const failed = items.filter((i) => i.state === "failed");
-  const pending = items.filter((i) => i.state !== "failed");
+  // Only this event's sends. An outbox is global (one queue drains every event this browser has
+  // uploaded to), but a tray that shows another event's photos under *this* gallery is just noise.
+  const mine = items.filter((i) => i.eventId === eventId);
+  const failed = mine.filter((i) => i.state === "failed");
+  const pending = mine.filter((i) => i.state !== "failed");
   const recentDone = doneItems.slice(-MAX_DONE_CHIPS);
 
   if (failed.length === 0 && pending.length === 0 && recentDone.length === 0) return null;
 
   return (
-    <div className="flex gap-3 overflow-x-auto px-4 py-3 bg-black/40 backdrop-blur-md border-t border-b border-white/5">
+    <div className="flex gap-3 overflow-x-auto scroll-slim px-4 py-3 bg-black/40 backdrop-blur-md border-t border-b border-white/5">
       {failed.map((item) => (
         <ChipShell
           key={item.clientMediaId}
@@ -163,6 +183,7 @@ export function Filmstrip({
           label="Failed"
           kind={item.kind}
           onRetry={() => void retryItem(item.clientMediaId)}
+          onDiscard={() => void discardItem(item.clientMediaId)}
         />
       ))}
       {pending.map((item) => (

@@ -71,6 +71,11 @@ export async function getItem(clientMediaId: string): Promise<OutboxItem | undef
   return db.get(STORE, clientMediaId);
 }
 
+export async function remove(clientMediaId: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(STORE, clientMediaId);
+}
+
 export async function putItem(item: OutboxItem): Promise<void> {
   const db = await getDb();
   await db.put(STORE, item);
@@ -88,16 +93,36 @@ export async function updateState(
 }
 
 /** Moves a completed item off the hot outbox into a small done ledger for instant UI. */
-export async function markDone(clientMediaId: string, thumbDataUrl: string): Promise<void> {
+export async function markDone(
+  clientMediaId: string,
+  thumbDataUrl: string,
+  eventId: string
+): Promise<void> {
   const db = await getDb();
-  const entry: DoneLedgerEntry = { clientMediaId, thumbDataUrl };
+  const entry: DoneLedgerEntry = { clientMediaId, thumbDataUrl, eventId, doneAt: Date.now() };
   const tx = db.transaction([STORE, DONE_LEDGER_STORE], "readwrite");
   await tx.objectStore(DONE_LEDGER_STORE).put(entry);
   await tx.objectStore(STORE).delete(clientMediaId);
   await tx.done;
 }
 
-export async function listDoneLedger(): Promise<DoneLedgerEntry[]> {
+/** How long a finished upload stays in the send tray. It is a *progress* strip, not a history: past
+ * that window the photograph's home is the gallery and the album, both of which already show it. */
+const DONE_TTL_MS = 30 * 60 * 1000;
+
+/** Entries for this event that finished recently, newest last. Everything older is deleted on the way
+ * past — a ledger that only grows is what made every app open replay a completed trip. */
+export async function listDoneLedger(eventId?: string): Promise<DoneLedgerEntry[]> {
   const db = await getDb();
-  return db.getAll(DONE_LEDGER_STORE);
+  const all = (await db.getAll(DONE_LEDGER_STORE)) as DoneLedgerEntry[];
+  const cutoff = Date.now() - DONE_TTL_MS;
+  const stale = all.filter((e) => (e.doneAt ?? 0) < cutoff);
+  if (stale.length) {
+    const tx = db.transaction(DONE_LEDGER_STORE, "readwrite");
+    await Promise.all(stale.map((e) => tx.store.delete(e.clientMediaId)));
+    await tx.done;
+  }
+  return all
+    .filter((e) => (e.doneAt ?? 0) >= cutoff && (!eventId || !e.eventId || e.eventId === eventId))
+    .sort((a, b) => (a.doneAt ?? 0) - (b.doneAt ?? 0));
 }

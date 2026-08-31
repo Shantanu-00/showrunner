@@ -19,6 +19,18 @@ import { MeTab } from "@/components/me/MeTab";
 
 const SAMPLE_FILES = ["sample-1.jpg", "sample-2.jpg", "sample-3.jpg"];
 
+/** Mirrors `UPLOAD_OPEN_STATUSES` (`backend/api/uploads.py`) — the only two statuses `POST
+ * /uploads` actually accepts. Membership can exist on a `draft` event (a host previewing their own
+ * invite, spec 02 §1's `JOINABLE_STATUSES`), so without this a guest can join and reach the camera
+ * tab well before the door to `/uploads` itself is open, and the first sign of that used to be a
+ * bare 403 in the console after picking photos. */
+function uploadsClosedMessage(status: EventPublicInfo["status"]): string | null {
+  if (status === "live" || status === "wrapping" || status === undefined) return null;
+  if (status === "draft") return "This event hasn't started yet — check back once the host goes live.";
+  if (status === "paused") return "Uploads are paused right now — check back shortly.";
+  return "This event has wrapped — uploads are closed.";
+}
+
 async function loadSampleFiles(): Promise<File[]> {
   const loaded = await Promise.all(
     SAMPLE_FILES.map(async (name) => {
@@ -128,7 +140,6 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
       (info) => {
         if (cancelled) return;
         setEventInfo(info);
-        if (info.templateId) document.documentElement.dataset.theme = info.templateId;
         if (info.activeStage) document.documentElement.dataset.stage = info.activeStage;
       },
       () => {}
@@ -141,11 +152,13 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
   useEffect(() => {
     const refresh = () => {
       void outbox.listAll().then(setItems);
-      void outbox.listDoneLedger().then(setDoneItems);
+      // Scoped to this event, and pruned to the last half hour inside `listDoneLedger` — the send
+      // tray reports the send in progress, not every upload this browser has ever made.
+      void outbox.listDoneLedger(eventId).then(setDoneItems);
     };
     refresh();
     return onOutboxChange(refresh);
-  }, []);
+  }, [eventId]);
 
   useEffect(() => {
     setOnline(navigator.onLine);
@@ -159,10 +172,12 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
     };
   }, []);
 
+  const uploadsClosed = uploadsClosedMessage(eventInfo?.status);
+
   function onCameraTabTap(bountyId: string | null = null) {
     setPendingBountyId(bountyId);
     setTab("camera");
-    fileInputRef.current?.click();
+    if (!uploadsClosed) fileInputRef.current?.click();
   }
 
   function onShootNow(bountyId: string) {
@@ -210,22 +225,48 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
         </div>
       )}
 
-      <header className="px-5 pt-6 pb-3 max-w-4xl mx-auto">
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="p-1 rounded-md bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20">
-            <Sparkles className="w-3.5 h-3.5" />
-          </span>
-          <span className="text-[11px] font-mono uppercase tracking-[0.18em] text-[var(--accent)] font-semibold">
-            Showrunner Director
-          </span>
+      <header className="px-4 sm:px-6 pt-4 pb-2.5 max-w-4xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/25 text-[10px] font-mono uppercase tracking-[0.16em] font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Showrunner Director</span>
+            </span>
+          </div>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--text-primary)] text-gold-gradient">
+            {eventInfo?.name ?? "Event Gallery"}
+          </h1>
         </div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)]">
-          {eventInfo?.name ?? "Event Gallery"}
-        </h1>
-        <p className="text-xs mt-1 text-[var(--text-secondary)] leading-relaxed max-w-xl">
-          AI media director actively curating, indexing faces, and projecting highlights in real time.
+        <p className="text-[11px] sm:text-xs text-[var(--text-secondary)] leading-relaxed max-w-md sm:text-right">
+          Autonomous AI directing, live face indexing &amp; real-time projection.
         </p>
       </header>
+
+      {membership?.status === "error" && (
+        // `error` used to render nothing at all: no card, no gallery, no explanation — a header over an
+        // empty screen, because only `needs-code`/`refused` had a branch and only `member` set
+        // `authReady`. A cold start or a dropped connection at the door is the most likely failure of
+        // the whole surface and it was the one with no words.
+        <section className="px-5 max-w-md mx-auto mt-10">
+          <div className="p-7 rounded-2xl glass-card border border-[var(--hairline)] text-center">
+            <div className="w-14 h-14 rounded-full bg-[var(--accent-glow)] flex items-center justify-center text-[var(--accent)] mx-auto mb-4">
+              <WifiOff className="w-7 h-7" />
+            </div>
+            <h2 className="font-[family-name:var(--font-display)] text-xl text-[var(--ivory)] mb-2">
+              Couldn&rsquo;t reach the event
+            </h2>
+            <p className="text-xs text-[var(--ink-muted)] mb-5 leading-relaxed">{membership.message}</p>
+            <button
+              type="button"
+              disabled={joining}
+              onClick={() => void onSubmitCode()}
+              className="btn-primary w-full py-3 px-6 text-sm disabled:opacity-50"
+            >
+              {joining ? "Trying again…" : "Try again"}
+            </button>
+          </div>
+        </section>
+      )}
 
       {membership && (membership.status === "needs-code" || membership.status === "refused") && (
         // The door, closed. An invite-only event asks for the code the host shared; a full or wrapped
@@ -293,14 +334,20 @@ export function JoinShell({ eventId: fallbackEventId }: { eventId: string }) {
             <p className="text-xs text-[var(--ink-muted)] mb-6 max-w-xs">
               Take photos directly or pick from your camera roll. The director scores and shares according to your consent settings.
             </p>
-            <button
-              type="button"
-              onClick={() => onCameraTabTap()}
-              className="btn-primary w-full py-3 px-6 flex items-center justify-center gap-2 text-sm"
-            >
-              <UploadCloud className="w-4 h-4 stroke-[2.2]" />
-              <span>Select Photos & Videos</span>
-            </button>
+            {uploadsClosed ? (
+              <p className="w-full py-3 px-6 rounded-full text-sm font-medium bg-white/5 border border-[var(--hairline)] text-[var(--ink-muted)]">
+                {uploadsClosed}
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onCameraTabTap()}
+                className="btn-primary w-full py-3 px-6 flex items-center justify-center gap-2 text-sm"
+              >
+                <UploadCloud className="w-4 h-4 stroke-[2.2]" />
+                <span>Select Photos & Videos</span>
+              </button>
+            )}
           </div>
         </section>
       )}

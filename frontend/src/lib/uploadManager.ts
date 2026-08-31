@@ -1,6 +1,21 @@
 import * as outbox from "./outbox";
-import { registerUploadBatch, refreshUploadUrl } from "./api";
+import { ApiError, registerUploadBatch, refreshUploadUrl } from "./api";
 import type { OutboxItem } from "./types";
+
+/** Backend codes that mean "this will never succeed by retrying" (`api/uploads.py`,
+ * `api/membership.py`) — a guest whose event is still `draft` or has wrapped would otherwise burn
+ * every one of `MAX_ATTEMPTS` with backoff before the outbox gives up and says so. */
+const NON_RETRYABLE_CODES = new Set([
+  "EVENT_NOT_LIVE",
+  "GRACE_ENDED",
+  "EVENT_CLOSED",
+  "GUEST_BANNED",
+  "NOT_A_MEMBER",
+  "NOT_OWNER",
+  "ALREADY_PROCESSED",
+  "UNSUPPORTED_TYPE",
+  "TOO_LARGE",
+]);
 
 const MAX_CONCURRENT = 3;
 const MAX_ATTEMPTS = 5;
@@ -82,7 +97,8 @@ async function issueUrls(items: OutboxItem[]): Promise<void> {
 async function bumpFailure(item: OutboxItem, err: unknown): Promise<void> {
   const attempts = item.attempts + 1;
   const lastError = err instanceof Error ? err.message : String(err);
-  if (attempts >= MAX_ATTEMPTS) {
+  const permanent = err instanceof ApiError && !!err.code && NON_RETRYABLE_CODES.has(err.code);
+  if (permanent || attempts >= MAX_ATTEMPTS) {
     await outbox.updateState(item.clientMediaId, "failed", { attempts, lastError });
   } else {
     await outbox.updateState(item.clientMediaId, "queued", { attempts, lastError });
@@ -158,11 +174,30 @@ async function uploadOne(item: OutboxItem): Promise<void> {
       await uploadPhoto(fresh);
     }
     const thumbDataUrl = fresh.kind === "photo" ? await fileToDataUrl(fresh.blob) : "";
-    await outbox.markDone(item.clientMediaId, thumbDataUrl);
+    await outbox.markDone(item.clientMediaId, thumbDataUrl, fresh.eventId);
   } catch (err) {
     const latest = (await outbox.getItem(item.clientMediaId)) ?? item;
     await bumpFailure(latest, err);
     return;
+  }
+  notify();
+}
+
+/** `uploading` means "a PUT is in flight *in this document*", and a document does not survive a
+ * reload — so an item left in that state by a closed tab, a killed PWA or a dropped connection was
+ * unreachable forever: `drain` only ever picks up `url_issued`, so nothing retried it and nothing
+ * failed it. On screen that is a chip that says "Uploading…" for the rest of the event.
+ *
+ * Nothing else can be in `uploading` at the moment a drain starts (the flag makes drains exclusive,
+ * and `uploadOne` sets the state itself), so every one of them is a leftover and safe to rewind. */
+async function reviveStalled(): Promise<void> {
+  const items = await outbox.listAll();
+  const stalled = items.filter((i) => i.state === "uploading");
+  if (stalled.length === 0) return;
+  for (const item of stalled) {
+    // Back to whichever step it can resume from: a still-valid signed URL means re-PUT, no URL at
+    // all means re-register. `ensureFreshUrl` handles an expired one from there.
+    await outbox.updateState(item.clientMediaId, item.signedUrl || item.resumableSessionUri ? "url_issued" : "queued");
   }
   notify();
 }
@@ -173,6 +208,7 @@ export async function drain(): Promise<void> {
   if (draining) return;
   draining = true;
   try {
+    await reviveStalled();
     let items = await outbox.listAll();
     await issueUrls(items);
 
@@ -210,6 +246,13 @@ export function installResumeTriggers(): () => void {
     clearInterval(interval);
     triggersInstalled = false;
   };
+}
+
+/** Give up on one item and take it off the send tray. A permanently failed upload the guest has read
+ * is not information any more, and there was no way at all to dismiss one. */
+export async function discardItem(clientMediaId: string): Promise<void> {
+  await outbox.remove(clientMediaId);
+  notify();
 }
 
 export async function retryItem(clientMediaId: string): Promise<void> {

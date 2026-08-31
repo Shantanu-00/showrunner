@@ -41,6 +41,12 @@ export interface OutboxItem {
 export interface DoneLedgerEntry {
   clientMediaId: string;
   thumbDataUrl: string;
+  /** Which event this upload belonged to, and when it finished. Both exist so the send tray can be
+   * *about the send that is happening* — without them it replayed every photo this browser had ever
+   * uploaded, to any event, every time the app opened: a row of "Live on wall" chips under a gallery
+   * that already showed those same photographs. `lib/outbox.ts` prunes on them too. */
+  eventId?: string;
+  doneAt?: number;
 }
 
 // POST /v1/events/{eventId}/uploads
@@ -201,7 +207,6 @@ export interface EventPublicInfo {
   status?: "draft" | "live" | "paused" | "wrapping" | "wrapped";
   timezone?: string;
   activeStage?: string | null;
-  templateId?: string;
   /** Local dates ("YYYY-MM-DD") in `timezone`, for multi-day (timeline-first) events. Both are
    * `null` on undated events — see `lib/eventTime.ts`. */
   startsOn?: string | null;
