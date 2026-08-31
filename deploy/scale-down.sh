@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cost brake between work sessions: drop every service to min-instances=0 and pause the queues.
 #
-# ** This is NOT the judging-month posture — use deploy/judge-mode.sh for that. **
+# ** This is NOT the judging-month posture — use deploy/demo-mode.sh for that. **
 # Pausing the queues is right when nobody is using the system and silently fatal when someone is:
 # an uploaded photo stops at `stages={'thumb': ...}`, never reaches `status='indexed'`, and so never
 # reaches any public surface, while the guest's filmstrip reads "The Curator is judging your shot..."

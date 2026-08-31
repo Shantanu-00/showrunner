@@ -8,6 +8,7 @@ import { joinUrl, slotHoldSec } from "@/lib/kiosk";
 import { dayLabelFromIndex } from "@/lib/eventTime";
 import { useAccessMode } from "@/lib/eventAccess";
 import { useSlotPrefetch } from "@/lib/kioskPrefetch";
+import { useAmbience } from "@/lib/useAmbience";
 import { SlotRenderer } from "./SlotRenderer";
 import { LiveBroadcastHeader, DemoQrBadge, LiveStatusGlyph } from "./Overlays";
 
@@ -185,6 +186,15 @@ export function KioskShow({
   }
   const activeSlot =
     slots.length > 0 && hasPainted.current ? slots[paintedIndex.current % slots.length] ?? null : null;
+
+  // The wall's own soundtrack. A photo wall used to be silent — minutes of stillness between premieres,
+  // in a room whose whole premise is that something is happening. This is a Lyria bed composed from what
+  // is actually on screen (dominant scene setting, crowd size, the host's stage theme and label) and
+  // cached per mood, so re-opening the wall costs nothing (`backend/publisher/ambience.py`).
+  //
+  // It ducks for a reel, which is not a nicety: a premiere carries its own Lyria score, and two
+  // generated soundtracks over each other is worse than either alone.
+  useAmbience(eventId, { duck: activeSlot?.type === "reel" });
 
   const activeStageInfo = eventInfo?.stages?.find((s) => s.stageId === shown?.activeStageId);
   const activeDayLabel = dayLabelFromIndex(activeStageInfo?.day);

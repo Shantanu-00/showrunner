@@ -233,7 +233,7 @@ async def _tick_one(
 ) -> tuple[dict[str, Any], bool]:
     """Lease → work → release, for exactly one event. Returns `(report, ok)`.
 
-    Extracted so the scheduled fan-out and the `/judge` page's manual override run the *same* code
+    Extracted so the scheduled fan-out and the tour page's manual override run the *same* code
     under the *same* lease. A second path that ticked an event without taking `ticks/{eventId}` would
     void spec 05 §1's only guarantee — that two concurrent ticks cannot double-issue a bounty — and it
     would do so on the one event a judge is looking at.
@@ -355,7 +355,7 @@ def _pulse(**fields: Any) -> None:
     """One heartbeat document, written by every tick whether or not it had anything to do.
 
     Autonomy that cannot be checked is a claim rather than a property, and Cloud Logging is the
-    wrong place to check it from — a log entry cannot be read by the `/judge` page's next-tick
+    wrong place to check it from — a log entry cannot be read by the tour page's next-tick
     countdown (EXECUTION-PLAN §7e) and it cannot be asserted by a smoke test without log-reading
     credentials. So the tick leaves a mark in Firestore: `platform/tickPulse` is what proves the
     Scheduler is firing, what the demo's 30-second interleave is measured against, and what a
@@ -404,11 +404,11 @@ def _interleave(demo: bool, interleave: bool, request: Request) -> bool:
     return queued is not None
 
 
-# ---------------------------------------------------------------- the /judge page's manual override
+# ---------------------------------------------------------------- the tour page's manual override
 
 demo_router = APIRouter(prefix="/v1/events", tags=["demo"])
 
-#: How often the `/judge` page's override may actually spend a director call, per event. Not
+#: How often the tour page's override may actually spend a director call, per event. Not
 #: spec-pinned; flagged in HANDOFF §9. Each forced tick is a real `gemini-3.7-flash` call, so an
 #: unthrottled button on a public page is a money path. Ninety seconds is short enough that a judge who
 #: presses it gets a tick rather than a refusal, and long enough that holding the button down cannot
@@ -425,7 +425,7 @@ async def force_demo_tick(
 
     This exists for dead air and nothing else. EXECUTION-PLAN §7e row 11 is explicit that a judge
     pressing a button seconds before reading *"without human intervention"* is a rules-§4 "must
-    function as depicted" contradiction — so the `/judge` page presents the Cloud Scheduler countdown
+    function as depicted" contradiction — so the tour page presents the Cloud Scheduler countdown
     as the cadence and labels this, on screen, as a manual override. What makes it safe to expose at
     all is that it is bounded three ways:
 

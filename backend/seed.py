@@ -164,7 +164,7 @@ def ensure_event(
             sensitivityProfile=SensitivityProfile(),
             culturalGlossary=["haldi", "sangeet", "kanyadaan", "baraat", "mangalsutra"],
         ),
-        # `autoPromoteEnrollees` stays at its default `False` even on the judge event: it is the one
+        # `autoPromoteEnrollees` stays at its default `False` even on the standing demo event: it is the one
         # demo flag that is a code branch no real host can trigger, and the seeded cast's tier-0/1
         # people demonstrate `vipWeight` without putting that branch on a judge's own path.
         demoConfig=DemoConfig(enabled=True, compressedTimeline=True),

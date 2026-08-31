@@ -13,7 +13,7 @@
 # So: queues stay running, the two services that hold state stay warm, and the money is saved on the
 # director's *cadence* instead — which is where it actually is.
 #
-#   ./deploy/judge-mode.sh          # enter judging posture
+#   ./deploy/demo-mode.sh          # enter judging posture
 #   ./deploy/up.sh                  # back to full demo posture (restores */2 and the demo job)
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -25,7 +25,7 @@ step "Director cadence: ${JUDGE_TICK_SCHEDULE} (from */2)"
 # month, out of a $150 credit grant that also has to cover everything else. At */15 that is ≈$6.
 #
 # What a judge loses is only the *wait*: the tick is still a real unprompted Cloud Scheduler
-# invocation, and the `/judge` countdown shows the true schedule. This is exactly why that page needs
+# invocation, and the tour countdown shows the true schedule. This is exactly why that page needs
 # both the countdown and a clearly-labelled manual override — a 15-minute cadence without an escape
 # hatch is dead air, and an override without a visible schedule beside it is a button pretending to be
 # autonomy.
@@ -77,7 +77,7 @@ gcloud run services update publisher --region "${REGION}" --project "${PROJECT_I
   --min-instances 1 --no-cpu-throttling --quiet >/dev/null && note "publisher: min-instances=1, no-cpu-throttling"
 
 # Everything else scales to zero. `worker-face` is the one that hurts (~29.6 s cold, 326 MB model) and
-# its answer is `GET /warmup`, which the /judge page fires on load — by the time a judge has read the
+# its answer is `GET /warmup`, which the tour page fires on load — by the time a visitor has read the
 # tour and tapped upload, the container is warm. min-instances=1 (~$15/mo) is the fallback if the hook
 # proves insufficient in the weekly deep check.
 for svc in intake dlq worker-curate worker-face worker-safety worker-video-prep; do

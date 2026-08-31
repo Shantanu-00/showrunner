@@ -150,7 +150,7 @@ def usd(event_id: str) -> float:
 def over_ceiling(event_id: str, event: dict[str, Any]) -> tuple[bool, float, float]:
     """`(is_over, spend, ceiling)` for a `public`-class event (spec 11 §1.4).
 
-    Only `public` events have a ceiling — the judge-mode event and the deployer's own dev events are a
+    Only `public` events have a ceiling — the standing demo event and the deployer's own dev events are a
     different class and never compete for a budget they were never given (spec 11 §1.1). Any other class
     reports "not over" with a ceiling of 0.0, so a caller cannot accidentally pause the demo.
     """

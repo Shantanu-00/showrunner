@@ -328,7 +328,7 @@ def check_program() -> None:
     # The bug this pins down is a *product* one that every individual spec clause got right: spec 05 §3
     # escalates an unfulfilled bounty at half-life, spec 04 §4 gives an escalated one the whole screen,
     # and neither says when that claim lapses. On an event where nobody submits — a real wedding always
-    # has someone, the judge event hours apart has nobody — escalate → expire → reissue owns the wall
+    # has someone, the standing demo event hours apart has nobody — escalate → expire → reissue owns the wall
     # forever. Observed on `dev_demo`: 12 of 16 bounties ended with `kioskTakeover: true`.
     fresh_at = now - dt.timedelta(minutes=2)
     stale_at = now - dt.timedelta(minutes=KIOSK_TAKEOVER_FRESH_MINUTES + 5)

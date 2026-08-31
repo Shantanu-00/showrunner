@@ -279,7 +279,7 @@ def premiere_reel(
 
     `already_premiered` used to end the story — a reel entered the history on the write that first put
     it on screen, so the *next* rebuild dropped it. Rebuilds are driven by the director's nudge and a
-    5-minute fallback, so in practice the next one landed within seconds: measured on `judge_demo`, a
+    5-minute fallback, so in practice the next one landed within seconds: measured live on a demo event, a
     20.4-second film led revision 157 and was gone from revision 158 **3.4 seconds later**. A premiere
     that could not survive its own runtime was not a feature, and every reel this project had rendered
     was pulled off the wall mid-play.

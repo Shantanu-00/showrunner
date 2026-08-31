@@ -72,8 +72,8 @@ paste at setup.
 | **Gemini 3.5 or newer** via Gemini API / Vertex AI | ✅ `gemini-3.5-flash-lite` (perception volume, per-photo) + `gemini-3.7-flash` (director reasoning, itinerary understanding) | `backend/services/gemini.py`, called from `backend/workers/{curate,safety}/agent.py`, `backend/directors/{story,reel}/agent.py`, `backend/api/host.py::_itinerary_agent` |
 | **≥1 Google Agent Framework** | ✅ **ADK v2 (Python)** + **GenAI SDK** — every model call is an ADK `LlmAgent` behind one runner, with an ADK plugin for Model Armor | `backend/services/gemini.py`, `backend/services/armor_plugin.py`, `backend/workers/*/agent.py`, `backend/directors/*/agent.py` |
 | **≥1 GCP infrastructure service** | ✅ **8 Cloud Run services + 1 Cloud Run Job**, Firestore (+ native vector search), Cloud Storage (3 buckets), Eventarc, Cloud Tasks (6 queues), Cloud Scheduler, Cloud Vision, Model Armor, Secret Manager, Cloud Trace | [full service table →](#10-google-cloud-services--used-and-called-in-code) |
-| **Hosted project URL** | ✅ [`showrunner-hq.web.app`](https://showrunner-hq.web.app/) — a real front door (Create · Join · [See how it works](https://showrunner-hq.web.app/how-it-works)). Host-console credentials are in the Devpost testing-instructions field. `/judge` still resolves, as a redirect to `/how-it-works` | live through the judging period |
-| **Architecture diagram** | ✅ at the top of this file and in [§8](#8-architecture); the source is checked in and re-renderable ([`docs/assets/architecture-diagram.html`](docs/assets/architecture-diagram.html) → `scripts/render_architecture_diagram.py`) | `docs/architecture.md` |
+| **Hosted project URL** | ✅ [`showrunner-hq.web.app`](https://showrunner-hq.web.app/) — a real front door (Create · Join · [See how it works](https://showrunner-hq.web.app/how-it-works)). Host-console credentials are in the Devpost testing-instructions field | live through the judging period |
+| **Architecture diagram** | ✅ at the top of this file and in [§8](#8-architecture), plus a 7-page [`architecture.pdf`](docs/assets/architecture.pdf) (p1 one-glance overview, p2–7 low-level design). Sources are checked in and re-renderable ([`architecture-overview.html`](docs/assets/architecture-overview.html) + [`architecture-lld.html`](docs/assets/architecture-lld.html) → `scripts/render_architecture.py`) | `docs/architecture.md` |
 | **Reproducible spin-up instructions** | ✅ [two tiers](#15-spin-up-two-tiers) — **Tier 0 needs no GCP account at all** and still runs **164 real assertions** | `deploy/bootstrap.sh`, `deploy/up.sh`, `Makefile` |
 | **Demo video ≤ 4 min, public, GCP proof** | ✅ {{VIDEO_URL}} — **unedited live execution** plus Cloud Run / Cloud Scheduler / Firestore console proof | — |
 | **Bonus: additional Google AI models** | ✅ **Lyria 3** (every reel's soundtrack) · **Veo 3.1 Fast** (cinematic reel opener) · **Gemma 4** (private taste memos) | [bonus table →](#12-bonus-google-ai-models--each-with-a-real-job) |
@@ -483,13 +483,13 @@ backend/
   services/       thin SDK wrappers: gemini (ADK runner), vision, armor, armor_plugin
 frontend/src/
   app/            routes: / · /host · /host/[eventId] · /join · /join/[eventId] · /kiosk/[eventId]
-                  · /how-it-works · /judge (redirect) · /events/[eventId]/claim
+                  · /how-it-works · /events/[eventId]/claim
   components/     host · join · gallery · kiosk · me · consent · claim · judge · atoms
   lib/            API client, Firestore listeners, IndexedDB outbox, upload manager, push,
                   kiosk prefetch, event-time helpers
   design/         spec-12 design tokens — every component reads these, none hard-codes a colour
 deploy/           idempotent gcloud scripts: bootstrap, sa, buckets, queues, firestore, eventarc,
-                  scheduler, render, up, scale-down, judge-mode
+                  scheduler, render, up, scale-down, demo-mode
 scripts/          seeding (seed_trip = the 5-day trip, seed_global_event = the standing tour event),
                   risk probes, and one smoke script per subsystem
 eval/             golden-fixture harness (`make eval`) — 25 fixtures, 169 checks
@@ -847,9 +847,12 @@ or named, never softened**.
 - **Demo dataset**: only owned/consented photographs and AI-generated cast members. **All music is
   Lyria-generated.** No third-party trademarks, logos or licensed music appear anywhere.
 - **Built entirely within the Submission Period** (August 2026). No pre-existing code incorporated.
-- **The architecture diagram** is generated from a checked-in HTML source
-  (`docs/assets/architecture-diagram.html` → `scripts/render_architecture_diagram.py`), so it is a
-  reproducible artifact rather than a one-off export, and it reflects the deployed system.
+- **The architecture diagram** is generated from checked-in HTML sources
+  (`docs/assets/architecture-overview.html` and `architecture-lld.html` →
+  `scripts/render_architecture.py`), so it is a reproducible artifact rather than a one-off export.
+  Page 1 of the PDF and the image above are rasterized from the same PDF page, and every box on it
+  maps to something actually deployed — what is specified but not built is listed separately, on
+  page 6 of the PDF.
 
 ---
 

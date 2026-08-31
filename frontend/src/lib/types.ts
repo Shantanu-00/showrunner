@@ -240,7 +240,7 @@ export interface EventPublicInfo {
    * bare `<img src>`, because `api/media.py` refuses the unauthenticated branch on an invite-only
    * event (`lib/eventAccess.ts`, `lib/MediaImg.tsx`). */
   accessMode?: "open" | "invite";
-  /** The Story Director's heartbeat, for the `/judge` page's next-tick countdown. `ledger/` is
+  /** The Story Director's heartbeat, for the tour page's next-tick countdown. `ledger/` is
    * host-only in `firestore.rules` and a judge is anonymous, so this is the read path HANDOFF §4.22
    * prescribed instead of a rules exception. `cadenceSec` is derived **server-side** from
    * `event.class` so the class itself never leaks to a guest. */

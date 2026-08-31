@@ -13,7 +13,7 @@ uploads every fixture through the same `POST /uploads` -> signed PUT -> Eventarc
 Guardian path a real guest's phone would use — never a direct Firestore write (spec 09 §5).
 
 The stable event id is `japan_trip_2026`. Re-running wipes and reseeds it exactly like
-`backend/seed.py --reset-only` does; the wedding demo events (`dev_demo`, `judge_demo`) are never
+`backend/seed.py --reset-only` does; the wedding demo events (`dev_demo`, `global_demo`) are never
 touched by this script.
 
 Deliberate story beat: today (Day 4) has no photo anywhere with 3 or more people in it. Every

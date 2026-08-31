@@ -94,7 +94,7 @@ class EventStage(BaseModel):
 
 
 class DemoConfig(BaseModel):
-    """Spec 09 §5. Disclosed on the `/judge` page itself, not merely in the README — demo
+    """Spec 09 §5. Disclosed on the tour page itself, not merely in the README — demo
     conveniences, never a hidden thumb (spec 12 §1's design consequence for the architect judge).
 
     `publicFloor` used to live here as a `protected_demo`-only override of `Event.publicFloor`. It was
@@ -103,14 +103,14 @@ class DemoConfig(BaseModel):
     `shared/visibility.py::public_floor` for the full reasoning.
 
     `autoPromoteEnrollees` survives, gated to `protected_demo` in the enrollment handler, but the
-    seeded judge event ships it **off**: its only purpose is to make a judge feel personally featured,
+    seeded demo event ships it **off**: its only purpose is to make a visitor feel personally featured,
     the seeded cast's tier-0/1 people demonstrate `vipWeight` just as well, and leaving it on would
     put a judge-conditional branch back on the tour's own path.
     """
 
     enabled: bool = False
     compressedTimeline: bool = False
-    autoPromoteEnrollees: bool = False  # honoured only when class == protected_demo; off on judge_demo
+    autoPromoteEnrollees: bool = False  # honoured only when class == protected_demo; off on global_demo
 
 
 class EventAccess(BaseModel):

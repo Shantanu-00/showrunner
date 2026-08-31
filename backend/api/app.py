@@ -33,6 +33,7 @@ from .media import router as media_router
 from .membership import _join_code_router as join_code_router, router as membership_router
 from .moderation import router as moderation_router
 from .push import router as push_router
+from .ambience import router as ambience_router
 from .reels import router as reels_router
 from .sweep import router as sweep_router
 from .uploads import router as uploads_router
@@ -68,6 +69,8 @@ app.include_router(membership_router)
 app.include_router(join_code_router)
 app.include_router(moderation_router)
 app.include_router(reels_router)
+# The wall's own Lyria bed (`publisher/ambience.py`). Same exposure shape as the reel video above.
+app.include_router(ambience_router)
 # Web Push opt-in. After `membership_router` because it requires the claim that one mints: a guest
 # subscribes to the missions of an event they were admitted to, and to no other.
 app.include_router(push_router)
@@ -77,7 +80,7 @@ app.include_router(internal_router)
 # `POST /internal/sweep` — the hourly orphan-sweep (spec 09 §2). Same posture as the router above:
 # infrastructure calling infrastructure, authenticated in the handler (`api/sweep.py::_authorize`).
 app.include_router(sweep_router)
-# The `/judge` page's labelled manual override. Under /v1 and guest-authenticated, unlike the
+# The tour page's labelled manual override. Under /v1 and guest-authenticated, unlike the
 # Scheduler's own endpoint above — but scoped to `class=='protected_demo'` and rate-limited, so it can
 # never touch a real event (backend/api/internal.py::force_demo_tick).
 app.include_router(demo_router)
@@ -99,7 +102,7 @@ _WARMUP_TARGETS = ("face_url", "curate_url", "safety_url")
 
 @app.get("/warmup")
 async def warmup() -> dict[str, object]:
-    """Pre-warm the hot path. Called fire-and-forget by `/judge` on page load (§7e row 16).
+    """Pre-warm the hot path. Called fire-and-forget by the tour page on page load (§7e row 16).
 
     Unauthenticated on purpose: it takes no input, returns no data about anything, and the worst a
     caller can do is make three containers that are already billed-when-running start slightly
@@ -188,7 +191,7 @@ async def event_public(
     of moments the system will pay for can farm it.
 
     The one addition (S14) is the `director` block, and it is here rather than in the security rules
-    on purpose. `/judge`'s next-tick countdown needs `ledger/directorState.lastTickAt`, which is
+    on purpose. the tour page's next-tick countdown needs `ledger/directorState.lastTickAt`, which is
     host-only in `firestore.rules` and must stay that way — HANDOFF §4.22 called for "a field on
     `GET /v1/events/{id}/public`, not a rules exception," and this is it. Note what is *derived* rather
     than forwarded: `cadenceSec` is computed from `event.class` here, so the client learns how fast

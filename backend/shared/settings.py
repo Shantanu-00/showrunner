@@ -141,7 +141,7 @@ PUBLISHER_RENEW_SECONDS = 45  # comfortably inside the TTL: two renewals may fai
 DEMO_INTERLEAVE_SECONDS = 30
 #: The production `director-tick` cadence, spec 09 §2 verbatim (`*/2 * * * *`), as seconds. Mirrored
 #: here so `GET /v1/events/{id}/public` can tell a client how long until the next tick is due without
-#: the client hardcoding a schedule it cannot see. **If `deploy/judge-mode.sh` re-schedules the job for
+#: the client hardcoding a schedule it cannot see. **If `deploy/demo-mode.sh` re-schedules the job for
 #: the judging month, this is the value that has to move with it** — the countdown is honest only while
 #: the two agree, and a countdown that lies is worse than no countdown.
 PRODUCTION_TICK_SECONDS = 120
@@ -287,7 +287,7 @@ KIOSK_DIVERSITY_PENALTY = 0.35
 #: spec 04 §4 gives an escalated one the lead slot, and neither says when that claim expires — so on an
 #: event where nobody submits, the escalate → expire → reissue cycle holds the wall indefinitely.
 #: Measured on `dev_demo`: 12 of 16 bounties ended with `kioskTakeover: true`. On a real wedding a
-#: submission breaks the loop; on the judge event, where visitors arrive hours apart, nothing does.
+#: submission breaks the loop; on the standing demo event, where visitors arrive hours apart, nothing does.
 #: 12 minutes is long enough that the takeover is unmissable and short enough that the wall goes back
 #: to photographs — the poster becomes punctuation instead of nagging. An escalated bounty that ages
 #: out still banners in every guest's pocket; it just stops owning the five-metre screen.

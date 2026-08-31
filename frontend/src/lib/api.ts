@@ -13,7 +13,7 @@ import type {
   VisibilityResponse,
 } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 /** Every derived bucket has `--public-access-prevention`, so `MediaDoc.thumbUri`/`displayUri`
  * (raw `gs://` values, kept that way because backend consumers read the bytes directly) can never
@@ -138,7 +138,7 @@ export async function joinEvent(eventId: string, code?: string): Promise<JoinRes
   });
 }
 
-/** GET /warmup — fire-and-forget from `/judge` (EXECUTION-PLAN §7e row 16). `worker-face` carries a
+/** GET /warmup — fire-and-forget from the tour page (EXECUTION-PLAN §7e row 16). `worker-face` carries a
  * 326 MB InsightFace model and cold-starts in ~30 s, which is the difference between a judge's first
  * upload taking ~6 s and taking ~42 s. Deliberately unauthenticated and deliberately ignored: it
  * takes no input, returns no data, and a failure must never be visible on the page. */
@@ -149,7 +149,7 @@ export function warmup(): Promise<void> {
   );
 }
 
-/** POST /v1/events/{eventId}/demo/tick — the labelled manual override on `/judge`.
+/** POST /v1/events/{eventId}/demo/tick — the labelled manual override on the tour page.
  *
  * Server-side this only ever runs on a `protected_demo` event and is rate-limited, because it spends
  * a real `gemini-3.7-flash` call. It is NOT the autonomy story — the Cloud Scheduler cadence is, and

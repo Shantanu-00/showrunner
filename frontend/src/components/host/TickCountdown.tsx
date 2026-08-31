@@ -5,7 +5,7 @@ import { listenDirectorState } from "@/lib/hostFirestore";
 import type { DirectorTickState, HostEventDoc } from "@/lib/hostTypes";
 
 /** Spec 09 §2's two Cloud Scheduler cadences. The **host** console derives these client-side from
- * `event.class`, which it is allowed to read; the `/judge` page cannot (it is anonymous, and
+ * `event.class`, which it is allowed to read; the tour page cannot (it is anonymous, and
  * `ledger/` is host-only in `firestore.rules`), so it gets `cadenceSec` from the server instead —
  * `GET /v1/events/{id}/public`'s `director` block, which is HANDOFF §4.22's prescribed read path.
  * Production `director-tick` runs on a 2-minute cron; `class=='protected_demo'` events are
@@ -18,7 +18,7 @@ export function cadenceForClass(eventClass: HostEventDoc["class"]): number {
   return eventClass === "protected_demo" ? DEMO_CADENCE_SEC : PRODUCTION_CADENCE_SEC;
 }
 
-/** The presentational half, shared by the host console (Firestore listener) and `/judge` (one REST
+/** The presentational half, shared by the host console (Firestore listener) and the tour page (one REST
  * read). Kept separate because the two surfaces have different *read paths* and identical maths —
  * duplicating the arithmetic is how the two would eventually disagree about what a tick means. */
 export function TickCountdownView({
@@ -30,7 +30,7 @@ export function TickCountdownView({
   lastTickAtMs: number | null;
   tickCount: number;
   cadenceSec: number;
-  /** Fired once each time the countdown crosses zero — `/judge` uses it to re-read the tick
+  /** Fired once each time the countdown crosses zero — the tour page uses it to re-read the tick
    * numbers. Not a poll: nothing is requested while the countdown is still running. */
   onDue?: () => void;
 }) {

@@ -231,7 +231,7 @@ def _fuse_and_commit(
     # queue. Without the filter a pending enrollment would quietly accrete an album while the host had
     # not yet said yes, so by the time they looked at the review card the photographs it links would
     # already be in a stranger's private album. Host-seeded people carry `claimApproved: True`
-    # (`backend/seed.py`), so the judge event's cast is unaffected.
+    # (`backend/seed.py`), so the standing demo event's cast is unaffected.
     enrolled = [
         person for person in faces_lib.enrolled_people(event_id) if person.get("claimApproved")
     ]

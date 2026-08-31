@@ -128,9 +128,17 @@ def _stream(prompt: str) -> tuple[bytes, str, str]:
     return b"".join(chunks), mime or "audio/mpeg", caption.strip()
 
 
-def compose(brief: MusicBrief, *, seed: int) -> Score:
-    """Generate the clip and analyse it. Never raises — a failure comes back as a silent `Score`."""
-    prompt = prompt_for(brief, seed=seed)
+def compose(brief: MusicBrief, *, seed: int, prompt: str | None = None) -> Score:
+    """Generate the clip and analyse it. Never raises — a failure comes back as a silent `Score`.
+
+    `prompt` overrides `prompt_for`, for the one other thing in this system that needs Lyria and is not
+    a reel: the wall's ambient bed (`publisher/ambience.py`). A film score and a room's background music
+    want opposite things from the same model — the reel prompt asks for a 30-second arc that builds to a
+    peak, which is precisely what must *not* happen to music playing under photographs for an hour. The
+    retry, the silent fallback and the beat analysis are identical either way, so only the sentence
+    describing the music is parameterised.
+    """
+    prompt = prompt if prompt is not None else prompt_for(brief, seed=seed)
     audio, mime, caption = b"", "audio/mpeg", ""
     failure: str | None = None
 

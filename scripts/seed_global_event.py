@@ -4,7 +4,7 @@ link can join and upload to — no venue, no cast, no theme, no pre-seeded photo
     python scripts/seed_global_event.py
     python scripts/seed_global_event.py --weeks 10 --daily-cap 40 --lifetime-cap 1500
 
-Replaces the old judge-mode wedding seeder. Three differences from that script, all deliberate:
+Replaces the old wedding seeder. Three differences from that script, all deliberate:
 
 1. **No fixture uploads, no AI cast.** The old script wrapped `backend/seed.py`'s Hindu-wedding cast
    and golden-fixture set. This one writes only the Event document — zero media. Real visitors are
@@ -52,7 +52,7 @@ if hasattr(sys.stdout, "reconfigure"):
 GLOBAL_EVENT_ID = "global_demo"
 GLOBAL_EVENT_NAME = "Showrunner — Global Demo"
 
-#: Anyone's test shot should reach the wall, same reasoning as the old judge event (spec 09 §5):
+#: Anyone's test shot should reach the wall, same reasoning as the old demo event (spec 09 §5):
 #: with the floor at 0, consent + Guardian alone decide `public`, so a first-timer's photo of their
 #: desk clears in seconds instead of silently sitting in `pool` and reading as breakage.
 GLOBAL_PUBLIC_FLOOR = 0.0
