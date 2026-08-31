@@ -348,6 +348,9 @@ def seed_all() -> None:
     seed(f"events/{EVENT}/faces/f1", {"faceId": "f1", "mediaId": "pool_indexed", "embedding": [0.1]})
     seed(f"events/{EVENT}/guests/{UPLOADER_UID}", {"uid": UPLOADER_UID, "points": 12})
     seed(f"events/{EVENT}/guests/{BANNED_UID}", {"uid": BANNED_UID, "points": 0, "banned": True})
+    # A real token has to exist for the deny rows to be proving anything: a read denied because the
+    # document is absent looks identical to one denied by the rule, and only one of those is the test.
+    seed(f"events/{EVENT}/guests/{UPLOADER_UID}/private/push", {"token": "fcm-token-fixture"})
     seed(f"events/{EVENT}/bounties/b1", {"bountyId": "b1", "status": "open"})
     seed(f"events/{EVENT}/reels/published", {"reelId": "published", "visibility": "public"})
     seed(f"events/{EVENT}/reels/draft", {"reelId": "draft", "visibility": "pool"})
@@ -626,6 +629,23 @@ def build_rows(who: dict[str, Persona]) -> list[Row]:
         R("surfaces", "member_of_event", "write", "guests/{member} points", False,
           "points are awarded by the Story Director, never self-assigned",
           lambda p: write_doc(p, f"events/{EVENT}/guests/{MEMBER_UID}", {"points": 9999})),
+        # Web Push. The row above proves the leaderboard document is member-readable; these three
+        # prove the device address stored one level under it is not — which is the whole reason it is
+        # stored one level under it. A guest may not even read their own: the token is on the phone
+        # that minted it, so there is no client use for reading it back, and every additional reader
+        # is another place an address can leak from.
+        R("surfaces", "member_of_event", "read", "guests/{uploader}/private/push", False,
+          "an FCM registration token is a way to reach a specific device; the leaderboard streams "
+          "this collection, so the token cannot live where the leaderboard can see it",
+          lambda p: read_doc(p, f"events/{EVENT}/guests/{UPLOADER_UID}/private/push")),
+        R("surfaces", "member_of_event", "write", "guests/{member}/private/push", False,
+          "only `POST /v1/events/{id}/push-token` writes one, so membership is verified against a "
+          "real ID token and nobody can subscribe a uid that is not theirs",
+          lambda p: write_doc(p, f"events/{EVENT}/guests/{MEMBER_UID}/private/push",
+                              {"token": "stolen-token"})),
+        R("surfaces", "host", "read", "guests/{uploader}/private/push", False,
+          "deny-all includes the host — a console has no use for a guest's device address",
+          lambda p: read_doc(p, f"events/{EVENT}/guests/{UPLOADER_UID}/private/push")),
         R("surfaces", "member_of_event", "read", "bounties/b1", True,
           "a bounty is a public mission (spec 09 §3)",
           lambda p: read_doc(p, f"events/{EVENT}/bounties/b1")),

@@ -58,6 +58,25 @@ def guest_ref(event_id: str, uid: str) -> firestore.DocumentReference:
     return guests_col(event_id).document(uid)
 
 
+def guest_push_ref(event_id: str, uid: str) -> firestore.DocumentReference:
+    """`guests/{uid}/private/push` — this session's Web Push registration token.
+
+    A subcollection rather than a field on `guests/{uid}`, for the reason that document's own rule
+    states out loud: *"No email, no phone, no token: a uid is not a credential."* `guests/{uid}` is
+    `allow read: if isMember(eventId)` because the kiosk leaderboard reads the whole collection
+    ordered by points — so a token stored up there would be handed to every other guest at the
+    event along with the display name it sits beside. A Firebase registration token is a
+    device-scoped address, and an address is exactly the kind of thing a leaderboard has no business
+    carrying.
+
+    Same shape and same reasoning as `person_private_ref` one collection over: `firestore.rules`
+    denies `guests/{uid}/private/{document=**}` to every client including the host, and only `api`
+    (writing, via `POST …/push-token`) and the director's bounty writer (reading, via
+    `shared/push.py`) ever touch it — both with service credentials.
+    """
+    return guest_ref(event_id, uid).collection("private").document("push")
+
+
 def people_col(event_id: str) -> firestore.CollectionReference:
     return event_ref(event_id).collection("people")
 

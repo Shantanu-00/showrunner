@@ -72,7 +72,7 @@ from schemas.identity import (
     VisibilityResponse,
 )
 from schemas.person import Tier
-from shared import errors, faces as faces_lib, fs, gcs, internal, log
+from shared import errors, faces as faces_lib, fs, gcs, internal, log, push
 from shared.auth import Principal, caller, custom_claims, merge_custom_claims
 from shared.settings import (
     CLAIM_EXEMPLARS,
@@ -1229,6 +1229,15 @@ async def delete_me(
         except Exception as exc:  # noqa: BLE001 - claim cleanup must not block the deletion
             log.warn("claim_clear_failed", uid=uid, err=str(exc))
         selfies += _drop_claim_selfies(eventId, uid)
+        # Their Web Push registration too (`guests/{uid}/private/push`). A device address is data
+        # about them by any reading, and a subscription that outlived "delete my data" would keep
+        # buzzing a phone belonging to somebody the system was told to forget. Same reasoning as the
+        # `person_private_ref` delete below: Firestore does not cascade subcollections, so the
+        # promise is only true if something explicitly writes it.
+        push.delete_token(eventId, uid)
+    # The caller's own uid, which is not necessarily in `uid_links` — a *pending* enrollment never
+    # got one (§4.28: no face match grants anything), and they can still have subscribed to missions.
+    push.delete_token(eventId, principal.uid)
 
     # The face template is a separate document (spec 02 §5's "deletes person doc + embeddings"), so
     # deleting the person is not enough — this is the write that makes the promise true. The private

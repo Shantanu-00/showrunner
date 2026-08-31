@@ -253,6 +253,21 @@ service cloud.firestore {
         // holding an eventId enumerate how many sessions an event has and who is winning it.
         allow read: if isMember(eventId);
         allow write: if false;
+
+        // Deny-all, and it is what makes the "no token" sentence above literally true rather than
+        // aspirational. Web Push arrived with something that genuinely had to be stored per session —
+        // an FCM registration token — and a token is an *address*: anything holding it is holding a
+        // way to reach that specific device. This collection is streamed in full by the kiosk
+        // leaderboard, so a token kept on the parent document would have been handed to every other
+        // guest at the event alongside the display name it sat next to.
+        //
+        // Same shape and same reasoning as `people/{personId}/private/{document=**}` above; written
+        // by `api/push.py` and read by `directors/story/act.py`'s bounty writer, both with service
+        // credentials (`backend/shared/fs.py::guest_push_ref`). Deny-all includes the host, who has
+        // no use for a guest's device address and every chance of putting one in a screenshot.
+        match /private/{document=**} {
+          allow read, write: if false;
+        }
       }
 
       match /bounties/{bountyId} {
