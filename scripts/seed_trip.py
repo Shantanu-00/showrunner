@@ -1,7 +1,8 @@
 """Seed the generic-timeline demo: a 5-day Japan group trip, through the real pipeline.
 
     python scripts/seed_trip.py
-    python scripts/seed_trip.py --regen-cast   # force fresh Nano Banana portraits for the 4 friends
+    python scripts/seed_trip.py --regen-cast     # fresh Nano Banana portraits for the 4 friends
+    python scripts/seed_trip.py --regen-scenes   # fresh place establishing shots (~$0.40)
 
 Sibling of `backend/seed.py` (the wedding demo) — same discipline, different shape. Where the
 wedding seed proves the pyramid/VIP/ritual-glossary path, this one proves the generic
@@ -16,8 +17,16 @@ The stable event id is `japan_trip_2026`. Re-running wipes and reseeds it exactl
 touched by this script.
 
 Deliberate story beat: today (Day 4) has no photo anywhere with 3 or more people in it. Every
-fixture this script uploads is a solo portrait or a content-free synthetic image — the coverage gap
-the Story Director's next tick should notice and act on is real, not staged into the document store.
+fixture this script uploads is a solo portrait, an **empty** establishing shot of a place, or a
+content-free synthetic image — the coverage gap the Story Director's next tick should notice and act
+on is real, not staged into the document store.
+
+The establishing shots (`_SCENES`) were added 2026-08-31 to fix a real defect in this demo rather
+than to decorate it: with only portraits and gradients to look at, the Curator had no visual evidence
+for any place-named stage, so `fusion.fuse` returned its honest null `stageId` and *every* photograph
+landed in the `_unstaged` coverage shard. The per-stage coverage table read empty while the pipeline
+was working correctly. See `_SCENES` for the two constraints those images have to respect — the first
+of which is not breaking the group-coverage gap above.
 """
 
 from __future__ import annotations
@@ -70,6 +79,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 ARTIFACTS = EVAL / "artifacts"
 CAST_DIR = ARTIFACTS / "cast_trip"
+SCENE_DIR = ARTIFACTS / "scenes_trip"
 RUN_FILE = ARTIFACTS / "seed_trip_run.json"
 
 EVENT_ID = "japan_trip_2026"
@@ -322,20 +332,141 @@ def _gradient_jpeg(seed_value: int) -> bytes:
     return buf.getvalue()
 
 
+#: One place-specific establishing shot per stage that has a distinctive look. **The reason this
+#: exists is a real finding, not polish.** Before it, every fixture this script uploaded was a solo
+#: studio-lit portrait or a synthetic gradient — and the Curator, shown a head-and-shoulders portrait
+#: and asked which of "Arrival / Shibuya Evening / Asakusa Morning / … / Departure" it looks like,
+#: correctly answers *none of them*. The visual distribution comes back all zeros, `fusion.fuse`
+#: returns a null `stageId` (its honest "no evidence" answer rather than crowning whichever stage the
+#: clock favours), and every one of those photographs lands in the `_unstaged` coverage shard. The
+#: result was a demo whose per-stage coverage table was empty while the pipeline was working
+#: perfectly: the schedule knew when each photo was taken and the Curator had nothing to say about
+#: where.
+#:
+#: **Two constraints, and the first one is the whole demo.** The Story Director's headline beat is
+#: that *today* (Day 4) has no frame holding the group, so the group-coverage gap is genuinely open
+#: (`ledger._group_gap`, threshold `ceil(4 × 0.75) = 3` people). A crowd scene would satisfy it and
+#: quietly delete the story. So: every prompt demands **no people in frame**, and today's three
+#: stages get only unambiguously empty landscapes — there is deliberately no `group_dinner` scene,
+#: because a photograph of a dinner table is exactly the frame that would have people around it.
+#: Second constraint: these are establishing shots of *places*, which is also what makes them fair
+#: evidence — the Curator is being given something a guest really would photograph, not a hint.
+#:
+#: Cached in `eval/artifacts/scenes_trip/` after the first run (~$0.045 each through the same Nano
+#: Banana call the cast uses, so ~$0.40 once, then free forever).
+_SCENES: list[tuple[str, str]] = [
+    (
+        "arrival",
+        "Narita airport arrivals hall, wide shot, polished floors, departure boards, soft daylight "
+        "through tall windows. Completely empty of people. Documentary travel photograph, 24mm, "
+        "natural colour. No text overlays.",
+    ),
+    (
+        "shibuya_evening",
+        "Shibuya scramble crossing at night from above, wet asphalt reflecting neon signage, "
+        "Japanese shopfront lights in pink and blue. Completely empty street, no people, no cars. "
+        "Cinematic night photograph, 35mm, long exposure.",
+    ),
+    (
+        "asakusa_morning",
+        "Senso-ji temple's Kaminarimon gate in Asakusa, giant red paper lantern, vermilion timber, "
+        "clear early-morning light. Completely empty of people. Travel photograph, 28mm, crisp "
+        "detail, natural colour.",
+    ),
+    (
+        "akihabara",
+        "Akihabara electronics district street level, stacked vertical signage, arcade facades, "
+        "overcast afternoon light. Completely empty of people and vehicles. Documentary photograph, "
+        "35mm, natural colour.",
+    ),
+    (
+        "fushimi_inari",
+        "Fushimi Inari torii gate tunnel, hundreds of vermilion gates receding into forest shade, "
+        "dappled green light on stone steps. Completely empty of people. Travel photograph, 35mm, "
+        "shallow depth of field.",
+    ),
+    (
+        "gion_evening",
+        "Gion district narrow lane at dusk, wooden machiya townhouses, warm paper lantern glow, "
+        "damp stone paving. Completely empty of people. Cinematic photograph, 50mm, moody low light.",
+    ),
+    # --- today (Day 4). Landscapes only, and no dinner scene: see the header note.
+    (
+        "kawaguchi_lake",
+        "Lake Kawaguchi in the morning, still water, Mount Fuji reflected, pine trees along the "
+        "shoreline, pale blue sky. Completely empty of people and boats. Landscape photograph, "
+        "24mm, natural colour.",
+    ),
+    (
+        "fuji_viewpoint",
+        "Mount Fuji from a high viewpoint in late afternoon, snow-capped summit above layered "
+        "ridgelines, warm golden light, thin cloud. Completely empty of people. Landscape "
+        "photograph, 70mm, crisp detail.",
+    ),
+]
+
+
+def ensure_trip_scenes(*, regenerate: bool = False) -> dict[str, Path]:
+    """Generate (or reuse cached) one establishing shot per `_SCENES` stage. See `_SCENES` for why.
+
+    Degrades rather than fails: a scene that cannot be generated (quota, a refusal) is logged and
+    skipped, and the seed proceeds with whichever ones exist. The demo is worse without them, but a
+    missing landscape must not be the reason the whole trip event fails to seed.
+    """
+    from google import genai
+
+    SCENE_DIR.mkdir(parents=True, exist_ok=True)
+    paths: dict[str, Path] = {}
+    client = None
+    generated_this_run = False
+
+    for stage_id, prompt in _SCENES:
+        path = SCENE_DIR / f"scene_{stage_id}.jpg"
+        if path.exists() and not regenerate:
+            log(f"scene: {stage_id} (cached)")
+            paths[stage_id] = path
+            continue
+        if client is None:
+            client = genai.Client(enterprise=True, project=settings().project, location="global")
+        if generated_this_run:
+            time.sleep(8)  # the image model's quota is tighter than text — see cast.py::_generate
+        try:
+            path.write_bytes(cast_module.generate_portrait(client, prompt))
+        except Exception as exc:  # noqa: BLE001 - one missing landscape must not fail the seed
+            log(f"WARN  scene {stage_id} could not be generated ({exc}) — skipping")
+            continue
+        generated_this_run = True
+        log(f"scene: {stage_id} (generated)")
+        paths[stage_id] = path
+    return paths
+
+
 def _at(local_windows: dict[str, tuple[dt.datetime, dt.datetime]], stage_id: str, minutes_in: int) -> dt.datetime:
     start, _end = local_windows[stage_id]
     return start + dt.timedelta(minutes=minutes_in)
 
 
 def build_fixture_plan(
-    members: list[cast_module.CastMember], local_windows: dict[str, tuple[dt.datetime, dt.datetime]]
+    members: list[cast_module.CastMember],
+    local_windows: dict[str, tuple[dt.datetime, dt.datetime]],
+    scenes: dict[str, Path] | None = None,
 ) -> list[dict[str, Any]]:
-    """~14 uploads: every cast member's portrait tagged into 2 different past-day (Days 1-3) stage
-    windows (8), ~4 synthetic gradients spread across Days 1-3, and 2 more portraits into today's
-    (Day 4) `kawaguchi_lake` window. Every entry is a single face or no face at all — deliberately no
-    photo here ever holds 3+ people, so today's group-coverage gap the Story Director should act on
-    is real rather than staged into a document that would otherwise satisfy it."""
+    """~22 uploads: 8 cast portraits across two past-day stages each, 8 place-specific establishing
+    shots (one per `_SCENES` stage), 2 synthetic gradients, and 2 more portraits into today's
+    (Day 4) `kawaguchi_lake` window.
+
+    **Every entry is a single face or no face at all.** Deliberately no photo here ever holds 3+
+    people, so today's group-coverage gap the Story Director should act on is real rather than
+    staged into a document that would otherwise satisfy it. The scene shots are the load-bearing
+    addition and they respect that same rule by construction — every prompt demands an empty frame,
+    and there is no dinner-table scene (`_SCENES`).
+
+    The gradients drop from 4 to 2 rather than to 0: their job is to demonstrate the aesthetic floor
+    doing something honest (a content-free image scoring ~0.0 and staying off every public surface),
+    and two of those is enough to show it without half the event's coverage being noise.
+    """
     by_slug = {m.slug: m for m in members}
+    scenes = scenes or {}
     plan: list[dict[str, Any]] = []
 
     # 8: each friend, twice, on two different Days 1-3 stages.
@@ -362,10 +493,27 @@ def build_fixture_plan(
             }
         )
 
-    # ~4: content-free synthetics spread across the same 3 past days.
+    # 8: the place-specific establishing shots — one per stage that has a look (`_SCENES`). These are
+    # what give the Curator something to *see*, so each stage's coverage shard fills with its own
+    # photographs instead of everything piling into `_unstaged`. Public ring: an empty landscape has
+    # no subject to consent on behalf of, and a wall of the places you went is the point of a kiosk.
+    # Placed 20 minutes into each window — a guest photographs where they are shortly after arriving.
+    for stage_id, path in sorted(scenes.items()):
+        if stage_id not in local_windows:
+            continue
+        plan.append(
+            {
+                "fixtureId": f"scene_{stage_id}",
+                "kind": "scene",
+                "stageId": stage_id,
+                "capturedLocal": _at(local_windows, stage_id, 20),
+                "consent": "public",
+                "imageBytes": (lambda p=path: p.read_bytes()),
+            }
+        )
+
+    # 2: content-free synthetics, to keep the aesthetic floor visibly doing its job.
     synthetics = [
-        ("arrival", 60),
-        ("asakusa_morning", 60),
         ("akihabara", 150),
         ("gion_evening", 150),
     ]
@@ -454,6 +602,11 @@ def main() -> int:
     ap.add_argument("--api", default=os.environ.get("NEXT_PUBLIC_API_URL"))
     ap.add_argument("--timeout", type=float, default=150.0)
     ap.add_argument("--regen-cast", action="store_true")
+    ap.add_argument(
+        "--regen-scenes",
+        action="store_true",
+        help="force fresh place establishing shots (~$0.40; otherwise cached in eval/artifacts)",
+    )
     ap.add_argument("--no-reset", action="store_true", help="keep whatever is already on the event")
     ap.add_argument("--reset-only", action="store_true", help="wipe the event's people/media/ops and exit")
     args = ap.parse_args()
@@ -490,7 +643,10 @@ def main() -> int:
     log("enrolling the 4 friends as host-declared, tier inner_circle (flat topology) people —")
     cast_records = enroll_trip_cast(event_id, members)
 
-    fixture_plan = build_fixture_plan(members, local_windows)
+    log("generating/loading one empty establishing shot per place (Nano Banana) —")
+    scenes = ensure_trip_scenes(regenerate=args.regen_scenes)
+
+    fixture_plan = build_fixture_plan(members, local_windows, scenes)
     log(f"uploading {len(fixture_plan)} fixtures through the real pipeline —")
     items = []
     for item in fixture_plan:
