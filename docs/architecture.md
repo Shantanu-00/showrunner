@@ -16,7 +16,7 @@ This is the complete architecture in one place, for review and for deriving the 
 
 ## 1. The one-paragraph shape
 
-**An event-driven data plane feeding a goal-driven control plane, with governance as a cross-cutting rail.** Guest media flows push-based from phones into Cloud Storage, through Eventarc and rate-limited Cloud Tasks queues, into three perception workers (Gemini classification, face embedding, safety), landing as richly-annotated Firestore documents whose real-time listeners drive every screen. Above that, director agents own strategy: one watches coverage and dispatches bounties to the crowd; one commissions and renders reels. A single deterministic visibility function — not any LLM — decides what the public ever sees.
+**An event-driven data plane feeding a goal-driven control plane, with governance as a cross-cutting rail.** Guest media flows push-based from phones into Cloud Storage, through Eventarc and rate-limited Cloud Tasks queues, into three perception workers (Gemini classification, face embedding, safety) plus a video-prep worker, landing as richly-annotated Firestore documents whose real-time listeners drive every screen. Above that, director agents own strategy: one watches coverage and dispatches bounties to the crowd; one commissions and renders reels. A single deterministic visibility function — not any LLM — decides what the public ever sees.
 
 **Where the directors run, stated plainly because the answer changed during the build:** the Story Director runs on Cloud Run, inside the Cloud Scheduler tick that already holds the per-event lease, not on Agent Runtime. Its reasoning step is one ADK `LlmAgent`; everything around it — the coverage aggregation, the guardrails, the bounty writes, the points award, the rolling tick window — is deterministic Python, because by this document's own agent test (§3) those steps make no judgments and therefore must not be agents. What that costs is the managed Sessions/Memory Bank/Registry rows Agent Runtime grants automatically; what it buys is that the guardrails execute in the same process and the same transaction scope as the lease protecting them. The host's free-text preferences are the one soft input, and they are read from Memory Bank when an Agent Engine resource is configured and from the event document otherwise — nothing that gates a bounty, a point award or an exposure reads either.
 
@@ -27,10 +27,10 @@ This is the complete architecture in one place, for review and for deriving the 
 ```mermaid
 flowchart TB
   subgraph CLIENTS["EXPERIENCE — Next.js PWA on Firebase Hosting"]
-    GUEST["Guest app /join<br/>QR entry, anon auth, outbox uploader,<br/>selfie enroll, swipe curation"]
-    HOST["Host console /host<br/>lifecycle controls, review queue,<br/>coverage grid, Flight Deck"]
-    KIOSK["Kiosk /kiosk<br/>directed playlist show"]
-    ALBUM["Private album /me<br/>+ public gallery /gallery"]
+    GUEST["Guest app /join/{eventId}<br/>QR or invite code, anon auth, outbox uploader,<br/>selfie enroll, bounty banner + Web Push<br/>gallery / my album / my uploads are tabs here"]
+    HOST["Host console /host/{eventId}<br/>lifecycle master switch, itinerary paste,<br/>claim review, moderation queue, wrap report"]
+    KIOSK["Kiosk /kiosk/{eventId}<br/>directed playlist show"]
+    TOUR["Walkthrough /how-it-works<br/>live next-tick countdown + disclosure"]
   end
 
   subgraph DATAPLANE["DATA PLANE — event-driven, push, rate-limited"]
@@ -42,6 +42,8 @@ flowchart TB
     CUR["Cloud Run: worker-curate<br/>Gemini 3.5 Flash-Lite<br/>stage+quality+caption"]
     FACE["Cloud Run: worker-face<br/>InsightFace ONNX 512-d<br/>+ Firestore vector search"]
     GUARD["Cloud Run: worker-safety<br/>Vision SafeSearch<br/>+ Gemini dignity rubric"]
+    VPREP["Cloud Run: worker-video-prep<br/>ffprobe, poster, keyframes, proxy"]
+    DLQ["Cloud Run: dlq<br/>quarantine + severity=error alert"]
     FS[("Firestore<br/>media / faces / people / bounties /<br/>reels / kiosk / ledger / ops<br/>= system of record + realtime fan-out")]
     DERIVED[("Cloud Storage<br/>derived + curated buckets")]
   end
@@ -49,14 +51,14 @@ flowchart TB
   subgraph CONTROL["CONTROL PLANE — goal-driven, scheduler-triggered"]
     SCHED["Cloud Scheduler<br/>global 2-min tick + lease"]
     SD["Story Director — ADK LlmAgent, Gemini 3.7 Flash<br/>in the tick on Cloud Run: api<br/>coverage ledger → gap analysis → bounties,<br/>stage drift, escalation, commissions<br/>rolling 10-tick window in Firestore"]
-    RD["Reel Director — ADK, Gemini 3.7 Flash<br/>narrative brief → EDL → critic loop<br/>Lyria 3 soundtrack, versioned supersession"]
-    RENDER["Cloud Run Job: render<br/>ffmpeg + librosa beat grid<br/>1080x1920 reels, Pillow collages"]
+    RD["Reel Director — ADK, Gemini 3.7 Flash<br/>SELECT → DIRECT → CRITIC → SCORE → EDL<br/>Lyria 3 soundtrack, Veo opener, 5 persona lenses"]
+    PUB["Cloud Run: publisher<br/>kiosk playlist writer<br/>per-event leader election"]
+    RENDER["Cloud Run Job: render<br/>ffmpeg + librosa beat grid<br/>1080x1920 reels, manifest re-check on publish"]
   end
 
   subgraph GOV["GOVERNANCE RAIL — cross-cutting"]
     MA["Model Armor<br/>text surfaces: injection, PII"]
-    AI2["Agent Identity (SPIFFE)<br/>+ Agent Registry — auto via Runtime"]
-    OBS["Agent Observability + Cloud Trace<br/>OTel span DAGs, token/latency dashboards"]
+    OBS["Structured Cloud Logging<br/>one line per stage · platform/tickPulse heartbeat<br/>· ledger/directorState"]
     RULES["Firestore security rules + custom claims<br/>+ recompute_visibility (deterministic)"]
     SM["Secret Manager · least-privilege SAs<br/>· Budgets · teardown scripts"]
   end
@@ -67,9 +69,13 @@ flowchart TB
   RAW --> EA --> INTAKE
   INTAKE --> DERIVED
   INTAKE --> QUEUES
-  QUEUES --> CUR & FACE & GUARD
-  CUR & FACE & GUARD -- "verdicts + recompute_visibility" --> FS
-  FS -. "realtime listeners (~1-2 s)" .-> KIOSK & ALBUM & GUEST & HOST
+  QUEUES --> CUR & FACE & GUARD & VPREP
+  EA -. "poisoned after 5 attempts" .-> DLQ
+  DLQ --> FS
+  CUR & FACE & GUARD & VPREP -- "verdicts + recompute_visibility" --> FS
+  FS -. "realtime listeners (~1-2 s)" .-> KIOSK & GUEST & HOST & TOUR
+  FS --> PUB
+  PUB -- "kiosk/playlist" --> FS
   SCHED --> SD
   SD -- "bounties / announce / commission" --> FS
   SD -- "commission persona" --> RD
@@ -77,7 +83,6 @@ flowchart TB
   RENDER -- "mp4 → curated" --> DERIVED
   RENDER -- "publish (manifest re-check)" --> FS
   HOST -- "itinerary paste" --> MA --> API
-  SD & RD --- AI2
   SD & RD & CUR --- OBS
   FS --- RULES
 ```
@@ -97,7 +102,7 @@ sequenceDiagram
   participant Q as Cloud Tasks
   participant W as workers (curate/face/safety)
   participant F as Firestore
-  participant K as Kiosk/Album/Flight Deck
+  participant K as Kiosk / album / host console
   P->>A: POST /uploads (intent: 30 files + consent)
   A->>F: 30 media docs (awaiting_upload, owner, consent)
   A-->>P: 30 signed URLs
@@ -127,8 +132,8 @@ Commission (stage end / director action / host) → SELECT diversity-sampled can
 
 | Service | Role | Why this one |
 |---|---|---|
-| Cloud Run (services) | api, intake, 3 perception workers, publisher, dlq-consumer | Serverless burst scaling; per-service least-privilege SAs |
-| Cloud Run (jobs) | reel/collage renders | Long CPU work off the request path |
+| Cloud Run (services) | **8** — api, intake, dlq, worker-curate, worker-face, worker-safety, worker-video-prep, publisher | Serverless burst scaling; one least-privilege SA per service (12 identities in total, incl. the job and the three OIDC callers) |
+| Cloud Run (jobs) | **1** — `render`, one execution per reel commission | Long CPU work off the request path; started through the Run Admin API, because Cloud Tasks cannot start a Job |
 | Cloud Storage | raw / derived / curated buckets | Direct-from-phone via signed URLs; the burst shock absorber |
 | Eventarc (+ Pub/Sub under it) | object.finalized → intake, with DLQ | Canonical 2026 event routing; retries + dead-lettering |
 | Cloud Tasks | 6 queues | The **only** throttle in the system — server-side rate control onto Gemini spend tiers |
@@ -142,8 +147,9 @@ Commission (stage end / director action / host) → SELECT diversity-sampled can
 | Model Armor | host itinerary, captions, bounty text | Used *as designed* — prompt injection/PII on text surfaces (image screening is Preview; wrong tool for photos) |
 | Cloud Vision | SafeSearch + face quality/joy signals | GA visual safety gate; emotion/blur ranking |
 | Gemini 3.5 Flash-Lite / 3.7 Flash | perception volume / director reasoning | Price-performance split; both satisfy "3.5 or newer" |
-| Lyria 3, Veo 3.1 Fast, Nano Banana 2, Gemma 4 | soundtracks, hero intro, portraits, private taste memos (spec 07 §2) | All four bonus models, each with a real, non-redundant job — Gemma is deliberately kept off the Curator's already-existing caption path and isolated to a non-critical feature |
-| Cloud Trace + Agent Observability (OTel) | span DAGs, token/latency dashboards | The 30% architecture score, visible |
+| Lyria 3, Veo 3.1 Fast, Gemma 4 | reel soundtracks, the cached 8 s opener, the world-model prose and the private taste memo (spec 07 §2) | Three bonus models, each with a real, non-redundant job on a product path — Gemma is deliberately kept off the Curator's already-existing caption path and isolated to a feature that gates nothing |
+| Nano Banana 2 (`gemini-3.1-flash-image`) | **fixture generation only** — the eval cast's fictional portraits (`eval/cast.py`) | Stated separately rather than listed above, because it is genuinely called in code but on no product path. Its job is that the golden-fixture cast contains no real person's likeness |
+| Cloud Logging (structured) | one JSON line per stage per item (`event_id`, `media_id`, `stage`, `ms`, verdict); a saved event-filtered query is the live evidence surface | **There is no OpenTelemetry instrumentation and no Agent Observability dashboard in this build** — there is no Agent Runtime deployment to attach one to. What exists instead is queryable: `platform/tickPulse` (proves the fleet acted unprompted), `ledger/directorState` (what the director decided, deferred and could not get), `stageTimings` per item, and severity-tagged `ops/` alerts sharded per worker type |
 | Secret Manager, IAM, Budgets | key handling, per-service SAs, cost rails | "Credential security" is an explicit judging line |
 
 ### Deliberately not used (the honest table — judges reward knowing why)
@@ -178,7 +184,7 @@ Named patterns worth carrying into the README and video: **event-driven data pla
 
 ## 5. How the demo *shows* the pipeline
 
-Spec 10's Flight Deck — a live page rendering this architecture diagram with real traffic animating through it — is **cut** (S12): the video plan had already demoted it to a few seconds of narrative, so building it earned less than the sessions it would have cost. What corroborates the pipeline on camera instead is direct evidence from the platform itself: the Cloud Run services list (six services, one revision tag, all healthy), the Cloud Scheduler job detail page (`director-tick` / `director-tick-demo`, `Last run: Success`), Firestore console documents mutating in real time as a photo clears each stage, and a saved, event-filtered Logs Explorer query streaming the one-line-per-stage logs (`stage=curate media=… ms=… verdict=…`) every worker writes. The `/how-it-works` page's live next-tick countdown (spec 09 §4) is the same evidence surfaced without a console login. None of this is staged UI — it is the same Firestore fields and GCP consoles a judge could open themselves.
+Spec 10's Flight Deck — a live page rendering this architecture diagram with real traffic animating through it — is **cut** (S12): the video plan had already demoted it to a few seconds of narrative, so building it earned less than the sessions it would have cost. What corroborates the pipeline on camera instead is direct evidence from the platform itself: the Cloud Run services list (eight services plus the render job, one revision tag, all healthy), the Cloud Scheduler job detail page (`director-tick` / `director-tick-demo`, `Last run: Success`), Firestore console documents mutating in real time as a photo clears each stage, and a saved, event-filtered Logs Explorer query streaming the one-line-per-stage logs (`stage=curate media=… ms=… verdict=…`) every worker writes. The `/how-it-works` page's live next-tick countdown (spec 09 §4) is the same evidence surfaced without a console login. None of this is staged UI — it is the same Firestore fields and GCP consoles a judge could open themselves.
 
 ---
 
@@ -200,7 +206,7 @@ Spec 10's Flight Deck — a live page rendering this architecture diagram with r
 
 **Genuine limits, stated plainly:**
 - The Flight Deck (spec 10) is cut entirely — no code, no claim. §5 above names what corroborates the pipeline on camera instead.
-- Reel v2 supersession, collages, and the `main_character` persona (spec 06 §4–§5) are specced but not built; the Reel Director ships with one persona and one version per commission.
+- **Reel v2 supersession and collages (spec 06 §4) are specced but not built** — one version per commission, and `ReelStatus.SUPERSEDED` exists in the schema with nothing that writes it. All five personas *are* built: `couple`, `stage_recap`, `guest_energy`, `main_character` and `event_recap` each diverge in `directors/reel/select.py` and are commissionable through the guardrailed path, with the target carried as data on the reel document rather than in the enum. The director commissions `event_recap` deterministically at `wrapping`; `main_character` is on-demand only and is never fanned out per guest.
 - The public-event abuse-hardening in spec 11 §1.1 — the 60-minute auto-wrap TTL and the $3 cost ceiling — is configured as a constant (`PUBLIC_EVENT_COST_CEILING_USD`) but has no enforcing code path yet; only the concurrent-event cap and kill switch are live.
 - InsightFace's `buffalo_l` weights are licensed for non-commercial research, which is fine for this hackathon; the documented production swap is AuraFace or OpenCV SFace (permissive licenses).
-- `deploy/demo-mode.sh` (the judging-month posture: `*/15` director cadence, warm workers, paused nightly reseed cron) is written and reviewed but has not yet been run against the live project — it is deliberately deferred to SHIP day so it doesn't slow the demo cadence while filming is still in progress.
+- `deploy/judge-mode.sh` (the judging-month posture: `*/15` director cadence, warm workers, paused nightly reseed cron) is written and reviewed but has not yet been run against the live project — it is deliberately deferred to SHIP day so it doesn't slow the demo cadence while filming is still in progress.

@@ -71,7 +71,7 @@ paste at setup.
 |---|---|---|
 | **Gemini 3.5 or newer** via Gemini API / Vertex AI | ✅ `gemini-3.5-flash-lite` (perception volume, per-photo) + `gemini-3.7-flash` (director reasoning, itinerary understanding) | `backend/services/gemini.py`, called from `backend/workers/{curate,safety}/agent.py`, `backend/directors/{story,reel}/agent.py`, `backend/api/host.py::_itinerary_agent` |
 | **≥1 Google Agent Framework** | ✅ **ADK v2 (Python)** + **GenAI SDK** — every model call is an ADK `LlmAgent` behind one runner, with an ADK plugin for Model Armor | `backend/services/gemini.py`, `backend/services/armor_plugin.py`, `backend/workers/*/agent.py`, `backend/directors/*/agent.py` |
-| **≥1 GCP infrastructure service** | ✅ **8 Cloud Run services + 1 Cloud Run Job**, Firestore (+ native vector search), Cloud Storage (3 buckets), Eventarc, Cloud Tasks (6 queues), Cloud Scheduler, Cloud Vision, Model Armor, Secret Manager, Cloud Trace | [full service table →](#10-google-cloud-services--used-and-called-in-code) |
+| **≥1 GCP infrastructure service** | ✅ **8 Cloud Run services + 1 Cloud Run Job**, Firestore (+ native vector search), Cloud Storage (3 buckets), Eventarc, Cloud Tasks (6 queues), Cloud Scheduler, Cloud Vision, Model Armor, Secret Manager, Cloud Logging | [full service table →](#10-google-cloud-services--used-and-called-in-code) |
 | **Hosted project URL** | ✅ [`showrunner-hq.web.app`](https://showrunner-hq.web.app/) — a real front door (Create · Join · [See how it works](https://showrunner-hq.web.app/how-it-works)). Host-console credentials are in the Devpost testing-instructions field | live through the judging period |
 | **Architecture diagram** | ✅ at the top of this file and in [§8](#8-architecture), plus a 7-page [`architecture.pdf`](docs/assets/architecture.pdf) (p1 one-glance overview, p2–7 low-level design). Sources are checked in and re-renderable ([`architecture-overview.html`](docs/assets/architecture-overview.html) + [`architecture-lld.html`](docs/assets/architecture-lld.html) → `scripts/render_architecture.py`) | `docs/architecture.md` |
 | **Reproducible spin-up instructions** | ✅ [two tiers](#15-spin-up-two-tiers) — **Tier 0 needs no GCP account at all** and still runs **164 real assertions** | `deploy/bootstrap.sh`, `deploy/up.sh`, `Makefile` |
@@ -617,8 +617,8 @@ enforcement by policy.**
 | **Firebase Auth + Hosting** | Anonymous guests, magic-link/recovery-code host claims; the PWA and kiosk are a static export | `frontend/src/lib/firebase.ts`, `firebase.json` |
 | **Cloud Vision** | SafeSearch hard gate + face quality/joy signals | `backend/services/vision.py` |
 | **Model Armor** | ADK plugin in front of every director model call, plus an ingress check on every text-accepting endpoint | `backend/services/{armor_plugin,armor}.py` |
-| **Agent Runtime (GEAP)** | **Memory Bank only**, optional, for the host's free-text preferences and the per-stage diary. The directors run on Cloud Run inside the Scheduler tick, **not** on Agent Runtime — and this README says so rather than claiming a component it doesn't use | `backend/directors/story/memory.py` |
-| **Cloud Trace** | Per-tick span, token and latency logging | `backend/shared/log.py` |
+| **Agent Runtime (GEAP)** | **Memory Bank only**, and it ships **inactive**: `AGENT_ENGINE_ID` is empty by default, so the same host free-text is read straight off the event document. The integration is real code on a real API (`VertexAiMemoryBankService`, scoped `{eventId}:host`) and every write is best-effort, holding soft context that gates nothing. The directors run on Cloud Run inside the Scheduler tick, **not** on Agent Runtime — this README says so rather than claiming a component it doesn't use | `backend/directors/story/memory.py` |
+| **Cloud Logging** (structured) | One JSON line per stage per item — `event_id`, `media_id`, `stage`, `ms`, verdict — so a saved, event-filtered query is a live view of the pipeline. **No OpenTelemetry spans and no Agent Observability dashboard are claimed:** there is no Agent Runtime deployment to attach one to, and `platform/tickPulse` + `ledger/directorState` are the checkable evidence instead | `backend/shared/log.py`, `backend/shared/pipeline.py` |
 | **Secret Manager / IAM / Budgets** | Key handling, one SA per service, cost rails; local auth is ADC, never a key file | `deploy/sa.sh`, `deploy/bootstrap.sh` |
 
 ---
@@ -643,7 +643,7 @@ enforcement by policy.**
 |---|---|---|---|
 | **Lyria 3** (`lyria-3-clip-preview`) | Composes every reel's soundtrack from the director's music brief; cuts are beat-snapped to its output ($0.04/clip) | `backend/directors/reel/music.py` | Audible at every reel premiere, labelled in-app |
 | **Veo 3.1 Fast** (`veo-3.1-fast-generate-001` via Vertex) | An 8-second cinematic opener, image-to-video from the top portrait, concatenated in post-render | `backend/directors/reel/opener.py` | Prepended to the hero reel |
-| **Gemma 4** (`gemma-4-26b-a4b-it`) | A private per-person taste memo from album ❤ reactions — a real, zero-cost job deliberately isolated **off the critical and money paths** | `backend/directors/story/taste.py` | The person's `tasteMemo` field; code-verifiable via Memory Bank writes |
+| **Gemma 4** (`gemma-4-26b-a4b-it`) | A private per-person taste memo from album ❤ reactions — a real, zero-cost job deliberately isolated **off the critical and money paths** | `backend/directors/story/taste.py` | `people/{personId}/private/profile.tasteMemo` — a deny-all subcollection, so the memo is never readable by any client. The Memory Bank mirror is best-effort and off unless `AGENT_ENGINE_ID` is set |
 
 ---
 

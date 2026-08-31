@@ -775,8 +775,8 @@
             <pre class="mermaid" id="mermaid-master">
 flowchart TB
   subgraph CLIENTS["EXPERIENCE — Next.js PWA on Firebase Hosting"]
-    GUEST["Guest app /join<br/>QR entry, anon auth, outbox uploader,<br/>selfie enroll, swipe curation"]
-    HOST["Host console /host<br/>lifecycle controls, review queue,<br/>coverage grid, Flight Deck"]
+    GUEST["Guest app /join/{eventId}<br/>QR or invite code, anon auth, outbox uploader,<br/>selfie enroll, bounty banner + Web Push<br/>gallery / my album / my uploads are tabs here"]
+    HOST["Host console /host/{eventId}<br/>lifecycle master switch, itinerary paste,<br/>claim review, moderation queue, wrap report"]
     KIOSK["Kiosk /kiosk<br/>directed playlist show"]
     ALBUM["Private album /me<br/>+ public gallery /gallery"]
   end
@@ -798,13 +798,12 @@ flowchart TB
     SCHED["Cloud Scheduler<br/>global 2-min tick + lease"]
     SD["Story Director — ADK, Gemini 3.7 Flash<br/>coverage gap analysis → bounties,<br/>stage drift, escalation, commissions<br/>Sessions + Memory Bank"]
     RD["Reel Director — ADK, Gemini 3.7 Flash<br/>narrative brief → EDL → critic loop<br/>Lyria 3 soundtrack, versioned supersession"]
-    RENDER["Cloud Run Job: render<br/>ffmpeg + librosa beat grid<br/>1080x1920 reels, Pillow collages"]
+    RENDER["Cloud Run Job: render<br/>ffmpeg + librosa beat grid<br/>1080x1920 reels, manifest re-check on publish"]
   end
 
   subgraph GOV["GOVERNANCE RAIL — cross-cutting"]
     MA["Model Armor<br/>text surfaces: injection, PII"]
-    AI2["Agent Identity (SPIFFE)<br/>+ Agent Registry — auto via Runtime"]
-    OBS["Agent Observability + Cloud Trace<br/>OTel span DAGs, token/latency dashboards"]
+    OBS["Structured Cloud Logging<br/>one line per stage · platform/tickPulse heartbeat<br/>· ledger/directorState"]
     RULES["Firestore security rules + custom claims<br/>+ recompute_visibility (deterministic)"]
     SM["Secret Manager · least-privilege SAs<br/>· Budgets · teardown scripts"]
   end
@@ -825,7 +824,6 @@ flowchart TB
   RENDER -- "mp4 → curated" --> DERIVED
   RENDER -- "publish (manifest re-check)" --> FS
   HOST -- "itinerary paste" --> MA --> API
-  SD & RD --- AI2
   SD & RD & CUR --- OBS
   FS --- RULES
             </pre>
@@ -872,7 +870,7 @@ sequenceDiagram
   participant Q as Cloud Tasks
   participant W as workers (curate/face/safety)
   participant F as Firestore
-  participant K as Kiosk/Album/Flight Deck
+  participant K as Kiosk / album / host console
   P->>A: POST /uploads (intent: 30 files + consent)
   A->>F: 30 media docs (awaiting_upload, owner, consent)
   A-->>P: 30 signed URLs
@@ -976,13 +974,13 @@ sequenceDiagram
                 </tr>
                 <tr>
                   <td><strong>FCM</strong></td>
-                  <td>web push (progressive enhancement)</td>
-                  <td>Firestore banners remain the demo-safe primary</td>
+                  <td>Web Push for bounty delivery &mdash; <strong>load-bearing, not progressive enhancement</strong></td>
+                  <td>A bounty that only reaches a foreground tab reaches almost nobody. Audience resolved deterministically from the bounty's own field; the token lives in a deny-all subcollection; sending never raises, so an FCM outage costs a notification and never a tick or an award</td>
                 </tr>
                 <tr>
                   <td><strong>Agent Runtime (GEAP)</strong></td>
-                  <td>Story + Reel Directors</td>
-                  <td>Managed Sessions, <strong>Memory Bank</strong>, auto <strong>Agent Identity</strong> (SPIFFE) + <strong>Agent Registry</strong> entry + <strong>Observability</strong> dashboards</td>
+                  <td><em>optional</em>: <strong>Memory Bank only</strong>, for the host's free-text standing preferences at <code>{eventId}:host</code></td>
+                  <td>Not on the critical path, and it ships <strong>inactive</strong> &mdash; <code>AGENT_ENGINE_ID</code> is empty by default, so the same host text is read straight off the event document. The directors run on Cloud Run inside the Scheduler tick, so their guardrails execute in the same process as the lease protecting them. <strong>There is no Agent Identity, Agent Registry or Agent Observability in this build</strong>, because there is no Agent Runtime deployment to grant them</td>
                 </tr>
                 <tr>
                   <td><strong>Model Armor</strong></td>
@@ -1000,14 +998,14 @@ sequenceDiagram
                   <td>Price-performance split; both satisfy "3.5 or newer"</td>
                 </tr>
                 <tr>
-                  <td><strong>Lyria 3, Veo 3.1 Fast, Nano Banana 2, Gemma 4</strong></td>
-                  <td>soundtracks, hero intro, portraits, captions</td>
-                  <td>All four bonus models, each with a real job</td>
+                  <td><strong>Lyria 3, Veo 3.1 Fast, Gemma 4</strong></td>
+                  <td>reel soundtracks, the cached 8&nbsp;s opener, the world-model prose and the private taste memo</td>
+                  <td>Three bonus models on real product paths. Gemma is deliberately kept <em>off</em> the Curator's already-existing caption path and isolated to a feature that gates nothing. Nano Banana 2 is called only by <code>eval/cast.py</code> to generate the golden-fixture cast's fictional portraits &mdash; real code, but no product path, so it is listed separately rather than counted here</td>
                 </tr>
                 <tr>
-                  <td><strong>Cloud Trace + Agent Observability (OTel)</strong></td>
-                  <td>span DAGs, token/latency dashboards</td>
-                  <td>The 30% architecture score, visible</td>
+                  <td><strong>Cloud Logging</strong> (structured)</td>
+                  <td>one JSON line per stage per item &mdash; <code>event_id</code>, <code>media_id</code>, <code>stage</code>, <code>ms</code>, verdict</td>
+                  <td><strong>There is no OpenTelemetry instrumentation and no Agent Observability dashboard in this build.</strong> What exists instead is queryable: <code>platform/tickPulse</code> proves the fleet acted unprompted, <code>ledger/directorState</code> records what the director decided and could not get, <code>stageTimings</code> per item, and severity-tagged <code>ops/</code> alerts sharded per worker type</td>
                 </tr>
                 <tr>
                   <td><strong>Secret Manager, IAM, Budgets</strong></td>
@@ -1072,7 +1070,7 @@ sequenceDiagram
         <h2>5. How the demo <em>shows</em> the pipeline</h2>
         <div class="narrative-box flightdeck">
           <p style="margin-bottom: 0;">
-            Spec 10's Flight Deck — a live page rendering this architecture diagram with real traffic animating through it — is <strong>cut</strong>: the video plan had already demoted it to a few seconds of narrative, so building it earned less than the sessions it would have cost. What corroborates the pipeline on camera instead is direct evidence from the platform itself: the Cloud Run services list (six services, one revision tag, all healthy), the Cloud Scheduler job detail page (<code>director-tick</code> / <code>director-tick-demo</code>, <em>Last run: Success</em>), Firestore console documents mutating in real time as a photo clears each stage, and a saved, event-filtered Logs Explorer query streaming the one-line-per-stage logs every worker writes. The <code>/judge</code> page's live next-tick countdown is the same evidence surfaced without a console login. None of this is staged UI — it is the same Firestore fields and GCP consoles a judge could open themselves.
+            Spec 10's Flight Deck — a live page rendering this architecture diagram with real traffic animating through it — is <strong>cut</strong>: the video plan had already demoted it to a few seconds of narrative, so building it earned less than the sessions it would have cost. What corroborates the pipeline on camera instead is direct evidence from the platform itself: the Cloud Run services list (eight services plus the render job, one revision tag, all healthy), the Cloud Scheduler job detail page (<code>director-tick</code> / <code>director-tick-demo</code>, <em>Last run: Success</em>), Firestore console documents mutating in real time as a photo clears each stage, and a saved, event-filtered Logs Explorer query streaming the one-line-per-stage logs every worker writes. The <code>/how-it-works</code> page's live next-tick countdown is the same evidence surfaced without a console login (<code>/judge</code> survives only as a redirect to it). None of this is staged UI — it is the same Firestore fields and GCP consoles a judge could open themselves.
           </p>
         </div>
       </section>
