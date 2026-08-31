@@ -43,7 +43,7 @@ from google.cloud import firestore  # noqa: E402
 import cast as cast_module  # noqa: E402
 import fixtures as fixtures_module  # noqa: E402
 import dev_event  # noqa: E402
-from schemas.event import DemoConfig, Event, EventClass, EventStatus, EventTemplateId  # noqa: E402
+from schemas.event import DemoConfig, Event, EventClass, EventStatus  # noqa: E402
 from schemas.identity import ClaimStatus  # noqa: E402
 from schemas.event import EventTypeProfile, SensitivityProfile, VipTopology  # noqa: E402
 from schemas.person import Tier  # noqa: E402
@@ -160,7 +160,6 @@ def ensure_event(
         stages=dev_event.build_stages(now, tz),
         activeStage="sangeet",
         eventTypeProfile=EventTypeProfile(
-            templateId=EventTemplateId.WEDDING_HINDU,
             vipTopology=VipTopology.PYRAMID,
             sensitivityProfile=SensitivityProfile(),
             culturalGlossary=["haldi", "sangeet", "kanyadaan", "baraat", "mangalsutra"],

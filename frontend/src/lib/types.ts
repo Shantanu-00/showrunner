@@ -428,5 +428,10 @@ export interface ReelDoc {
   durationSec?: number | null;
   narrativeBrief?: string;
   musicCaption?: string | null;
+  /** The composed Lyria track's object, or **null when there is no score at all** — `music.py`'s
+   * fallback returns a silent `Score` (a synthetic metronome for the beat grid, no audio) whenever Lyria
+   * fails, and the render then muxes no audio stream. `ReelSlot` reads this to decide whether the wall
+   * may claim "soundtrack composed by Lyria", rather than printing that over a silent film. */
+  musicUri?: string | null;
   tempoBpm?: number | null;
 }

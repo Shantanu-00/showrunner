@@ -10,102 +10,6 @@ import type { GuardianVerdict } from "./types";
 
 export type EventStatus = "draft" | "live" | "paused" | "wrapping" | "wrapped";
 
-export type EventTemplateId =
-  | "wedding_generic"
-  | "wedding_hindu"
-  | "wedding_christian"
-  | "wedding_muslim"
-  | "bachelor_bachelorette"
-  | "birthday"
-  | "graduation"
-  | "corporate_offsite"
-  | "custom";
-
-/** Repurposed (spec 13 pivot) from the wizard's old template-grid labels into the Settings panel's
- * "start from a preset…" `<select>` labels — neutral wording, never shown as a card grid, never
- * defaulted. Creation itself is itinerary-first and never sends `templateId` (`hostApi.createEvent`);
- * a host who wants the sensitivity dials/glossary pre-filled reaches these from the console instead. */
-export const TEMPLATE_LABELS: Record<EventTemplateId, string> = {
-  wedding_generic: "Generic Wedding",
-  wedding_hindu: "Hindu Wedding",
-  wedding_christian: "Christian Wedding",
-  wedding_muslim: "Muslim Wedding",
-  bachelor_bachelorette: "Bachelor / Bachelorette",
-  birthday: "Birthday",
-  graduation: "Graduation",
-  corporate_offsite: "Corporate Offsite",
-  custom: "Custom",
-};
-
-/** Order the preset `<select>` lists them in — matches the task's neutral ordering, `custom` last. */
-export const TEMPLATE_PRESET_ORDER: EventTemplateId[] = [
-  "wedding_generic",
-  "wedding_hindu",
-  "wedding_christian",
-  "wedding_muslim",
-  "bachelor_bachelorette",
-  "birthday",
-  "graduation",
-  "corporate_offsite",
-  "custom",
-];
-
-/** Client-side mirror of `backend/schemas/host.py::EVENT_TEMPLATE_DEFAULTS` — there is no GET for
- * the server's table, and the Settings panel's preset picker (spec 13) prefills the form *locally*
- * before the host ever saves, exactly like the old wizard step it replaced ("editable, not silently
- * authoritative", spec 11 §2). Keep in sync with `schemas/host.py` by hand; both sides are small and
- * this file says so. */
-export const EVENT_TEMPLATE_PRESETS: Record<
-  EventTemplateId,
-  { vipTopology: "pyramid" | "flat"; sensitivityProfile: SensitivityProfile; culturalGlossary: string[] }
-> = {
-  wedding_generic: {
-    vipTopology: "pyramid",
-    sensitivityProfile: { pda: "context_dependent", alcohol: "public_ok", attire: "standard" },
-    culturalGlossary: ["vows", "ring exchange", "first dance", "bouquet toss"],
-  },
-  wedding_hindu: {
-    vipTopology: "pyramid",
-    sensitivityProfile: { pda: "context_dependent", alcohol: "context_dependent", attire: "standard" },
-    culturalGlossary: ["haldi", "sangeet", "pheras", "kanyadaan", "vidaai"],
-  },
-  wedding_christian: {
-    vipTopology: "pyramid",
-    sensitivityProfile: { pda: "public_ok", alcohol: "public_ok", attire: "standard" },
-    culturalGlossary: ["processional", "vows", "ring exchange", "first dance"],
-  },
-  wedding_muslim: {
-    vipTopology: "pyramid",
-    sensitivityProfile: { pda: "public_ok", alcohol: "context_dependent", attire: "standard" },
-    culturalGlossary: ["nikah", "rukhsati", "walima"],
-  },
-  bachelor_bachelorette: {
-    vipTopology: "flat",
-    sensitivityProfile: { pda: "public_ok", alcohol: "public_ok", attire: "relaxed" },
-    culturalGlossary: [],
-  },
-  birthday: {
-    vipTopology: "pyramid",
-    sensitivityProfile: { pda: "public_ok", alcohol: "context_dependent", attire: "standard" },
-    culturalGlossary: ["cake cutting", "toast"],
-  },
-  graduation: {
-    vipTopology: "pyramid",
-    sensitivityProfile: { pda: "public_ok", alcohol: "private_only", attire: "standard" },
-    culturalGlossary: ["stage crossing", "family portrait"],
-  },
-  corporate_offsite: {
-    vipTopology: "pyramid",
-    sensitivityProfile: { pda: "private_only", alcohol: "context_dependent", attire: "conservative" },
-    culturalGlossary: ["keynote", "team sessions"],
-  },
-  custom: {
-    vipTopology: "pyramid",
-    sensitivityProfile: { pda: "context_dependent", alcohol: "context_dependent", attire: "standard" },
-    culturalGlossary: [],
-  },
-};
-
 /** Stage palette hint (spec 04 §4) — a closed, small vocabulary rather than a free color picker, so
  * the kiosk theme layer only ever has to know eight names. */
 export const STAGE_THEME_OPTIONS = [
@@ -171,7 +75,6 @@ export interface SensitivityProfile {
 }
 
 export interface EventTypeProfile {
-  templateId: EventTemplateId;
   vipTopology: "pyramid" | "flat";
   sensitivityProfile: SensitivityProfile;
   culturalGlossary: string[];
@@ -212,29 +115,38 @@ export interface ParsedMoment {
   label: string;
 }
 
+export interface ParsedPerson {
+  name: string;
+  role?: string;
+  tier?: number;
+}
+
 export interface ParsedStage {
   stageId: string;
   label: string;
   orderIndex: number;
   timeHint: string;
   requiredMoments: ParsedMoment[];
-  /** Already coerced to the vocabulary (or "") by `api/host.py::parse_itinerary`, so anything the
-   * model invented has been dropped before it reaches the review table. A proposal, not a decision. */
+  /** Already coerced to the vocabulary (or "") by `api/host.py::parse_itinerary`. */
   expectedSetting?: ExpectedSetting | "";
-  /** "YYYY-MM-DDTHH:MM" **local wall-clock** in the event's own timezone, or "" when the source gave
-   * no anchorable date (`api/host.py::_coerce_proposed_instants`). Feeds the review table's
-   * `datetime-local` pickers directly — no timezone math on the client, because the value is already
-   * expressed in the event's own local time. */
+  /** Theme styling for kiosk presentation */
+  theme?: string;
+  /** "YYYY-MM-DDTHH:MM" local wall-clock in the event's timezone */
   proposedStartLocal: string;
   proposedEndLocal: string;
 }
 
 export interface ItineraryParseOut {
+  suggestedName?: string;
+  startDate?: string;
+  endDate?: string;
+  timezone?: string;
+  expectedParticipants?: number | null;
+  suggestedAccessMode?: "open" | "invite";
+  suggestedPeople?: ParsedPerson[];
+  culturalGlossary?: string[];
   stages: ParsedStage[];
   warnings: string[];
-  /** The schedule text the model transcribed out of a PDF/screenshot, verbatim — empty when the
-   * input was already pasted text. Not rendered anywhere load-bearing; kept for parity with the
-   * backend response shape. */
   sourceText: string;
 }
 

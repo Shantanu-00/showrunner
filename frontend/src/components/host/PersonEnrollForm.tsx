@@ -1,23 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { UserPlus, Upload, ShieldCheck, X } from "lucide-react";
+import { UserPlus, Upload, ShieldCheck, X, Crown, Gem, Sparkles, User, Check } from "lucide-react";
 import { hostEnrollPerson } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
 
-// 6MB — the task brief's client-side ceiling. The server has its own SELFIE_TOO_LARGE gate on the
-// decoded bytes; this just saves a host a round trip to discover an obviously-too-big file.
 const MAX_PHOTO_BYTES = 6 * 1024 * 1024;
 
-const TIER_OPTIONS: { value: number; label: string }[] = [
-  { value: 0, label: "0 · Principal" },
-  { value: 1, label: "1 · Inner circle" },
-  { value: 2, label: "2 · Named VIP" },
-  { value: 3, label: "3 · Guest" },
+const TIER_CARDS: Array<{
+  value: number;
+  label: string;
+  role: string;
+  icon: React.ElementType;
+}> = [
+  { value: 0, label: "Principal", role: "Host, Bride, Groom", icon: Crown },
+  { value: 1, label: "Inner Circle", role: "Family & Close Friends", icon: Gem },
+  { value: 2, label: "Named VIP", role: "VIPs & Performers", icon: Sparkles },
+  { value: 3, label: "Guest", role: "General Attendees", icon: User },
 ];
 
-/** Friendly copy per `POST …/people/host-enroll` error code (spec 13 §7) — a host adding someone
- * from a phone in a noisy room should never see a raw error code or a stack-shaped message. */
 function friendlyEnrollError(err: unknown): string {
   if (err instanceof ApiError) {
     switch (err.code) {
@@ -28,7 +29,7 @@ function friendlyEnrollError(err: unknown): string {
       case "BAD_SELFIE":
         return "That photo couldn't be read — try a different image.";
       case "SELFIE_TOO_LARGE":
-        return "That photo is too large for the face service — try a smaller image.";
+        return "That photo is larger than 6MB — try a smaller image.";
       case "FACE_SERVICE_UNAVAILABLE":
         return "The face-recognition service is temporarily unavailable — try again shortly.";
       default:
@@ -39,39 +40,44 @@ function friendlyEnrollError(err: unknown): string {
   return "Something went wrong adding that person.";
 }
 
-/**
- * The host-enrollment form — shared verbatim by the People panel (`PeoplePanel.tsx`) and the
- * wizard's Step 4 (`HostWizard.tsx`), because both are the same action at a different point in
- * the host's session: name, tier, a reference photo, and an explicit, unchecked-by-default
- * permission acknowledgment. See `POST …/people/host-enroll` (spec 13 §7).
- *
- * `defaultTier` is a pure client-side default for *this form's next untouched add* — the wizard's
- * "everyone is equally featured" toggle flips it between 1 and 3, but a host who already picked a
- * tier for the person they're currently adding is never silently overridden.
- */
 export function PersonEnrollForm({
   eventId,
   defaultTier = 3,
+  prefill = null,
   onAdded,
 }: {
   eventId: string;
   defaultTier?: number;
+  prefill?: { name: string; tier?: number; role?: string } | null;
   onAdded?: (person: { personId: string; displayName: string; tier: number }) => void;
 }) {
-  const [name, setName] = useState("");
-  const [tier, setTier] = useState(defaultTier);
+  const [name, setName] = useState(prefill?.name ?? "");
+  const [tier, setTier] = useState<number>(prefill?.tier ?? defaultTier);
   const [photoBase64, setPhotoBase64] = useState<string | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoName, setPhotoName] = useState<string | null>(null);
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const tierTouchedRef = useRef(false);
 
+  // Sync when prefill is selected (e.g. host clicked an itinerary-parsed person)
   useEffect(() => {
-    if (!tierTouchedRef.current) setTier(defaultTier);
-  }, [defaultTier]);
+    if (prefill?.name) {
+      setName(prefill.name);
+      setTier(typeof prefill.tier === "number" ? prefill.tier : defaultTier);
+      setError(null);
+      setFlash(null);
+    }
+  }, [prefill, defaultTier]);
+
+  // Sync defaultTier when no active custom prefill
+  useEffect(() => {
+    if (!prefill) {
+      setTier(defaultTier);
+    }
+  }, [defaultTier, prefill]);
 
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -86,6 +92,7 @@ export function PersonEnrollForm({
       setError("That photo is larger than 6MB — try a smaller one.");
       return;
     }
+    setPhotoName(file.name);
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
@@ -100,13 +107,13 @@ export function PersonEnrollForm({
   function clearPhoto() {
     setPhotoBase64(null);
     setPhotoPreview(null);
+    setPhotoName(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   function reset() {
     setName("");
     setTier(defaultTier);
-    tierTouchedRef.current = false;
     clearPhoto();
     setConsent(false);
   }
@@ -123,7 +130,7 @@ export function PersonEnrollForm({
         tier,
         photoConsent: true,
       });
-      setFlash(`${res.displayName} added.`);
+      setFlash(`✓ ${res.displayName} enrolled successfully.`);
       onAdded?.(res);
       reset();
     } catch (err) {
@@ -136,71 +143,133 @@ export function PersonEnrollForm({
   const canSubmit = Boolean(name.trim() && photoBase64 && consent && !busy);
 
   return (
-    <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
-      <div className="flex items-center gap-2 text-xs font-semibold text-[var(--ivory)] uppercase tracking-wider">
-        <UserPlus className="w-4 h-4 text-[var(--accent)]" />
-        <span>Add a person</span>
+    <div className="p-5 sm:p-6 rounded-3xl glass-card border border-white/10 space-y-5 shadow-xl">
+      <div className="flex items-center justify-between border-b border-white/10 pb-3">
+        <div className="flex items-center gap-2">
+          <span className="p-1.5 rounded-lg bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30">
+            <UserPlus className="w-4 h-4" />
+          </span>
+          <span className="text-xs font-semibold text-[var(--ivory)] uppercase tracking-wider">
+            Add Person Reference Photo
+          </span>
+        </div>
+
+        {prefill?.name && (
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--accent)]/15 border border-[var(--accent)]/30 text-[var(--accent)] font-semibold">
+            Prefilled: {prefill.name}
+          </span>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-[11px] font-semibold text-[var(--ink-muted)] uppercase tracking-wider mb-1.5">
-            Name
-          </label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Priya Sharma"
-            className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-[var(--ivory)] placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
-          />
-        </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-[var(--ink-muted)] uppercase tracking-wider mb-1.5">
-            Tier
-          </label>
-          <select
-            value={tier}
-            onChange={(e) => {
-              tierTouchedRef.current = true;
-              setTier(Number(e.target.value));
-            }}
-            className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-[var(--ivory)] focus:border-[var(--accent)] focus:outline-none"
-          >
-            {TIER_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
+      {/* Name Input */}
       <div>
         <label className="block text-[11px] font-semibold text-[var(--ink-muted)] uppercase tracking-wider mb-1.5">
-          Reference photo
+          Full Name / Display Name
+        </label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Rahul Sharma"
+          className="w-full px-4 py-3 rounded-xl bg-black/50 border border-white/10 text-sm text-[var(--ivory)] placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none transition-colors shadow-inner"
+        />
+      </div>
+
+      {/* Interactive Visual Segmented Tier Selector */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-[11px] font-semibold text-[var(--ink-muted)] uppercase tracking-wider">
+            Coverage &amp; Priority Tier
+          </label>
+          <span className="text-[10px] text-[var(--ink-faint)] font-mono">
+            {TIER_CARDS.find((t) => t.value === tier)?.role}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {TIER_CARDS.map((t) => {
+            const isSelected = tier === t.value;
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.value}
+                type="button"
+                onClick={() => setTier(t.value)}
+                className={`p-3 rounded-2xl border text-left transition-all duration-200 cursor-pointer active:scale-95 flex flex-col justify-between min-h-[76px] ${
+                  isSelected
+                    ? "bg-[var(--accent)]/15 border-[var(--accent)]/60 text-white shadow-[0_0_20px_-4px_var(--accent-glow)] ring-1 ring-[var(--accent)]/40"
+                    : "bg-white/[0.03] border-white/10 text-[var(--text-secondary)] hover:border-white/20 hover:text-white"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <Icon
+                    className={`w-4 h-4 ${
+                      isSelected ? "text-[var(--accent)]" : "text-[var(--ink-muted)]"
+                    }`}
+                  />
+                  {isSelected && (
+                    <span className="w-4 h-4 rounded-full bg-[var(--accent)] text-slate-950 flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5 stroke-[3]" />
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <p className={`text-xs font-semibold ${isSelected ? "text-[var(--ivory)] font-bold" : ""}`}>
+                    {t.label}
+                  </p>
+                  <p className="text-[9px] text-[var(--ink-muted)] truncate leading-tight mt-0.5">
+                    {t.role}
+                  </p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Reference Photo Upload Dropzone */}
+      <div>
+        <label className="block text-[11px] font-semibold text-[var(--ink-muted)] uppercase tracking-wider mb-1.5">
+          Reference Face Photo
         </label>
         {photoPreview ? (
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-black/40 border border-white/10">
+          <div className="flex items-center gap-3.5 p-3.5 rounded-2xl bg-black/50 border border-white/15 shadow-inner">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={photoPreview}
               alt="Selected reference"
-              className="w-12 h-12 rounded-lg object-cover border border-white/10 shrink-0"
+              className="w-14 h-14 rounded-xl object-cover border border-[var(--accent)]/40 shadow-md shrink-0"
             />
-            <span className="flex-1 min-w-0 text-xs text-[var(--ink-muted)]">Photo ready</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-[var(--ivory)] truncate">
+                {photoName || "Face Photo Loaded"}
+              </p>
+              <p className="text-[11px] text-emerald-400 font-mono mt-0.5 flex items-center gap-1">
+                <Check className="w-3 h-3 stroke-[3]" />
+                <span>Ready for face embedding</span>
+              </p>
+            </div>
             <button
               type="button"
               onClick={clearPhoto}
               aria-label="Remove photo"
-              className="shrink-0 p-1 rounded-full hover:bg-white/10 text-[var(--ink-muted)] hover:text-[var(--danger)]"
+              className="shrink-0 p-2 rounded-xl bg-white/5 hover:bg-rose-500/20 text-[var(--ink-muted)] hover:text-rose-400 border border-white/10 transition-colors"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         ) : (
-          <label className="flex flex-col items-center justify-center gap-2 p-5 rounded-xl border border-dashed border-white/15 text-center cursor-pointer hover:border-[var(--accent)]/50 transition-colors">
-            <Upload className="w-5 h-5 text-[var(--ink-muted)]" />
-            <span className="text-xs text-[var(--ink-muted)]">One clear, front-facing photo — JPEG or PNG, up to 6MB</span>
+          <label className="flex flex-col items-center justify-center gap-2.5 p-6 rounded-2xl border border-dashed border-white/20 hover:border-[var(--accent)]/60 bg-white/[0.02] hover:bg-white/[0.04] text-center cursor-pointer transition-all duration-200">
+            <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[var(--accent)]">
+              <Upload className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-[var(--ivory)] mb-0.5">
+                Upload clear front-facing portrait
+              </p>
+              <p className="text-[11px] text-[var(--ink-muted)]">
+                JPEG or PNG, up to 6MB — indexed securely inside event
+              </p>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
@@ -212,42 +281,61 @@ export function PersonEnrollForm({
         )}
       </div>
 
-      <label className="flex items-start gap-2.5 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={consent}
-          onChange={(e) => setConsent(e.target.checked)}
-          className="w-4 h-4 mt-0.5 rounded accent-[var(--accent)]"
-        />
-        <span className="text-xs text-[var(--ivory-dim)] leading-relaxed">
-          I have this person&rsquo;s permission to add their photo.
-        </span>
-      </label>
+      {/* Permission / Consent Styled Toggle Card */}
+      <button
+        type="button"
+        onClick={() => setConsent(!consent)}
+        className={`w-full p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-start gap-3 cursor-pointer ${
+          consent
+            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+            : "bg-white/[0.02] border-white/10 text-[var(--ink-muted)] hover:border-white/20"
+        }`}
+      >
+        <div
+          className={`w-5 h-5 rounded-lg border mt-0.5 flex items-center justify-center shrink-0 transition-colors ${
+            consent
+              ? "bg-emerald-500 border-emerald-400 text-slate-950"
+              : "border-white/20 bg-black/40"
+          }`}
+        >
+          {consent && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium text-[var(--ivory)] leading-relaxed">
+            I confirm I have this person&rsquo;s permission to index their reference photo for this event.
+          </p>
+        </div>
+      </button>
 
       {error && (
-        <p className="text-xs text-[var(--danger)] p-3 rounded-xl bg-[var(--danger)]/10 border border-[var(--danger)]/20">
+        <p className="text-xs text-[var(--danger)] p-3.5 rounded-xl bg-[var(--danger)]/15 border border-[var(--danger)]/30 font-medium">
           {error}
         </p>
       )}
-      {flash && !error && <p className="text-xs text-[var(--ok)] font-medium">{flash}</p>}
+      {flash && !error && (
+        <p className="text-xs text-emerald-400 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 font-medium">
+          {flash}
+        </p>
+      )}
 
+      {/* Submit Button */}
       <button
         type="button"
         disabled={!canSubmit}
         onClick={() => void submit()}
-        className="btn-primary w-full py-3 rounded-full text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
+        className="btn-primary w-full py-3.5 rounded-full text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-40 shadow-lg cursor-pointer active:scale-95"
       >
         <UserPlus className="w-4 h-4" />
-        <span>{busy ? "Adding…" : "Add person"}</span>
+        <span>{busy ? "Indexing Face & Adding…" : `Enroll ${name.trim() || "Person"}`}</span>
       </button>
 
-      <p className="flex items-start gap-1.5 text-[11px] text-[var(--ink-faint)] leading-relaxed pt-3 border-t border-white/5">
-        <ShieldCheck className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+      <div className="flex items-start gap-2 text-[11px] text-[var(--ink-faint)] leading-relaxed pt-2 border-t border-white/5">
+        <ShieldCheck className="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-400" />
         <span>
-          Adding someone helps Showrunner track who&rsquo;s been photographed. It never opens their
-          album to anyone — they claim it themselves with a selfie, and you approve it.
+          Enrolling someone helps Showrunner track who&rsquo;s been photographed and surface missing shots. Guests claim their album with their own selfie and host approval.
         </span>
-      </p>
+      </div>
     </div>
   );
 }
+

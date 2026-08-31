@@ -226,7 +226,6 @@ async def event_public(
         # `resolve_active`, not the raw fields: the schedule leg (spec 13) is what shows "Now" to a
         # guest whose host never pressed the button and whose director has not advanced yet.
         "activeStage": resolve_active(event)[0],
-        "templateId": (event.get("eventTypeProfile") or {}).get("templateId"),
         # `day` is a derived 1-based index (spec 13), null on undated events. `startsAt`/`endsAt`
         # ride along only for a member (see the docstring) — `_stage_payload` is the one place that
         # decision is made, so there is no second code path that could forget it.

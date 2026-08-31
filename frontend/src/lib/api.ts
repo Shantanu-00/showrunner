@@ -92,14 +92,10 @@ export async function registerUploadBatch(
   body: UploadBatchRequest
 ): Promise<UploadBatchResponse> {
   if (!getUid()) throw new Error("not authenticated");
-  const res = await authedFetch(`/v1/events/${eventId}/uploads`, {
+  return authedJson<UploadBatchResponse>(`/v1/events/${eventId}/uploads`, {
     method: "POST",
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    throw new Error(`upload registration failed: ${res.status}`);
-  }
-  return res.json();
 }
 
 /** POST /v1/events/{eventId}/uploads/{mediaId}/refresh-url — spec 01 §3. */
@@ -107,14 +103,10 @@ export async function refreshUploadUrl(
   eventId: string,
   mediaId: string
 ): Promise<{ signedUrl?: string; resumableSessionUri?: string; expiresAt: string }> {
-  const res = await authedFetch(`/v1/events/${eventId}/uploads/${mediaId}/refresh-url`, {
+  return authedJson(`/v1/events/${eventId}/uploads/${mediaId}/refresh-url`, {
     method: "POST",
     body: JSON.stringify({}),
   });
-  if (!res.ok) {
-    throw new Error(`url refresh failed: ${res.status}`);
-  }
-  return res.json();
 }
 
 /** GET /v1/events/{eventId}/public — the narrow, non-sensitive bootstrap (name/theme/stage).

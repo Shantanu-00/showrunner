@@ -19,6 +19,7 @@ cross for anyone's wedding photos.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 from dataclasses import dataclass
 from typing import Any, TypeVar
@@ -150,51 +151,66 @@ async def _invoke(
 ) -> tuple[str, ModelUsage, str | None]:
     """One agent turn. Returns (raw text, usage, finish reason)."""
     runner = _runner(agent, plugins)
-    session = await runner.session_service.create_session(
-        app_name="showrunner", user_id="worker"
-    )
-    text_chunks: list[str] = []
-    usage = ModelUsage()
-    finish: str | None = None
-    error_message: str | None = None
-    try:
-        async for event in runner.run_async(
-            user_id="worker",
-            session_id=session.id,
-            new_message=types.Content(role="user", parts=parts),
-        ):
-            if event.usage_metadata is not None:
-                usage = ModelUsage(
-                    tokensIn=int(event.usage_metadata.prompt_token_count or 0),
-                    tokensOut=int(event.usage_metadata.candidates_token_count or 0),
-                    tokensCached=int(event.usage_metadata.cached_content_token_count or 0),
-                )
-            if event.finish_reason is not None:
-                finish = str(getattr(event.finish_reason, "name", event.finish_reason))
-            if event.error_message:
-                error_message = event.error_message
-            if event.is_final_response() and event.content and event.content.parts:
-                text_chunks += [p.text for p in event.content.parts if p.text]
-    except Exception as exc:  # noqa: BLE001 - classified, then re-raised as ours
-        # Carry whatever this call already burned. The prompt was paid for whether or not the answer
-        # was usable, and a cost ticker that only counts successful calls understates the bill exactly
-        # when things are going wrong. This path is not hypothetical: when `output_schema` is set, ADK
-        # validates the response itself, so a truncated answer raises *here* rather than at our own
-        # parse below, and without this line the tick would report zero tokens for a call it made.
-        error = _classify_error(exc)
-        error.usage = usage
-        raise error from exc
-    finally:
-        try:
-            await runner.session_service.delete_session(
-                app_name="showrunner", user_id="worker", session_id=session.id
-            )
-        except Exception as exc:  # noqa: BLE001 - a leaked session must not fail the request
-            log.debug("session_delete_failed", err=str(exc))
+    last_error: Exception | None = None
 
-    if error_message:
-        raise PermanentModelError(f"model reported: {error_message}", usage)
-    return "".join(text_chunks), usage, finish
+    for attempt in range(1, 4):
+        session = await runner.session_service.create_session(
+            app_name="showrunner", user_id="worker"
+        )
+        text_chunks: list[str] = []
+        usage = ModelUsage()
+        finish: str | None = None
+        error_message: str | None = None
+        try:
+            async for event in runner.run_async(
+                user_id="worker",
+                session_id=session.id,
+                new_message=types.Content(role="user", parts=parts),
+            ):
+                if event.usage_metadata is not None:
+                    usage = ModelUsage(
+                        tokensIn=int(event.usage_metadata.prompt_token_count or 0),
+                        tokensOut=int(event.usage_metadata.candidates_token_count or 0),
+                        tokensCached=int(event.usage_metadata.cached_content_token_count or 0),
+                    )
+                if event.finish_reason is not None:
+                    finish = str(getattr(event.finish_reason, "name", event.finish_reason))
+                if event.error_message:
+                    error_message = event.error_message
+                if event.is_final_response() and event.content and event.content.parts:
+                    text_chunks += [p.text for p in event.content.parts if p.text]
+
+            if error_message:
+                raise PermanentModelError(f"model reported: {error_message}", usage)
+            return "".join(text_chunks), usage, finish
+
+        except Exception as exc:  # noqa: BLE001 - classified, then re-raised as ours
+            error = _classify_error(exc)
+            error.usage = usage
+            last_error = error
+            if isinstance(error, TransientModelError) and attempt < 3:
+                delay = 2.0 * (attempt**2)
+                log.warn(
+                    "model_transient_retry",
+                    stage=agent.name,
+                    attempt=attempt,
+                    delay=delay,
+                    err=str(error)[:160],
+                )
+                await asyncio.sleep(delay)
+                continue
+            raise error from exc
+        finally:
+            try:
+                await runner.session_service.delete_session(
+                    app_name="showrunner", user_id="worker", session_id=session.id
+                )
+            except Exception as exc:  # noqa: BLE001 - a leaked session must not fail the request
+                log.debug("session_delete_failed", err=str(exc))
+
+    if last_error:
+        raise last_error
+    raise TransientModelError("model invocation exhausted retries")
 
 
 async def run_structured(

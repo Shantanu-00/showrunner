@@ -1,14 +1,12 @@
 """Host console & lifecycle wire shapes (spec 08, spec 11 §1/§2/§6).
 
-`EVENT_TEMPLATE_DEFAULTS` is the wizard's "time-saving starting point, never a silent authority"
-(spec 11 §2): every dial and glossary term below is exactly what the host sees in the editable
-review step and can change in either direction before Go Live. Only `wedding_generic`,
-`wedding_hindu`, `wedding_christian`, `bachelor_bachelorette`, `birthday`, `graduation` and
-`corporate_offsite` are tabled in spec 11 §2; `wedding_muslim` and `custom` are not, and this file
-says so rather than silently inventing a culturally-specific default for the one spec left open —
-`wedding_muslim` gets the same *shape* as `wedding_christian` (pyramid, public-facing ceremony)
-with its own moment labels, and `custom` starts from the neutral, most-permission-seeking defaults
-and leans on the host filling in everything else.
+Every event starts from one neutral `EventTypeProfile` — pyramid topology, context-dependent
+dials, an empty glossary — and the host edits it directly from the Settings panel (`POST
+…/profile`). There is no named-template picker: the old preset menu (wedding/bachelor/birthday/…)
+was decoration over the same dials, and it's gone. The dials themselves stay, because they are not
+decoration — `workers/safety/gate.py` reads `sensitivityProfile` to set Guardian's severity
+ceiling, and `workers/curate/agent.py` reads `culturalGlossary` to constrain what a photo's
+`culturalElements` may claim.
 """
 
 from __future__ import annotations
@@ -20,71 +18,11 @@ from pydantic import BaseModel, Field
 from schemas.event import (
     EventAccessMode,
     EventStage,
-    EventTemplateId,
     EventTypeProfile,
     RequiredMoment,
     SensitivityProfile,
     VipTopology,
 )
-
-
-def _profile(
-    topology: VipTopology,
-    pda: str,
-    alcohol: str,
-    attire: str,
-    moments: list[str],
-) -> EventTypeProfile:
-    return EventTypeProfile(
-        vipTopology=topology,
-        sensitivityProfile=SensitivityProfile(pda=pda, alcohol=alcohol, attire=attire),
-        culturalGlossary=list(moments),
-        requiredMomentsTemplate=[
-            RequiredMoment(momentId=label.lower().replace(" ", "_"), label=label) for label in moments
-        ],
-    )
-
-
-#: Spec 11 §2's table, plus the two templates it leaves open (see module docstring). `attire` is
-#: not spec-tabled at all — "standard" everywhere except the two events where a different default
-#: is obviously less wrong (a bachelor party runs relaxed, a keynote runs conservative), flagged
-#: here rather than silently chosen, same discipline as the other NOT-spec-pinned constants.
-EVENT_TEMPLATE_DEFAULTS: dict[EventTemplateId, EventTypeProfile] = {
-    EventTemplateId.WEDDING_GENERIC: _profile(
-        VipTopology.PYRAMID, "context_dependent", "public_ok", "standard",
-        ["vows", "ring exchange", "first dance", "bouquet toss"],
-    ),
-    EventTemplateId.WEDDING_HINDU: _profile(
-        VipTopology.PYRAMID, "context_dependent", "context_dependent", "standard",
-        ["haldi", "sangeet", "pheras", "kanyadaan", "vidaai"],
-    ),
-    EventTemplateId.WEDDING_CHRISTIAN: _profile(
-        VipTopology.PYRAMID, "public_ok", "public_ok", "standard",
-        ["processional", "vows", "ring exchange", "first dance"],
-    ),
-    EventTemplateId.WEDDING_MUSLIM: _profile(
-        VipTopology.PYRAMID, "public_ok", "context_dependent", "standard",
-        ["nikah", "rukhsati", "walima"],
-    ),
-    EventTemplateId.BACHELOR_BACHELORETTE: _profile(
-        VipTopology.FLAT, "public_ok", "public_ok", "relaxed", [],
-    ),
-    EventTemplateId.BIRTHDAY: _profile(
-        VipTopology.PYRAMID, "public_ok", "context_dependent", "standard",
-        ["cake cutting", "toast"],
-    ),
-    EventTemplateId.GRADUATION: _profile(
-        VipTopology.PYRAMID, "public_ok", "private_only", "standard",
-        ["stage crossing", "family portrait"],
-    ),
-    EventTemplateId.CORPORATE_OFFSITE: _profile(
-        VipTopology.PYRAMID, "private_only", "context_dependent", "conservative",
-        ["keynote", "team sessions"],
-    ),
-    EventTemplateId.CUSTOM: _profile(
-        VipTopology.PYRAMID, "context_dependent", "context_dependent", "standard", [],
-    ),
-}
 
 
 # ---------------------------------------------------------------- event creation (spec 08 §1)
@@ -93,10 +31,6 @@ EVENT_TEMPLATE_DEFAULTS: dict[EventTemplateId, EventTypeProfile] = {
 class CreateEventRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     timezone: str = Field(min_length=1, max_length=64)  # IANA name; EXIF is interpreted through it
-    #: Spec 13: creation is itinerary-led, not template-led. `custom` (neutral dials, empty
-    #: glossary) is the default and the wizard never sends this field; the template presets survive
-    #: only as starting points inside the console's Settings panel (`POST …/profile`).
-    templateId: EventTemplateId = EventTemplateId.CUSTOM
     #: ISO local dates ("2026-10-12") in `timezone` — see `Event.startsOn`. Both optional; a dated
     #: event needs both, and `endDate < startDate` is rejected.
     startDate: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -234,9 +168,9 @@ class AccessResponse(BaseModel):
 
 
 class ProfileUpdateRequest(BaseModel):
-    templateId: EventTemplateId
-    #: When absent, the template's own defaults apply verbatim; present fields override them —
-    #: this is the "editable, not silently authoritative" step (spec 11 §2).
+    #: Every field optional and independently settable; absent fields leave the existing profile
+    #: untouched — "editable, not silently authoritative" (spec 11 §2), just without a template to
+    #: apply first.
     vipTopology: VipTopology | None = None
     sensitivityProfile: SensitivityProfile | None = None
     culturalGlossary: list[str] | None = None

@@ -290,17 +290,28 @@ def main() -> int:
         fail(f"an injection stage label was saved ({resp.status_code}) — it rides into prompts")
     ok("an injection stage label is deflected at the one writer of the stage table")
 
-    # --- 5. what a guest sees: day indices, never stage timing
-    resp = requests.get(f"{api}/v1/events/{event_id}/public", headers=host, timeout=30)
-    public = resp.json()
-    days = {s["stageId"]: s.get("day") for s in public.get("stages") or []}
+    # --- 5. stranger vs member privacy split: strangers get day granularity only, members get timing
+    stranger_token, _ = sign_in_anonymously(api_key)
+    resp_stranger = requests.get(
+        f"{api}/v1/events/{event_id}/public",
+        headers={"Authorization": f"Bearer {stranger_token}"},
+        timeout=30,
+    )
+    public_stranger = resp_stranger.json()
+    days = {s["stageId"]: s.get("day") for s in public_stranger.get("stages") or []}
     if days.get("day1_shibuya") != 1 or days.get("day4_viewpoint") != 4:
         fail(f"public stage day indices wrong: {days}")
-    if "startsAt" in str(public.get("stages")):
-        fail("the public payload leaked stage timing — day granularity only")
-    if public.get("startsOn") != START:
-        fail(f"public startsOn missing/wrong: {public.get('startsOn')}")
-    ok("the public payload carries day indices and dates, never stage timing")
+    if "startsAt" in str(public_stranger.get("stages")):
+        fail("the public payload leaked stage timing to a stranger — day granularity only")
+    if public_stranger.get("startsOn") != START:
+        fail(f"public startsOn missing/wrong: {public_stranger.get('startsOn')}")
+    ok("the stranger public payload carries day indices and dates, never stage timing")
+
+    resp_member = requests.get(f"{api}/v1/events/{event_id}/public", headers=host, timeout=30)
+    public_member = resp_member.json()
+    if "startsAt" not in str(public_member.get("stages")):
+        fail("a member could not see stage timing on their timeline")
+    ok("a member receives stage timing (startsAt/endsAt) for their timeline")
 
     # --- 6. details correction
     resp = requests.post(

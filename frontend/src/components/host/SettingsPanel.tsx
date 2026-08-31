@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import { ChevronDown, Lock, Plus, Settings2, X } from "lucide-react";
 import { updateProfile } from "@/lib/hostApi";
 import { ApiError } from "@/lib/api";
-import type { EventTemplateId, HostEventDoc, SensitivityProfile } from "@/lib/hostTypes";
-import { EVENT_TEMPLATE_PRESETS, TEMPLATE_LABELS, TEMPLATE_PRESET_ORDER } from "@/lib/hostTypes";
+import type { HostEventDoc, SensitivityProfile } from "@/lib/hostTypes";
 
 type PdaAlcohol = "public_ok" | "context_dependent" | "private_only";
 type Attire = "relaxed" | "standard" | "conservative";
@@ -23,14 +22,11 @@ const ATTIRE_OPTIONS: { value: Attire; label: string }[] = [
   { value: "conservative", label: "Conservative" },
 ];
 
-/** Quiet, collapsed-by-default cultural/sensitivity settings (spec 11 §2) — the wizard's old
- * template grid survives only here, as an optional starting point, never a step a host must pass
- * through to create an event (spec 13's pivot). Mounted in `HostConsoleShell`. */
+/** Quiet, collapsed-by-default cultural/sensitivity settings (spec 11 §2) — every event starts
+ * from one neutral profile and the host edits the dials/glossary/topology directly here; there is
+ * no preset menu. Mounted in `HostConsoleShell`. */
 export function SettingsPanel({ event, eventId }: { event: HostEventDoc; eventId: string }) {
   const [open, setOpen] = useState(false);
-  const [templateId, setTemplateId] = useState<EventTemplateId>(
-    event.eventTypeProfile?.templateId ?? "custom"
-  );
   const [vipTopology, setVipTopology] = useState<Topology>(event.eventTypeProfile?.vipTopology ?? "pyramid");
   const [sensitivity, setSensitivity] = useState<SensitivityProfile>(
     event.eventTypeProfile?.sensitivityProfile ?? {
@@ -46,7 +42,6 @@ export function SettingsPanel({ event, eventId }: { event: HostEventDoc; eventId
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
   useEffect(() => {
-    setTemplateId(event.eventTypeProfile?.templateId ?? "custom");
     setVipTopology(event.eventTypeProfile?.vipTopology ?? "pyramid");
     setSensitivity(
       event.eventTypeProfile?.sensitivityProfile ?? {
@@ -59,16 +54,6 @@ export function SettingsPanel({ event, eventId }: { event: HostEventDoc; eventId
   }, [event.eventId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isDraft = event.status === "draft";
-
-  function applyPreset(id: EventTemplateId) {
-    setTemplateId(id);
-    const preset = EVENT_TEMPLATE_PRESETS[id];
-    if (preset) {
-      setVipTopology(preset.vipTopology);
-      setSensitivity(preset.sensitivityProfile);
-      setGlossary(preset.culturalGlossary);
-    }
-  }
 
   function addGlossaryTerm() {
     const term = glossaryDraft.trim();
@@ -89,7 +74,6 @@ export function SettingsPanel({ event, eventId }: { event: HostEventDoc; eventId
     setError(null);
     try {
       await updateProfile(eventId, {
-        templateId,
         vipTopology,
         sensitivityProfile: sensitivity,
         culturalGlossary: glossary,
@@ -132,32 +116,6 @@ export function SettingsPanel({ event, eventId }: { event: HostEventDoc; eventId
 
       {open && (
         <div className="px-6 pb-6 space-y-6 border-t border-white/10 pt-5">
-          {/* --------------------------------------------------------------- preset */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-xs font-semibold text-[var(--ivory)] uppercase tracking-wider">
-                Start from a preset…
-              </label>
-              {!isDraft && <LockedNote />}
-            </div>
-            <select
-              value={templateId}
-              disabled={!isDraft}
-              onChange={(e) => applyPreset(e.target.value as EventTemplateId)}
-              className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-[var(--ivory)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-50"
-            >
-              {TEMPLATE_PRESET_ORDER.map((id) => (
-                <option key={id} value={id}>
-                  {TEMPLATE_LABELS[id]}
-                </option>
-              ))}
-            </select>
-            <p className="text-[11px] text-[var(--ink-faint)] mt-1.5">
-              Prefills the dials, topology and glossary below — every field stays editable, nothing is
-              silently authoritative.
-            </p>
-          </div>
-
           {/* --------------------------------------------------------------- sensitivity dials */}
           <div className="space-y-4">
             <p className="text-xs font-semibold text-[var(--ivory)] uppercase tracking-wider">

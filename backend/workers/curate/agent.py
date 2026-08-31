@@ -96,60 +96,11 @@ If a hosted space and open country are both in frame, the hosted space wins — 
 nature and nothing else. Prefer closeup_detail or unknown over guessing: they are real answers.
 """
 
-#: Text-only few-shots (spec 03 §5.1: three annotated examples per event type). Each line is
-#: `scene -> the numbers a correct answer would carry`, which is the only thing worth teaching.
-_FEWSHOTS: dict[str, str] = {
-    "wedding_hindu": """\
-Examples (described scenes, and the scores a correct answer carries):
-1. Turmeric paste being pressed onto a laughing bride's cheek by three relatives, bright daylight,
-   hands in motion, sharp -> aestheticScore 0.85, isHighlight true, momentTags [haldi_application],
-   peopleCountEstimate 4, quality all near 0.
-2. Wide shot of a mandap from the back of the hall, guests' heads filling the lower third, the
-   couple small and partly hidden -> aestheticScore 0.35, isHighlight false,
-   momentTags [ceremony_wide], peopleCountEstimate 40.
-3. Grandmother wiping her eyes during the vows, tight frame, soft window light, in focus ->
-   aestheticScore 0.9, isHighlight true, momentTags [emotional_reaction], peopleCountEstimate 1.
-""",
-    "wedding": """\
-Examples (described scenes, and the scores a correct answer carries):
-1. Ring being slipped onto a finger, hands filling the frame, shallow depth of field, sharp ->
-   aestheticScore 0.85, isHighlight true, momentTags [ring_exchange], peopleCountEstimate 2.
-2. Buffet table shot at an angle, no people, mixed indoor light -> aestheticScore 0.4,
-   isHighlight false, momentTags [reception_details], peopleCountEstimate 0.
-3. Blurred group on the dance floor, motion smeared across the frame, faces unreadable ->
-   aestheticScore 0.2, isHighlight false, momentTags [dancing], quality.blur 0.8,
-   peopleCountEstimate 8.
-""",
-    "party": """\
-Examples (described scenes, and the scores a correct answer carries):
-1. Candles being blown out, faces lit from below, everyone leaning in, sharp -> aestheticScore 0.85,
-   isHighlight true, momentTags [cake_cutting], peopleCountEstimate 6.
-2. Two friends mid-laugh at a table, phone flash, slightly harsh but clear -> aestheticScore 0.6,
-   isHighlight false, momentTags [candid_conversation], peopleCountEstimate 2.
-3. Dark room, one bright light source, silhouettes only, subjects unidentifiable ->
-   aestheticScore 0.15, isHighlight false, momentTags [venue_ambience],
-   quality.exposure 0.7, peopleCountEstimate 3.
-""",
-    "ceremony": """\
-Examples (described scenes, and the scores a correct answer carries):
-1. Graduate turning from the podium holding a certificate, mid-stride, clean background, sharp ->
-   aestheticScore 0.8, isHighlight true, momentTags [certificate_handover],
-   peopleCountEstimate 2.
-2. Rows of seated attendees photographed from the side, no clear subject -> aestheticScore 0.35,
-   isHighlight false, momentTags [audience_wide], peopleCountEstimate 30.
-3. Family embrace outside the hall, arms around each other, one face fully visible ->
-   aestheticScore 0.75, isHighlight true, momentTags [family_embrace], peopleCountEstimate 4.
-""",
-    "corporate": """\
-Examples (described scenes, and the scores a correct answer carries):
-1. Speaker mid-gesture on stage, screen legible behind them, well lit, sharp -> aestheticScore 0.75,
-   isHighlight true, momentTags [keynote], peopleCountEstimate 1.
-2. Laptop and coffee cup on a table, overhead angle, no people -> aestheticScore 0.45,
-   isHighlight false, momentTags [workshop_details], peopleCountEstimate 0.
-3. Team standing in a line for a posed photo, half squinting into the sun -> aestheticScore 0.5,
-   isHighlight false, momentTags [group_photo], quality.eyesClosed 0.5, peopleCountEstimate 9.
-""",
-    "generic": """\
+#: Text-only few-shots (spec 03 §5.1). Each line is `scene -> the numbers a correct answer would
+#: carry`, which is the only thing worth teaching. One event-generic set — there is no template axis
+#: to key a family off any more, and this set already spans people, scenery, venue detail and the
+#: accidental-shot floor.
+_FEWSHOTS = """\
 Examples (described scenes, and the scores a correct answer carries):
 1. Two people mid-embrace, faces visible, natural light, sharp -> aestheticScore 0.8,
    isHighlight true, momentTags [embrace], peopleCountEstimate 2.
@@ -162,22 +113,7 @@ Examples (described scenes, and the scores a correct answer carries):
    isHighlight false, momentTags [venue_details], peopleCountEstimate 0.
 5. Photo of a floor, taken accidentally -> aestheticScore 0.0, isHighlight false, momentTags
    [accidental], caption empty, peopleCountEstimate 0.
-""",
-}
-
-#: Which few-shot family each event template draws on. Templates that behave the same
-#: photographically share a set rather than duplicating one.
-_FEWSHOT_FAMILY: dict[str, str] = {
-    "wedding_hindu": "wedding_hindu",
-    "wedding_generic": "wedding",
-    "wedding_christian": "wedding",
-    "wedding_muslim": "wedding",
-    "bachelor_bachelorette": "party",
-    "birthday": "party",
-    "graduation": "ceremony",
-    "corporate_offsite": "corporate",
-    "custom": "generic",
-}
+"""
 
 
 @functools.lru_cache(maxsize=1)
@@ -212,12 +148,6 @@ def curator_agent() -> LlmAgent:
             media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
         ),
     )
-
-
-def fewshots_for(event: dict[str, Any]) -> str:
-    profile = event.get("eventTypeProfile") or {}
-    template = str(profile.get("templateId") or "custom")
-    return _FEWSHOTS[_FEWSHOT_FAMILY.get(template, "generic")]
 
 
 def event_context(event: dict[str, Any]) -> str:
@@ -269,6 +199,6 @@ def prompt_parts(
 ) -> list[types.Part]:
     """Text context first, then the image: the label space has to be established before the photo."""
     return [
-        as_text_part(f"{event_context(event)}\n\n{fewshots_for(event)}"),
+        as_text_part(f"{event_context(event)}\n\n{_FEWSHOTS}"),
         as_image_part(image, content_type),
     ]

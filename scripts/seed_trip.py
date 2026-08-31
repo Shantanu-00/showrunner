@@ -60,7 +60,6 @@ from schemas.event import (  # noqa: E402
     EventClass,
     EventStage,
     EventStatus,
-    EventTemplateId,
     EventTypeProfile,
     RequiredMoment,
     SensitivityProfile,
@@ -296,7 +295,6 @@ def ensure_trip_event(event_id: str, today: dt.date, tz: ZoneInfo) -> tuple[dict
         stages=stages,
         activeStage=None,
         eventTypeProfile=EventTypeProfile(
-            templateId=EventTemplateId.CUSTOM,
             vipTopology=VipTopology.FLAT,
             sensitivityProfile=SensitivityProfile(),  # neutral defaults: context_dependent / standard
             culturalGlossary=[],

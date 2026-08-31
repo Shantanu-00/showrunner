@@ -28,7 +28,6 @@ from schemas.event import (  # noqa: E402
     EventClass,
     EventStage,
     EventStatus,
-    EventTemplateId,
     EventTypeProfile,
     RequiredMoment,
     SensitivityProfile,
@@ -123,7 +122,6 @@ def main() -> int:
         stages=build_stages(now, tz),
         activeStage="sangeet",
         eventTypeProfile=EventTypeProfile(
-            templateId=EventTemplateId.WEDDING_HINDU,
             vipTopology=VipTopology.PYRAMID,
             sensitivityProfile=SensitivityProfile(),
             culturalGlossary=["haldi", "sangeet", "kanyadaan", "baraat", "mangalsutra"],

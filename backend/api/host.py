@@ -34,7 +34,7 @@ from schemas.event import (
     EventAccessMode,
     EventClass,
     EventStatus,
-    EventTemplateId,
+    EventTypeProfile,
 )
 from schemas.host import (
     AccessModeRequest,
@@ -44,7 +44,6 @@ from schemas.host import (
     CreateEventRequest,
     CreateEventResponse,
     DetailsUpdateRequest,
-    EVENT_TEMPLATE_DEFAULTS,
     FreezeRequest,
     ITINERARY_FILE_MIMES,
     ITINERARY_IMAGE_MAX_BYTES,
@@ -151,11 +150,8 @@ def _rate_limit_create(uid: str) -> None:
     ref.set({"count": firestore.Increment(1)}, merge=True)
 
 
-def _apply_template(template_id: EventTemplateId) -> dict[str, Any]:
-    profile = EVENT_TEMPLATE_DEFAULTS.get(template_id) or EVENT_TEMPLATE_DEFAULTS[EventTemplateId.CUSTOM]
-    payload = profile.model_dump(mode="json")
-    payload["templateId"] = template_id.value
-    return payload
+def _default_profile() -> dict[str, Any]:
+    return EventTypeProfile().model_dump(mode="json")
 
 
 def _code_hash(code: str) -> str:
@@ -242,7 +238,7 @@ async def create_event(
         **{"class": event_class},
     )
     payload = fs.to_firestore(event.model_dump(by_alias=True))
-    payload["eventTypeProfile"] = _apply_template(req.templateId)
+    payload["eventTypeProfile"] = _default_profile()
 
     join_code: str | None = None
     if req.accessMode == EventAccessMode.INVITE:
@@ -750,13 +746,13 @@ async def update_profile(
     eventId: str = Path(min_length=1, max_length=128),
     principal: Principal = Depends(caller),
 ) -> dict[str, Any]:
-    """Spec 11 §2's presets + editable dials, with spec 13's mutability split: the **sensitivity
-    dials alone** are editable while the event runs — they are ceilings (a dial can only hold a
-    photo back, never release one already judged; Guardian verdicts are stored per-photo, so a
-    loosened dial affects only future photos), and a host tightening one mid-event is a safety
-    action the console must not refuse. Everything else on the profile (glossary, moment
-    templates, topology, preset swaps) stays draft-only, the original discipline: that text rides
-    into per-photo prompts and bounty arming, and a live event's cultural context is not
+    """Spec 11 §2's dials, with spec 13's mutability split: the **sensitivity dials alone** are
+    editable while the event runs — they are ceilings (a dial can only hold a photo back, never
+    release one already judged; Guardian verdicts are stored per-photo, so a loosened dial affects
+    only future photos), and a host tightening one mid-event is a safety action the console must
+    not refuse. Everything else on the profile (glossary, moment templates, topology) stays
+    draft-only, the original discipline: that text rides into per-photo prompts and bounty arming,
+    and a live event's cultural context is not
     something a mid-event edit should silently change under the perception pipeline's feet."""
     _require_host(principal, eventId)
     event = _event_or_404(eventId)
@@ -809,7 +805,7 @@ async def update_profile(
                 f"the glossary or required-moment labels looked like {', '.join(exc.filters) or 'a policy match'}",
             ) from exc
 
-    profile = _apply_template(req.templateId)
+    profile = dict(event.get("eventTypeProfile") or {}) or _default_profile()
     if req.vipTopology is not None:
         profile["vipTopology"] = req.vipTopology.value
     if req.sensitivityProfile is not None:
@@ -821,49 +817,49 @@ async def update_profile(
             m.model_dump(mode="json") for m in req.requiredMomentsTemplate
         ]
     fs.event_ref(eventId).update({"eventTypeProfile": profile})
-    log.info("profile_updated", event_id=eventId, template=req.templateId.value)
+    log.info("profile_updated", event_id=eventId, by=principal.uid)
     return {"eventTypeProfile": profile}
 
 
 ITINERARY_INSTRUCTION = """\
-You turn an event itinerary — pasted text, or a PDF/photographed schedule — into a structured
-stage table. One JSON object per the schema.
+You are an expert event director AI powered by Gemini 3.7. Your job is to transform raw event information — pasted text, a PDF schedule, a screenshot, or a brief description — into a complete, richly structured event configuration. Return one JSON object matching the schema.
 
-Extract each distinct phase of the event as one stage, in the order it occurs. For each stage: a
-short lowercase snake_case stageId, a human label taken from the host's own words, the time-of-day
-text exactly as written (timeHint), and any named required moments within it (momentId snake_case,
-label as written).
+### 1. Event Identification & Overview
+- suggestedName: A concise, human-friendly, appealing title for the event. If an explicit title exists (e.g. "Japan 2026 — Tokyo + Kyoto", "Sarah & Alex's Wedding", "Devin's 30th Birthday"), polish it. If NO title is provided in the input, synthesize an evocative, accurate name based on the activities, destination, or occasion (e.g. "Weekend in Paris", "Summer Lake Retreat 2026", "Team Strategy Offsite").
+- startDate / endDate: "YYYY-MM-DD" formatted dates. Extract explicit dates or infer from text (e.g., "Oct 12 to Oct 16", "October 12th-16th 2026", "Saturday May 14"). If no year is specified, assume 2026. If the event is completely undated, leave both empty.
+- timezone: Standard IANA timezone (e.g. "Asia/Tokyo", "America/New_York", "America/Los_Angeles", "Europe/Paris", "Europe/London", "Asia/Kolkata", "Asia/Dubai", "Australia/Sydney", "Pacific/Auckland") inferred from any mentioned cities, countries, or airports (e.g., "Haneda / Tokyo / Kyoto" -> "Asia/Tokyo", "Brooklyn / NYC" -> "America/New_York"). If completely unknown, leave empty.
+- expectedParticipants: Integer headcount if stated or implied (e.g. "4 of us" -> 4, "150 guests" -> 150, "table for 8" -> 8). Leave null if unstated.
+- suggestedAccessMode: "invite" for private events, family gatherings, group trips, and dinners; "open" for public venue parties, festivals, open exhibitions, or open community meetups.
+- culturalGlossary: List of cultural terms, regional terminology, local traditions, or specialized jargon found in the text (e.g., ["shinkansen", "izakaya", "torii gates", "keynote"]).
 
-proposedStartLocal / proposedEndLocal: "YYYY-MM-DDTHH:MM" in the event's own timezone, and ONLY
-when you were given the event's date range AND the source states or plainly implies which day the
-stage falls on ("Day 3", "Oct 14", "Tuesday", or a single-day event where every time is that day).
-A multi-day source that never says which day a stage is on gets empty strings — these values
-prefill the host's review picker, so a wrong guess is worse than a blank. When only a start time is
-stated, propose an end on the same day using the next stage's start, and leave the last stage's end
-empty rather than inventing one. Never propose an instant outside the given date range.
+### 2. Key People & VIPs (suggestedPeople)
+- Extract any named individuals mentioned in the itinerary or description (e.g. hosts, speakers, travelers, organizers).
+- name: The person's name as stated.
+- role: Their role in the event (e.g. "Host", "Keynote Speaker", "Traveler", "Organizer").
+- tier: Integer tier (0 = Principal / guest of honor, 1 = Inner Circle / Hosts, 2 = Named VIP / Speaker / Key Guest, 3 = Guest).
 
-expectedSetting: where this stage will physically happen, but ONLY when the text says or plainly
-implies it. One of: indoor_venue, outdoor_venue, outdoor_nature, domestic_interior, vehicle, street.
-Leave it empty for anything else, including anything you are inferring from the kind of event rather
-than from the words in front of you. "Lawn ceremony" is outdoor_venue; "baraat procession from the
-hotel" is street; "shinkansen to Kyoto" is vehicle; "getting ready in the suite" is
-domestic_interior; a bare "Reception, 8 PM" says nothing about where, so leave it empty. An empty
-value is the correct and common answer.
+### 3. Chronological Stages & Phases (stages)
+- Extract EVERY distinct phase, activity, transition, excursion, ceremony, meal, or milestone in exact chronological order without leaving anything out.
+- For each stage:
+  - stageId: Short, clean lowercase snake_case identifier (e.g. "shibuya_crossing", "haldi_ceremony", "keynote_presentation").
+  - label: A clear, descriptive human title preserving the host's tone.
+  - timeHint: The exact time-of-day phrase as written (e.g. "9:00 AM", "3 PM", "Evening", "After lunch").
+  - proposedStartLocal / proposedEndLocal: "YYYY-MM-DDTHH:MM" in the event's local timezone if dates/days are known (e.g., "2026-10-12T18:00"). If a start time is given but no end time, propose an end time before the next stage or +2 hours.
+  - requiredMoments: Specific key photo opportunities or milestone moments to capture within this stage (e.g. `[{"momentId": "group_toast", "label": "Group Toast at Izakaya"}, {"momentId": "torii_photo", "label": "All 4 at Torii Gates"}]`).
+  - expectedSetting: Physical environment where the stage happens. Must be one of: "indoor_venue", "outdoor_venue", "outdoor_nature", "domestic_interior", "vehicle", "street". Leave empty if ambiguous.
+  - theme: Kiosk presentation color palette. One of: "golden_hour", "candlelight", "champagne", "neon_afterparty", "sunset", "daylight", "twilight", "sage_botanical", "cerulean", "ocean", "midnight", "monochrome", "velvet".
 
-sourceText: when the input is a document or an image, the plain schedule text you read out of it,
-verbatim. When the input is already pasted text, leave it empty.
-
-If the source has no clear stage boundaries, return the whole thing as one stage and add a warning
-saying so. Never invent a stage, moment, time or date the source does not imply. Preserve the
-host's own language for labels — do not translate, rename or reinterpret a tradition.
+### 4. Source Text & Warnings
+- sourceText: If input was an image or document, transcribe the verbatim schedule text you read from it. If plain text was provided, leave empty.
+- warnings: Any notes for the host (e.g., if multiple time zones are crossed or if schedule times conflict).
 """
 
 
 def _itinerary_agent() -> LlmAgent:
     return LlmAgent(
         name="itinerary_parser",
-        description="Extracts a stage/moment table from a pasted, unstructured event itinerary.",
-        model=gemini.adk_model(settings().model_classifier),
+        description="Extracts full event structure and stage table from a pasted, unstructured event itinerary.",
+        model=gemini.adk_model(settings().model_director),
         instruction=ITINERARY_INSTRUCTION,
         output_schema=ItineraryParseOut,
         output_key="itinerary",
@@ -931,12 +927,88 @@ def _date_range_part(event: dict[str, Any]) -> str:
             f"instants to these dates per your instructions; never propose outside this range."
         )
     return (
-        "EVENT DATE RANGE: not set. Leave every proposedStartLocal/proposedEndLocal empty; "
-        "extract timeHint text only."
+        "EVENT DATE RANGE: not set. Extract dates from the itinerary text/file if present."
     )
 
 
-@router.post("/itinerary/parse")
+@create_router.post("/itinerary/extract", response_model=ItineraryParseOut)
+async def extract_itinerary(
+    req: ParseItineraryRequest,
+    principal: Principal = Depends(caller),
+) -> ItineraryParseOut:
+    """AI-First Onboarding endpoint on Step 1: turns raw text / PDF / screenshot into a full event
+    configuration (name, dates, timezone, headcount, access mode, template, key people, and stages)
+    powered by Gemini 3.7 Flash before the event document is created.
+    """
+    file_part = _itinerary_file(req)
+    text = (req.rawText or "").strip()
+    if not text and file_part is None:
+        raise errors.bad_request("EMPTY", "paste an itinerary or attach a PDF/screenshot")
+
+    if text:
+        try:
+            armor.guard(text, surface="itinerary_paste")
+        except armor.ArmorBlocked as exc:
+            raise errors.bad_request(
+                "TEXT_REJECTED", f"this paste looked like {', '.join(exc.filters) or 'a policy match'}"
+            ) from exc
+
+    parts: list[types.Part] = []
+    if text:
+        parts.append(gemini.as_text_part(text))
+    if file_part is not None:
+        parts.append(gemini.as_image_part(file_part[0], file_part[1]))
+
+    try:
+        out, usage = await gemini.run_structured(
+            _itinerary_agent(),
+            parts,
+            ItineraryParseOut,
+            stage="itinerary_extract",
+        )
+    except gemini.PermanentModelError as exc:
+        raise errors.bad_request(
+            "PARSE_FAILED", "couldn't make sense of that itinerary — try pasting it as plain text"
+        ) from exc
+    except gemini.ModelError as exc:
+        raise errors.ApiError(503, "MODEL_UNAVAILABLE", str(exc)) from exc
+
+    if file_part is not None:
+        derived = " ".join(
+            [out.sourceText or ""]
+            + [f"{s.label} {s.timeHint}" for s in out.stages]
+        ).strip()
+        if derived:
+            try:
+                armor.guard(derived, surface="itinerary_file")
+            except armor.ArmorBlocked as exc:
+                raise errors.bad_request(
+                    "TEXT_REJECTED",
+                    f"the file's contents looked like {', '.join(exc.filters) or 'a policy match'}",
+                ) from exc
+
+    for stage in out.stages:
+        candidate = (stage.expectedSetting or "").strip().lower()
+        if not candidate:
+            continue
+        try:
+            stage.expectedSetting = SceneSetting(candidate).value
+        except ValueError:
+            stage.expectedSetting = ""
+
+    log.info(
+        "itinerary_extracted_step1",
+        stages=len(out.stages),
+        name=out.suggestedName,
+        dates=f"{out.startDate}..{out.endDate}",
+        people=len(out.suggestedPeople),
+        tokens_in=usage.tokensIn,
+        tokens_out=usage.tokensOut,
+    )
+    return out
+
+
+@router.post("/itinerary/parse", response_model=ItineraryParseOut)
 async def parse_itinerary(
     req: ParseItineraryRequest,
     eventId: str = Path(min_length=1, max_length=128),
@@ -946,11 +1018,6 @@ async def parse_itinerary(
     (spec 08 §3.2, extended by spec 13 to PDF/screenshot input and date-anchored proposals).
     Saving happens through `PUT /stages`, once the host has reviewed/fixed it — "an LLM parse of a
     WhatsApp itinerary forward is never silently authoritative."
-
-    Armor runs twice, on the two texts that exist at two different times: the paste before the
-    model sees it, and `sourceText` — the schedule the model transcribed out of a file — after,
-    because Armor is text-only (§4.7) and cannot screen bytes. A block on either rejects the whole
-    proposal; nothing from a rejected parse reaches the review table.
     """
     _require_host(principal, eventId)
     event = _event_or_404(eventId)
@@ -972,10 +1039,6 @@ async def parse_itinerary(
     if text:
         parts.append(gemini.as_text_part(text))
     if file_part is not None:
-        # Inline bytes, full default resolution — deliberately NOT `MEDIA_RESOLUTION_LOW`, the
-        # opposite call from the B2-S4 finding the perception workers follow: LOW is calibrated
-        # for "what is in this photo" on an 8/s queue, and this is "read the small text in this
-        # screenshot" once per wizard. The ~1k-token difference is noise at this call rate.
         parts.append(gemini.as_image_part(file_part[0], file_part[1]))
 
     try:
@@ -993,8 +1056,6 @@ async def parse_itinerary(
         raise errors.ApiError(503, "MODEL_UNAVAILABLE", str(exc)) from exc
 
     if file_part is not None:
-        # The post-parse half of the Armor contract in the docstring. `sourceText` plus the labels
-        # themselves — belt and braces for a model that ignored the transcription instruction.
         derived = " ".join(
             [out.sourceText or ""]
             + [f"{s.label} {s.timeHint}" for s in out.stages]
@@ -1010,12 +1071,6 @@ async def parse_itinerary(
 
     _coerce_proposed_instants(out, event, eventId)
 
-    # `expectedSetting` is coerced here rather than left for the console. The model-facing schema
-    # accepts any string on purpose (an unrecognised value must not fail the whole parse and burn the
-    # single retry), but `EventStage.expectedSetting` is a strict enum — so a hallucinated "garden_area"
-    # would sail through this endpoint and then 422 on `PUT /stages`, surfacing to the host as "saving
-    # your timeline failed" with no clue why. Coerce at the boundary where the untrusted value stops
-    # being untrusted: the host's review table should only ever be offered values it can save.
     dropped = 0
     for stage in out.stages:
         candidate = (stage.expectedSetting or "").strip().lower()
@@ -1029,10 +1084,6 @@ async def parse_itinerary(
     if dropped:
         log.warn("itinerary_setting_dropped", event_id=eventId, count=dropped)
 
-    # Not folded into `event.costSoFarUsd`: that field is the per-media perception pipeline's
-    # running total (spec 10 §2), and this is a one-off host-side call on a different cost path —
-    # inventing a second accumulation mechanism here risks disagreeing with whichever one the
-    # Story Director's own tick cost already uses. Logged instead; the spend is a fraction of a cent.
     log.info(
         "itinerary_parsed",
         event_id=eventId,

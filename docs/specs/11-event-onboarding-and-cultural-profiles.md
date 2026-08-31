@@ -14,11 +14,11 @@ events/{eventId}.class: 'protected_demo' | 'internal_dev' | 'public'   # server-
 
 `POST /v1/events` **always** forces `class: 'public'` server-side regardless of anything the request body claims — accepting a client-supplied class would let anyone escape every guardrail below by simply asserting `protected_demo`. The only way to get anything else: `request.auth.token.platformAdmin === true` (a one-time custom claim minted on the deployment owner's own account via a CLI script at deploy time, never exposed in any product UI or API response). While authenticated with that claim, creating an event defaults to `class: 'internal_dev'`; the owner can additionally pass `intendedClass: 'protected_demo'` — accepted *only* because the claim already verified who's asking, not because the client asserted it.
 
-**This is also the answer to "how do I actually create my dev/test event vs. the judge demo event":** you don't need a special admin UI. Mint the claim once (`scripts/grant_admin.py {your-uid}`), then use the normal `/host` wizard exactly like any host would — every event you create while signed in with that browser/account is automatically `internal_dev`; run the one-time `scripts/seed_judge_event.py` (extends the existing `seed.py`, spec 09 §5) to create the single `protected_demo` event and reseed it nightly. No parallel product surface to build for an audience of one.
+**This is also the answer to "how do I actually create my dev/test event vs. the global demo event":** you don't need a special admin UI. Mint the claim once (`scripts/grant_admin.py {your-uid}`), then use the normal `/host` wizard exactly like any host would — every event you create while signed in with that browser/account is automatically `internal_dev`; run `scripts/seed_global_event.py` (2026-08-31: replaces `seed_judge_event.py` — no fixture uploads, no cast, just the Event document and its volume caps) once to create the single `protected_demo` event. No nightly reseed any more: there is nothing seeded to go stale, since real visitors are the only source of content. No parallel product surface to build for an audience of one.
 
 | Class | Counted in `platform/liveEventCount`? | TTL / auto-wrap | Cost ceiling | Purge after wrap |
 |---|---|---|---|---|
-| `protected_demo` (exactly 1 — the always-live demo event) | No | None | None (covered by the platform-wide budget alerts, spec 09 §4) | Never — nightly reseed instead (README-PLAN Part B) |
+| `protected_demo` (exactly 1 — the always-live global demo event) | No | None | None platform-wide, but see `Event.dailyMediaCap`/`lifetimeMediaCap`/`reelCommissionEveryNMedia` below — a standing event bounds its own volume instead of relying on a time limit | Never — there's nothing to reseed |
 | `internal_dev` (your own sandbox) | No | 24h, safety-net only | None (dev needs real budget — a reel-pipeline test alone runs ≈$4, spec 06 §6) | Never automatic — you clean up manually |
 | `public` (everyone else, unauthenticated) | **Yes** | **60 min** (configurable) | **$3/event** (configurable) | Hard-purged at the next hourly sweep after wrap |
 
@@ -70,12 +70,10 @@ If the daily 5-minute check (README-PLAN Part B) ever surfaces a genuinely persi
 
 **Principle, stated plainly because it matters: the host declares their own event's cultural context. The system never infers or assumes a cultural stereotype from an event-type label.** Templates below are time-saving *starting points*, exactly like the timeline-paste-then-review flow in spec 08 §3.2 ("an LLM parse of a WhatsApp itinerary forward is never silently authoritative") — the host reviews every dial and can flip any of them in either direction. A "Hindu Wedding" template does not mean "Indian weddings are conservative"; it means *this host's* family gets a sensible default to react to, because reacting to a pre-filled table is dramatically lower-friction than filling one from a blank page.
 
-**Revised by spec 13 §2: templates are no longer the creation surface.** Every event is created `templateId: custom` (neutral dials, empty glossary), and the wizard never shows a template picker — leading creation with religious/event-type labels was itself a soft assumption, however editable. The templates survive as *presets* behind a quiet select in the console's Settings panel (`POST …/profile`), same review discipline as ever. Mutability split (spec 13): sensitivity dials editable while `draft|live|paused` (they are ceilings; tightening mid-event is a safety action, and Guardian verdicts are stored per-photo so a loosened dial only affects future ones); `culturalGlossary` / `requiredMomentsTemplate` / `vipTopology` remain draft-only (they feed per-photo prompts and bounty arming).
+**Revised by spec 13 §2, then retracted further on 2026-08-31: there is no template picker at all any more, presets included.** Spec 13 first demoted the templates from creation-time picker to a quiet Settings-panel preset select; this session deleted `EventTemplateId` and the preset table (`EVENT_TEMPLATE_DEFAULTS`) outright, at the user's explicit direction to remove the named-culture menu entirely rather than just hide it. `templateId` no longer exists anywhere — not on the wire, not in Firestore, not in a CSS selector. Every event now starts from one neutral `EventTypeProfile` (pyramid topology, `context_dependent`/`context_dependent`/`standard` dials, empty glossary) and the host edits the fields below **directly**, with no preset to apply first. The dials themselves are unaffected by this — they were never decoration (see "How the dials are consumed" below) — only the named-template layer *on top of* them is gone.
 
 ```
 events/{eventId}.eventTypeProfile: {
-  templateId: 'wedding_generic' | 'wedding_hindu' | 'wedding_christian' | 'wedding_muslim' |
-              'bachelor_bachelorette' | 'birthday' | 'graduation' | 'corporate_offsite' | 'custom',
   vipTopology: 'pyramid' | 'flat',                 # feeds §3
   sensitivityProfile: {                            # host-reviewable dials, per content category
     pda:     'public_ok' | 'context_dependent' | 'private_only',   # kissing, embracing, hand-holding
@@ -87,20 +85,7 @@ events/{eventId}.eventTypeProfile: {
 }
 ```
 
-**Built-in templates (starting defaults, all host-editable):**
-
-| templateId | vipTopology | pda default | alcohol default | example required moments |
-|---|---|---|---|---|
-| `wedding_generic` | pyramid | context_dependent | public_ok | vows, ring exchange, first dance, bouquet toss |
-| `wedding_hindu` | pyramid | context_dependent | context_dependent | haldi, sangeet, pheras, kanyadaan, vidaai |
-| `wedding_christian` | pyramid | public_ok | public_ok | processional, vows, ring exchange, first dance |
-| `bachelor_bachelorette` | flat | public_ok | public_ok | (none required — candid density is the only signal) |
-| `birthday` | pyramid | public_ok | context_dependent | cake cutting, toast |
-| `graduation` | pyramid | public_ok | private_only | stage crossing, family portrait |
-| `corporate_offsite` | pyramid | private_only | context_dependent | keynote, team sessions |
-| `custom` | host choice | host choice | host choice | host-authored |
-
-**How the dials are consumed (the load-bearing part):**
+**How the dials are consumed (the load-bearing part — this is what survived the template deletion):**
 
 1. **Guardian dignity rubric (spec 03 §5.3):** `sensitivityProfile` is passed as structured context alongside the existing stage context. **Rule: the event-level dial is a ceiling, never a floor.** `pda: context_dependent` means Guardian may route a kiss to `public_ok` *only* if stage context also supports it (e.g. the first-dance stage), and stage context can always make the verdict *more* conservative than the event dial (a solemn ceremony stage tightens PDA even at a `public_ok`-dialed wedding) but never *less* conservative than what the host declared. This protects the host's stated comfort level from ever being loosened by a stage misclassification. `private_only` always wins outright, at any stage. This is the concrete mechanism behind "a kiss reads as `public_ok` at a Christian wedding's reception and as `host_review` at a wedding whose family dialed PDA to `context_dependent`" — implemented as a host-declared dial per event, never a hardcoded rule about any culture.
 2. **Curator (spec 03 §5.1):** `culturalGlossary` seeds the prompt's moment-tag vocabulary (already stubbed there as "cultural glossary" — this spec is what populates it).

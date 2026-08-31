@@ -30,7 +30,7 @@ UPLOAD_OPEN_STATUSES = frozenset({EventStatus.LIVE, EventStatus.WRAPPING})
 
 
 class EventClass(str, Enum):
-    PROTECTED_DEMO = "protected_demo"  # exactly one: the judge-mode event, exempt from guardrails
+    PROTECTED_DEMO = "protected_demo"  # exactly one: the standing global demo, exempt from guardrails
     INTERNAL_DEV = "internal_dev"  # the deployment owner's own sandbox
     PUBLIC = "public"  # everyone else: counted, TTL'd, cost-capped
 
@@ -38,18 +38,6 @@ class EventClass(str, Enum):
 class EventAccessMode(str, Enum):
     OPEN = "open"  # anyone with the join link becomes a member
     INVITE = "invite"  # a code is required, and photo bytes stop being unauthenticated
-
-
-class EventTemplateId(str, Enum):
-    WEDDING_GENERIC = "wedding_generic"
-    WEDDING_HINDU = "wedding_hindu"
-    WEDDING_CHRISTIAN = "wedding_christian"
-    WEDDING_MUSLIM = "wedding_muslim"
-    BACHELOR_BACHELORETTE = "bachelor_bachelorette"
-    BIRTHDAY = "birthday"
-    GRADUATION = "graduation"
-    CORPORATE_OFFSITE = "corporate_offsite"
-    CUSTOM = "custom"
 
 
 class VipTopology(str, Enum):
@@ -76,7 +64,6 @@ class RequiredMoment(BaseModel):
 
 
 class EventTypeProfile(BaseModel):
-    templateId: EventTemplateId = EventTemplateId.CUSTOM
     vipTopology: VipTopology = VipTopology.PYRAMID
     sensitivityProfile: SensitivityProfile = Field(default_factory=SensitivityProfile)
     culturalGlossary: list[str] = Field(default_factory=list)
@@ -207,6 +194,31 @@ class Event(BaseModel):
 
     publicFloor: float = 0.45  # spec 04 §2 quality gate
     publicFrozen: bool = False  # PANIC: freeze public (spec 08 §5)
+
+    #: Volume guardrails, orthogonal to `class`. `None` (every event today) means uncapped — a real
+    #: host's party is bounded by the guest list and the venue, not by a number. A standing event
+    #: with no natural end (spec 13's global demo) needs its own ceiling instead, and this is a
+    #: config value any host could also set (same discipline as `publicFloor`, spec 09 §5), not a
+    #: `protected_demo`-only branch. Enforced in `api/uploads.py::_register_batch`, same transaction
+    #: as the per-guest rate limit, on net-new `clientMediaId`s only — a retried/re-issued upload
+    #: never counts twice.
+    dailyMediaCap: int | None = None
+    lifetimeMediaCap: int | None = None
+    #: Rolling-24h counter mirroring the per-guest `rateWindowStartedAt`/`rateWindowCount` shape
+    #: already used above for `INVITE_DEFAULT_SEATS`-style per-uid limiting, just event-scoped.
+    dailyMediaCount: int = 0
+    dailyMediaWindowStartedAt: dt.datetime | None = None
+    lifetimeMediaCount: int = 0
+
+    #: How many net-new media since the last successful reel commission (any persona) — reset to 0
+    #: by `directors/reel/commission.py::commission` on success, incremented alongside the caps
+    #: above. `reelCommissionEveryNMedia` is the guardrail that reads it: `None` (every event today)
+    #: keeps the existing cadence (Story Director judgment + the daily ceiling); set, a commission is
+    #: refused until this many new photos/videos have landed since the last one — a standing event
+    #: that never wants a highlight reel cut every few minutes sets this instead of fighting the
+    #: director's own pacing.
+    mediaSinceLastReel: int = 0
+    reelCommissionEveryNMedia: int | None = None
 
     #: Spec 06 §5's couple-reel opener, cached here because it is generated **once per event**, not
     #: once per reel version: every later `couple` commission reuses this clip instead of paying Veo's

@@ -7,7 +7,6 @@ import type {
   ConsoleSummary,
   CreateEventResponse,
   EventStageDoc,
-  EventTemplateId,
   EventTypeProfile,
   HostEnrollResponse,
   HostLinkResponse,
@@ -23,9 +22,9 @@ import type {
 
 export { ApiError };
 
-/** `POST /v1/events` (spec 08 §1, spec 13). Itinerary-first creation: `templateId` is never sent —
- * the server defaults new events to `custom` (neutral dials, empty glossary), and the template
- * presets survive only as the Settings panel's optional starting point (`updateProfile` below). */
+/** `POST /v1/events` (spec 08 §1, spec 13). Itinerary-first creation: every event starts from one
+ * neutral profile (pyramid topology, context-dependent dials, empty glossary), which the host can
+ * edit directly from the Settings panel (`updateProfile` below). No template picker. */
 export async function createEvent(body: {
   name: string;
   timezone: string;
@@ -48,7 +47,6 @@ export async function createHostLink(eventId: string): Promise<HostLinkResponse>
 export async function updateProfile(
   eventId: string,
   body: {
-    templateId: EventTemplateId;
     vipTopology?: "pyramid" | "flat";
     sensitivityProfile?: SensitivityProfile;
     culturalGlossary?: string[];
@@ -56,6 +54,19 @@ export async function updateProfile(
   }
 ): Promise<{ eventTypeProfile: EventTypeProfile }> {
   return authedJson(`/v1/events/${eventId}/profile`, { method: "POST", body: JSON.stringify(body) });
+}
+
+/** `POST /v1/itinerary/extract` — Standalone Gemini 3.7 Flash AI extraction on Step 1.
+ * Auto-suggests event name, dates, timezone, headcount, access mode, people, and stages. */
+export async function extractItinerary(body: {
+  rawText?: string;
+  fileBase64?: string;
+  fileMime?: ItineraryFileMime;
+}): Promise<ItineraryParseOut> {
+  return authedJson("/v1/itinerary/extract", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 /** `POST /v1/events/{eventId}/itinerary/parse` (spec 08 §3.2, spec 13's PDF/screenshot extension).
