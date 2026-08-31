@@ -9,7 +9,7 @@ dispatches photo **bounties** to guests' phones, and directs beat-synced highlig
 AI-composed soundtracks — **while the event is happening. No chat window exists anywhere in this
 product.**
 
-[▶ demo video]({{VIDEO_URL}}) · [🚀 Live demo (judge mode)](https://showrunner-hq.web.app/judge) · [📐 Architecture](#architecture) · [📝 Build log / blog]({{BLOG_URL}})
+[▶ demo video]({{VIDEO_URL}}) · [🚀 Live demo](https://showrunner-hq.web.app/) · [📐 How it works](https://showrunner-hq.web.app/how-it-works) · [Architecture](#architecture) · [📝 Build log / blog]({{BLOG_URL}})
 
 > **Category: The Taskmaster** — a multi-step background workflow the agent intercepts and completes
 > **without human intervention**. Built solo by Shantanu ([`Shantanu-00`](https://github.com/Shantanu-00)) for the All Things Agentic Hackathon.
@@ -21,7 +21,7 @@ product.**
 | Gemini 3.5 or newer via Gemini API / Vertex AI | ✅ `gemini-3.5-flash-lite` (perception volume) + `gemini-3.7-flash` (director reasoning) | `backend/services/gemini.py`, called from `backend/workers/{curate,safety}/agent.py` and `backend/directors/{story,reel}/agent.py` |
 | ≥1 Google Agent Framework | ✅ **ADK v2 (Python)** + **GenAI SDK** | `backend/workers/{curate,safety}/agent.py`, `backend/directors/{story,reel}/agent.py` — each an ADK `LlmAgent` |
 | ≥1 GCP infrastructure service | ✅ Cloud Run (7 services + a render job), Firestore (+ native vector search), Cloud Storage, Eventarc, Cloud Tasks, Cloud Scheduler | [service table](#google-cloud-services--used-and-called-in-code) |
-| Hosted project URL | ✅ [`showrunner-hq.web.app/judge`](https://showrunner-hq.web.app/judge) — guided judge tour; host credentials in the Devpost testing instructions | live through the judging period |
+| Hosted project URL | ✅ [`showrunner-hq.web.app`](https://showrunner-hq.web.app/) — a real front door (Create · Join · [See how it works](https://showrunner-hq.web.app/how-it-works)); host credentials in the Devpost testing instructions. `/judge` still resolves, as a redirect to `/how-it-works` | live through the judging period |
 | Architecture diagram | ✅ [below](#architecture) + `docs/architecture.md` | — |
 | Spin-up instructions | ✅ [two-tier reproducible spin-up](#spin-up-two-tiers) — one tier needs no GCP account at all | `deploy/up.sh` |
 | Demo video ≤ 4 min, public, GCP proof | ✅ {{VIDEO_URL}} — unedited live execution + Cloud Run / Cloud Scheduler / Firestore console proof | — |
@@ -44,9 +44,16 @@ amateur photographers. A wedding is the same chore at maximum intensity: five hu
 of five, so the failure becomes visible instead of merely annoying.
 
 That is the messy, multi-step chore Showrunner intercepts — **while the event is still happening, so
-there is no aftermath to clean up.** The wedding is the demo because it is the hard case. The host
-declares the event's profile at setup and nothing in the pipeline is wedding-specific: the same
-fleet runs a trip, a birthday, a graduation or an offsite. One honest note on how it scales *down*,
+there is no aftermath to clean up.**
+
+**Creation is itinerary-led, not template-led** (spec 13). There is no religious template grid and no
+card menu of event types: the host names the event, gives it a date range and an expected head-count,
+and then **pastes their itinerary** — plain text, a PDF, or a photo of a schedule — which
+`gemini-3.5-flash-lite` turns into a proposed, date-anchored stage table the host reviews and edits
+before a single window is saved. Nothing in the pipeline is wedding-specific, and there are two seeded
+demos to show it: `make seed` builds the wedding (the hard case — 500 phones, so the failure is
+visible instead of merely annoying), and `make seed-trip` builds a **5-day Japan trip** for four
+friends, with today positioned as Day 4 and a real, open group-coverage gap for the director to find. One honest note on how it scales *down*,
 because it is a design property rather than a caveat — bounties exist because there are more moments
 than photographers, and issuance is driven by the coverage ledger, so at five guests there are no
 statistical gaps and the director correctly issues none. The system degrades by event size because
@@ -68,12 +75,38 @@ tasks five hundred guests — the crowd becomes the crew**, because a bounty is 
 holding a phone, not to a hired photographer; **it writes its own wrap-up report, including what it
 failed to get** — an expired, unfulfilled bounty is recorded as a permanent, admitted coverage gap,
 not silently dropped. The guardrails behind those outcomes — `recompute_visibility`, the bounty
-budget/point clamps, the 67-assertion rules matrix — are real, but they are the **Architecture**
+budget/point clamps, the 107-assertion rules matrix — are real, but they are the **Architecture**
 story (30%), not the headline; the headline is what the system does without being asked.
 
 Uploads flow the same way, just faster: photo → classified, face-indexed, safety-screened, published
 to the right surfaces — a few seconds warm, zero human touches. The host's total involvement: a
 5-minute setup wizard.
+
+**The ask has to reach a pocket, or the loop is only half a loop.** Directing a crowd that is not
+looking at its phones is directing nobody, so a bounty is delivered by **Web Push** as well as by the
+in-app banner and the kiosk poster (`backend/shared/push.py` → `frontend/public/firebase-messaging-sw.js`).
+Three properties of that path are deliberate. The **audience is resolved deterministically** from the
+bounty's own `audience` field — one uid for an assigned ask, the guests `lastSeenAt` puts inside the
+`nearStage` window for a local one, everyone otherwise — reusing the same query
+`act.resolve_assignee` uses, so a model never picks a recipient any more than it picks an assignee.
+The **registration token is treated as an address**, and lives in a deny-all
+`guests/{uid}/private/push` rather than on the leaderboard document whose own rule says *"no email, no
+phone, no token"*. And **sending is off the critical path**: `notify_bounty` never raises, so an FCM
+outage costs a notification and never a tick, a bounty, or a guest's points. Dead tokens are pruned
+on the send that proves they are dead, which is why there is no sweep case for them.
+
+Two platform facts, since they are limits rather than gaps: **iOS grants Web Push only to an installed
+PWA** (16.4+), so the opt-in row detects that and shows the Share → Add to Home Screen gesture instead
+of a button that cannot work; and the service worker deliberately **imports no Firebase SDK** — FCM on
+the web *is* W3C Web Push underneath, and a notification that has to arrive over hotel wifi is a poor
+place to depend on a runtime CDN.
+
+**And the guests get the film.** A published `event_recap` now appears on the phone of anybody who was
+actually at the event, with a save button (`frontend/src/components/me/RecapCard.tsx`). Watching and
+keeping are gated differently, on purpose: playback stays reachable without a session because a
+`<video>` on a venue TV cannot send an `Authorization` header, but `?download=1` requires event
+membership on *every* event — a downloaded file leaves the consent interlock behind for good, and spec
+06 §7 can pull a reel off every surface it still controls while having no reach into a camera roll.
 
 ## It runs for the whole event (long-running)
 
@@ -81,8 +114,16 @@ The Taskmaster brief asks for something long-running *from a user's perspective*
 sometimes months — and Showrunner is built to that standard, not to a demo's runtime:
 
 - **A real lifecycle, not a flag.** `draft → live → paused → wrapping → wrapped` (`backend/schemas/
-  host.py`, driven by `backend/api/host.py`) is the event's master switch. Media, faces, bounties and
-  reels retain for 30 days after `wrapped` before a sweep purges them.
+  host.py`, driven by `backend/api/host.py`) is the event's master switch. A five-day trip walks it
+  once; `wrapping` is what commissions the recap film and writes the honest wrap report.
+- **Retention is not implemented, and this line used to claim it was.** It read *"media, faces,
+  bounties and reels retain for 30 days after `wrapped` before a sweep purges them."* There is no
+  purge and no 30-day sweep — a grep of `backend/` for `purge`/`retention` finds only
+  `retentionNoticeShown`, a consent-UI flag. Corrected here rather than quietly deleted, and the
+  matching claims are retracted in spec 09 §2 and spec 11 §1.3. What **does** work is per-subject and
+  immediate: `DELETE /v1/events/{id}/people/me` really deletes a person's face documents, their
+  512-d embedding, their private profile, their push registration, and tombstones their uploads
+  (spec 02 §5, `backend/api/identity.py`).
 - **A 2-minute transactional lease drives the control loop**, with **leader election per event**
   (`publisherLease/{eventId}`, `ticks/{eventId}` — `backend/shared/leases.py`) rather than a global
   singleton, so two live events never contend for one process and a scaled-away instance's lease
@@ -108,9 +149,47 @@ sometimes months — and Showrunner is built to that standard, not to a demo's r
 
 The process it replaces took five months.
 
+> ### ⚠️ Read this before you create your own event: it auto-wraps after 60 minutes
+>
+> **Any event you create through the wizard is `class: public`, and a public event auto-wraps 60
+> minutes after Go Live.** The hourly `orphan-sweep` calls the same `wrap` → `finalize` pair the
+> host's own buttons call, with a synthetic system principal standing in for the host who is not
+> there to press them (`backend/api/sweep.py::_sweep_guardrails`). It is **not** a bug and it is
+> **not** being removed — it is the governor that makes a public, unauthenticated "Create an event"
+> button safe to leave on the internet for a month, and it comes with two siblings:
+>
+> | Rail | Value | Env var | What it does |
+> |---|---|---|---|
+> | TTL auto-wrap | **60 min** after `liveAt` | `PUBLIC_EVENT_MAX_LIVE_MINUTES` | `live`/`paused` → `wrapping` → `wrapped`; frees the capacity slot |
+> | Cost ceiling | **$3.00** | `PUBLIC_EVENT_COST_CEILING_USD` | pauses uploads + a `severity=warning` ops alert; reversible by the host |
+> | Concurrency cap | **3** live public events | `MAX_CONCURRENT_LIVE_EVENTS` | transactional gate at Go Live against `platform/liveEventCount` |
+>
+> The sweep runs hourly, so the real kill window is **60–120 minutes**, and nothing warns you first:
+> the event is simply `wrapped`, uploads are refused, and the kiosk is gone.
+>
+> **This is why a multi-day trip cannot be demonstrated on a wizard-created event.** Three ways past
+> it, in the order they are worth reaching for:
+>
+> 1. **Use the seeded trip.** `make seed-trip` builds `japan_trip_2026` as `class: internal_dev`,
+>    which is exempt from all three rails (spec 11 §1.1's table) — a real 5-day, 10-stage,
+>    4-participant event with today positioned as Day 4 and a live group-coverage gap.
+> 2. **Hold `platformAdmin`.** The deployment owner's own uid carries that claim, so their wizard
+>    events are assigned `internal_dev` rather than `public`, and are likewise exempt. This is the
+>    intended path for the person running the deployment (spec 11 §1.1).
+> 3. **Raise the value** on the deployed `api`:
+>    `gcloud run services update api --region us-central1 --update-env-vars PUBLIC_EVENT_MAX_LIVE_MINUTES=10080`.
+>    Do this knowing what it switches off — an abandoned public event then holds a capacity slot and
+>    keeps its $3 ceiling as the only brake.
+>
+> **Known rough edge, stated rather than papered over:** the TTL is a flat 60 minutes and ignores
+> `Event.startsOn`/`endsOn`. An event that has *told the system* it runs for five days is still
+> wrapped after one hour, which is wrong on its own terms. Deriving the TTL from the declared date
+> range (plus a grace window), falling back to 60 minutes only for an undated event, is the correct
+> fix and is not built.
+
 ## Try it in 60 seconds (judges)
 
-[**showrunner-hq.web.app/judge**](https://showrunner-hq.web.app/judge) is a guided tour of a real,
+[**showrunner-hq.web.app/how-it-works**](https://showrunner-hq.web.app/how-it-works) is a guided tour of a real,
 seeded, always-live event (`class=protected_demo`) — every configuration difference from a real
 wedding is disclosed on the page itself, not hidden. The tour:
 
@@ -163,12 +242,14 @@ backend/publisher              kiosk playlist writer, per-event leader election
 backend/directors/{story,reel} Story Director (ledger→reason→act) · Reel Director (select→direct→critic→edl)
 backend/render                 Cloud Run Job entrypoint — ffmpeg + librosa beat grid
 backend/{shared,schemas,services}  Firestore/GCS/Tasks clients, Pydantic contracts, thin SDK wrappers
-frontend/src/{app,components,lib,design}  join/host/kiosk/judge routes, per-surface UI, API client, design tokens
+frontend/src/{app,components,lib,design}  join/host/kiosk routes, per-surface UI, API client, design tokens
+frontend/public/firebase-messaging-sw.js   the push service worker — imports nothing, see its header
 deploy/     idempotent gcloud scripts (bootstrap, up, scale-down, judge-mode, scheduler)
-scripts/    seeding, risk probes, smoke tests
+scripts/    seeding (`seed_trip.py` = the 5-day trip), risk probes, smoke tests
 eval/       golden-fixture harness (`make eval`)
 rules-tests/  Firestore rules emulator matrix (`make rules-test`)
-docs/specs/   the build contract, 01-12, with a shipped/partial/designed-not-built status column
+docs/specs/   the build contract, 01-13 (13 = the generic timeline-first pivot), with a
+              shipped/partial/designed-not-built status column
 ```
 
 ### State management
@@ -286,7 +367,7 @@ shipped, and never had a video beat of their own:
 | **Panic "Freeze public"** — every public surface empties in <5 s, one tap | `backend/api/host.py` (freeze/unfreeze), `backend/publisher/runner.py` (the frozen-program branch: a frozen event builds an empty program, not a stale one) |
 | **Impersonation guard + VIP claim approval** — a selfie matching an enrolled VIP holds for host review instead of auto-claiming | `backend/api/identity.py` (enrollment/claim), `backend/api/identity.py::/claims/{claimId}/review` |
 | **Stage-drift auto-detection** — the ledger samples the last 20 indexed photos and flags when the visual evidence disagrees with the declared timeline | `backend/directors/story/ledger.py::_drift` |
-| **The 67-assertion Firestore rules matrix** — every persona (stranger, subject, uploader, host, another event's host, platform admin) tried against every boundary, run with no Node dependency | `rules-tests/run_matrix.py`, `make rules-test` |
+| **The 107-assertion Firestore rules matrix** — every persona (stranger, subject, uploader, host, another event's host, platform admin) tried against every boundary, run with no Node dependency | `rules-tests/run_matrix.py`, `make rules-test` |
 | **Reel v2 supersession** — the schema (`version`, `previousVersionId`, `ReelStatus.SUPERSEDED`) is live; the debounced re-edit-on-better-photo trigger is specced (spec 06 §4) and honestly not wired yet | `backend/schemas/reel.py` |
 | **Host review queue + surgical replay** — a host can override any Guardian verdict and re-run exactly one failed pipeline stage with a fresh attempt budget, no redeploy | `backend/api/moderation.py::/media/{id}/review`, `::/admin/replay/{mediaId}` |
 | **Cultural profiles / VIP topology** — host-declared sensitivity dials, a cultural glossary, and a `pyramid`/`flat` VIP topology that reweights the kiosk score and reel selection floor without a single per-culture branch in any prompt | `backend/schemas/event.py`, `docs/specs/11-event-onboarding-and-cultural-profiles.md` |
@@ -324,10 +405,10 @@ less than one printed album.* Details + honest limits: [`docs/architecture.md`](
 
 **Tier 0 — no cloud account needed.** Clone the repo and run:
 ```bash
-make rules-test                          # 67 Firestore rules assertions, Firebase emulator + Python
+make rules-test                          # 107 Firestore rules assertions, Firebase emulator + Python
 python scripts/smoke_safety.py --gate-only   # 15-row deterministic safety-gate decision table, no network, no spend
 ```
-`make eval` runs the 25-golden-fixture harness (144 checks) — it re-fetches live Firestore documents,
+`make eval` runs the 25-golden-fixture harness (169 checks) — it re-fetches live Firestore documents,
 so it needs a deployed project (Tier 1 below); it is not credential-free, unlike the two checks above.
 
 **Tier 1 — full deploy, reproducible from a clean GCP project.**
@@ -337,10 +418,18 @@ git clone https://github.com/Shantanu-00/showrunner && cd showrunner
 cp .env.example .env                      # fill: project id, region, Gemini API key
 ./deploy/bootstrap.sh                     # enables APIs, creates buckets/queues/indexes/SAs
 ./deploy/up.sh                            # deploys services, job, Eventarc, scheduler, publisher
-python backend/seed.py --event demo       # seeds the demo event THROUGH the real pipeline
+python backend/seed.py --event demo       # seeds the wedding demo THROUGH the real pipeline
+make seed-trip                            # ...and the 5-day Japan trip (multi-day, generic timeline)
 python scripts/smoke_upload.py            # uploads 1 photo end-to-end, asserts kiosk-eligible fast
 make deploy-hosting                       # static export → Firebase Hosting
 ```
+
+**One manual step the scripts cannot do for you: the Web Push VAPID key.** Firebase console → Project
+settings → Cloud Messaging → *Web Push certificates* → Generate key pair, then put the public key in
+`NEXT_PUBLIC_FIREBASE_VAPID_KEY` before `make deploy-hosting`. There is no gcloud or REST surface for
+generating it, which is why `deploy/bootstrap.sh` writes every other Firebase value and not this one.
+Leave it empty and push simply does not appear — `pushSupport()` reports `not-configured`, the opt-in
+row renders nothing, and every other surface is unaffected.
 Full walkthrough with expected output:
 [`docs/specs/09-infrastructure-and-demo.md`](docs/specs/09-infrastructure-and-demo.md).
 
@@ -368,6 +457,46 @@ Full walkthrough with expected output:
   out of its retry loop on `attempt == 2 or len(shots) < MIN`, so the storyboard that most needed a
   second attempt — one the linter had just cut below the shot floor — was the one guaranteed not to
   get it. 8 of 9 test commissions failed after paying for a model call before this was caught.
+
+## Honest limits (what is designed, not built)
+
+Every claim above is checkable in the repo. These are the things that are *not* true yet, listed here
+so nobody has to discover them — the project's own rule is that an unbuilt row gets deleted or named,
+never softened.
+
+- **No retention or purge.** Covered above: nothing deletes a wrapped event's data. Per-subject
+  deletion (`DELETE …/people/me`) is real and immediate; per-event lifecycle deletion does not exist.
+- **The public-event TTL is a flat 60 minutes** and ignores the event's own declared date range. See
+  the callout above, including how to work around it and what the correct fix would be.
+- **`vipTopology` is stored and read by nothing.** Spec 11 §3's *"flat topology defaults everyone to
+  inner-circle"* is a field with no runtime consumer; the wizard's *"Everyone is equally featured"*
+  checkbox is what actually sets tiers, client-side, per person. Consequence worth knowing before a
+  demo: people added with the checkbox off land at tier 3, and `ledger._people` only considers
+  tier ≤ 2 — so the per-person coverage gap will not fire for them.
+- **No "scenery is missing" gap.** The gap kinds are `moment`, `vip`, `vip_thin` and `group`.
+  `sceneSetting` is captured per photo and does drive the kiosk's on-topic demotion and the
+  explanatory note on an outlier, but nothing computes "this event is short of establishing shots".
+  The workaround that does work is a host-declared required moment (the trip seed uses exactly that).
+- **Bulk photo export does not exist.** The recap film is downloadable; "give me all my photos as a
+  zip" — which is what most people actually want at the end of a trip — is not built.
+- **The kiosk has no quiet hours.** It runs continuously from Go Live to `wrapped`. Overnight on a
+  multi-day event the active stage resolves to `none`, the theme clears and the wall keeps cycling the
+  best of what exists. That is a reasonable screensaver, not a designed sleep state.
+- **`renders-queue` is configured and unused.** Cloud Tasks cannot start a Cloud Run Job (Tasks speaks
+  HTTP; a Job has no URL), so the reel pipeline is started through the Run Admin API instead and the
+  real invariant — one active render *per persona, per event* — lives in
+  `directors/reel/store.py::in_flight_of_persona`. The queue is dead config, named here rather than
+  left to be found.
+- **Every automated check is server-side.** `rules-test`, `eval` and the smoke scripts are Python, so
+  they cannot see browser-path failures: three real production bugs (a CORS preflight missing `PUT`,
+  a client reading the pre-array `host` claim, and a missing token refresh after event creation) were
+  each invisible to all of them. A Playwright pass against a live deployment is the gap-filler and is
+  not built.
+- **Residual read exposure, by design and documented in `firestore.rules`'s own header:**
+  `kiosk/playlist` is world-readable (spec 09 §3 — a TV in a venue has no auth session), and it
+  resolves to nothing useful for a non-member because every collection it points into is member-gated
+  and the byte endpoints refuse the unauthenticated path on an invite-only event. And a member reads
+  whole `media` documents, which carry `albumOf`, `subjectVetoes` and the Guardian verdict.
 
 ## Disclosures
 

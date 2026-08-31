@@ -29,23 +29,41 @@ export function DisclosurePanel() {
       {open && (
         <div className="px-5 pb-5 pt-2 space-y-3 text-xs text-[var(--ink-muted)] leading-relaxed border-t border-white/5">
           <p>
-            This demo runs on identical Cloud Run microservices and Firestore security rules as production events. Three parameters are configured for hackathon demonstration:
+            The demo events run on identical Cloud Run services and identical Firestore security rules
+            as any other event. Three <em>values</em> are set differently — and every one of them is a
+            setting a real host could also change, never a code path that checks whose event this is:
           </p>
 
           <ul className="space-y-2 pl-4 list-disc text-[var(--ivory-dim)]">
             <li>
-              <strong className="text-[var(--ivory)]">Public Quality Floor:</strong> Set to 0.0 for this demo event so test uploads of desks/badges appear immediately in the kiosk strip. Aesthetic rank continues to control hero presentation slots.
+              <strong className="text-[var(--ivory)]">Public quality floor:</strong> the ordinary{" "}
+              <code>publicFloor</code> field, set to 0.0, so a test photo of a desk still reaches the
+              kiosk&rsquo;s just-in strip instead of reading as breakage. Aesthetic score still ranks
+              which photograph gets a hero slot.
             </li>
             <li>
-              <strong className="text-[var(--ivory)]">Compressed Timeline Windows:</strong> Stage windows are configured in minutes rather than hours to demonstrate automatic stage transitions in a short judging session.
+              <strong className="text-[var(--ivory)]">Timeline scale:</strong> the wedding demo&rsquo;s
+              stage windows are minutes rather than hours, so a stage transition is observable inside a
+              short visit. The trip demo does the opposite on purpose — real multi-day windows across
+              five days, because that is the shape being demonstrated.
             </li>
             <li>
-              <strong className="text-[var(--ivory)]">Accelerated Director Cadence:</strong> Cloud Scheduler runs at an accelerated 30-second loop to provide fast feedback during demonstration.
+              <strong className="text-[var(--ivory)]">Director cadence:</strong> the Cloud Scheduler
+              loop runs at 30 seconds here rather than the production 2 minutes. It is a cron
+              expression, and the countdown on this page reads the real one.
             </li>
           </ul>
 
+          <p>
+            Two events are seeded, both through the real upload pipeline rather than written straight
+            into the database: a wedding (the dense, high-pressure case) and a five-day group trip
+            (the everyday one). Neither is wedding-specific in code — the host pastes an itinerary and
+            the system reads it.
+          </p>
+
           <p className="text-[11px] text-[var(--ink-faint)] pt-2 border-t border-white/5">
-            All facial recognition, story gap detection, Lyria reel commissions, and safety screenings execute against genuine live GCP endpoints.
+            Face indexing, coverage-gap detection, bounty validation, Lyria soundtracks and safety
+            screening all execute against live Google Cloud endpoints. There is no simulated path.
           </p>
         </div>
       )}
