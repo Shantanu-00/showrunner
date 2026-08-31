@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type CSSProperties } from "react";
-import { Camera, Sparkles } from "lucide-react";
+import { Camera } from "lucide-react";
 import type { HeroSlot as HeroSlotType, MediaDoc } from "@/lib/types";
 import { listenMedia, listenUploaderCredit } from "@/lib/firestore";
 import { MediaImg } from "@/lib/MediaImg";
@@ -19,10 +19,11 @@ function primaryFaceOrigin(media: MediaDoc | null): string {
 export function HeroSlot({ eventId, slot }: { eventId: string; slot: HeroSlotType }) {
   const [media, setMedia] = useState<MediaDoc | null>(null);
   const [creditName, setCreditName] = useState<string | null>(null);
-  // Gates the caption/credit reveal on the actual photo having painted, not on the (much faster)
-  // Firestore snapshot that carries its caption text — otherwise every slide flashes caption-alone
-  // for the ~2-3s the image takes to fetch. The fallback timer is a backstop for a slow/broken image:
-  // reveal the caption anyway rather than hold the slide hostage to a photo that never loads.
+  // Gates the credit chip on the photograph having actually painted, not on the (much faster)
+  // Firestore snapshot — a chip floating over a shimmer reads as a bug. The backstop timer covers a
+  // slow or broken image: show the credit anyway rather than hold it hostage to a photo that never
+  // loads. Since `lib/kioskPrefetch.ts` warms the next few slides, the common case is now that the
+  // image is already decoded and `onLoad` fires on the first frame.
   const [imgReady, setImgReady] = useState(false);
 
   useEffect(() => {
@@ -40,7 +41,7 @@ export function HeroSlot({ eventId, slot }: { eventId: string; slot: HeroSlotTyp
   }, [slot.mediaId]);
 
   const variant = media?.displayUri ? "display" : media?.thumbUri ? "thumb" : null;
-  const showCaption = imgReady && Boolean(variant);
+  const showCredit = imgReady && Boolean(variant);
 
   return (
     <div className="absolute inset-0 overflow-hidden select-none" style={{ background: "var(--bg-0)" }}>
@@ -81,42 +82,40 @@ export function HeroSlot({ eventId, slot }: { eventId: string; slot: HeroSlotTyp
         <div className="w-full h-full skeleton-shimmer" />
       )}
 
-      {/* Bottom Gradient Panel & Caption Card */}
+      {/* Bottom gradient + the uploader credit, and nothing else.
+       *
+       * Two things used to live here and both are gone deliberately.
+       *
+       * **The Curator's caption.** A wall is a photograph on a five-metre screen; a machine-written
+       * sentence in quote marks over it competes with the picture and dates instantly ("A tender
+       * moment as the couple share a glance"). It was also the most visible symptom of the prefetch
+       * defect — the caption arrives on a Firestore snapshot in ~200 ms while the photograph took
+       * seconds, so the wall showed text alone before its own image. The caption is not deleted, only
+       * un-displayed: it still rides the media document, still feeds the reel director's evidence and
+       * still explains a ranking in the gallery's "Why this photo?" card, which is where a sentence of
+       * prose belongs — on a phone, on request.
+       *
+       * **The aesthetic score chip.** That number is an internal ranking term. Printing "Score 75"
+       * beside somebody's photograph of their friend, on a wall in a room those people are standing
+       * in, publishes a judgement of it to everyone there — and invites the obvious question about
+       * whoever scored 41.
+       *
+       * The credit chip stays: it is spec 12 §6's uploader attribution and the social mechanic that
+       * makes the next person upload. */}
       <div
         className="absolute inset-x-0 bottom-0 px-[4%]"
         style={{
-          paddingTop: "clamp(2rem, 8vh, 6rem)",
-          paddingBottom: "clamp(12rem, 20vh, 18rem)",
-          background: "linear-gradient(to top, rgba(8, 10, 18, 0.95) 0%, rgba(8, 10, 18, 0.6) 65%, transparent 100%)",
+          paddingTop: "clamp(1.5rem, 5vh, 4rem)",
+          paddingBottom: "clamp(10rem, 17vh, 16rem)",
+          background:
+            "linear-gradient(to top, rgba(8, 10, 18, 0.88) 0%, rgba(8, 10, 18, 0.45) 60%, transparent 100%)",
         }}
       >
-        {showCaption && (
-          <>
-            {media?.curator?.caption && (
-              <p
-                className="font-[family-name:var(--font-display)] italic text-3xl sm:text-4xl md:text-5xl mb-3.5 max-w-4xl leading-tight text-[var(--text-primary)] drop-shadow-lg"
-              >
-                &ldquo;{media.curator.caption}&rdquo;
-              </p>
-            )}
-            <div className="flex items-center gap-3">
-              <span
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass-card border border-white/15 text-xs text-[var(--text-primary)] font-medium shadow-2xl backdrop-blur-2xl bg-slate-950/70"
-              >
-                <Camera className="w-3.5 h-3.5 text-[var(--accent)]" />
-                <span>Captured by {creditName ?? "a guest"}</span>
-              </span>
-
-              {media?.curator?.aestheticScore && (
-                <span
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-full glass-card border border-white/10 text-xs font-mono tabular-nums text-[var(--text-secondary)] bg-slate-950/60"
-                >
-                  <Sparkles className="w-3 h-3 text-[var(--accent)]" />
-                  <span>Score {Math.round(media.curator.aestheticScore)}</span>
-                </span>
-              )}
-            </div>
-          </>
+        {showCredit && (
+          <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass-card border border-white/15 text-xs text-[var(--text-primary)] font-medium shadow-2xl backdrop-blur-2xl bg-slate-950/70">
+            <Camera className="w-3.5 h-3.5 text-[var(--accent)]" />
+            <span>Captured by {creditName ?? "a guest"}</span>
+          </span>
         )}
       </div>
     </div>

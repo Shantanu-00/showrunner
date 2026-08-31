@@ -51,7 +51,12 @@ export function MediaImg({
   // fetch during the ~100 ms before `accessMode` lands; the alternative is a private event's guests
   // looking at broken images. See the fail-closed paragraph in `lib/eventAccess.ts`.
   const needsAuth = forceAuthed || mode !== "open";
-  const authedSrc = useAuthedImage(eventId, needsAuth ? mediaId : null, variant);
+  // `shared: true` is what makes the kiosk's prefetch reachable: `lib/kioskPrefetch.ts` warms the
+  // next slides into `lib/mediaCache.ts`, and this is the read side of that same store. It matters
+  // only on the authed path — an open event's prefetch lands in the browser's own HTTP cache, which
+  // the plain `<img src>` below already hits. Harmless on the surfaces that are browsed rather than
+  // cycled (a gallery grid simply finds nothing warmed and fetches as before).
+  const authedSrc = useAuthedImage(eventId, needsAuth ? mediaId : null, variant, { shared: true });
   const src = !mediaId ? null : needsAuth ? authedSrc : mediaRenderUrl(eventId, mediaId, variant);
 
   if (!src) return <>{fallback}</>;

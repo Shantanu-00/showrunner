@@ -6,6 +6,8 @@ import type { EventPublicInfo, KioskPlaylist } from "@/lib/types";
 import { countPublicIndexed, listenKioskPlaylist } from "@/lib/firestore";
 import { joinUrl, slotHoldSec } from "@/lib/kiosk";
 import { dayLabelFromIndex } from "@/lib/eventTime";
+import { useAccessMode } from "@/lib/eventAccess";
+import { useSlotPrefetch } from "@/lib/kioskPrefetch";
 import { SlotRenderer } from "./SlotRenderer";
 import { LiveBroadcastHeader, DemoQrBadge, LiveStatusGlyph } from "./Overlays";
 
@@ -117,6 +119,19 @@ export function KioskShow({
   const shown = playlist ?? (!connected ? cachedPlaylist.current : null);
   const slots = shown?.slots ?? [];
   const activeSlot = slots.length > 0 ? slots[slotIndex % slots.length] : null;
+
+  // Warm the next few slides' bytes while this one is on screen. The publisher's *decisions* were
+  // always ~5 minutes ahead; without this the *pixels* were fetched only once a slide was already
+  // rendering, so every transition paid an API → 302 → GCS round trip in front of the room. Must
+  // mirror `MediaImg`'s own auth choice — hence `useAccessMode`, not a guess (`lib/kioskPrefetch.ts`).
+  const accessMode = useAccessMode(eventId);
+  useSlotPrefetch(
+    eventId,
+    slots,
+    slotIndex,
+    accessMode === undefined ? undefined : accessMode !== "open",
+    shown?.revision
+  );
 
   const activeStageInfo = eventInfo?.stages?.find((s) => s.stageId === shown?.activeStageId);
   const activeDayLabel = dayLabelFromIndex(activeStageInfo?.day);
