@@ -21,6 +21,7 @@ import {
   deleteDoc,
   doc,
   getCountFromServer,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
@@ -205,9 +206,68 @@ export function listenMedia(
 ): Unsubscribe {
   return onSnapshot(
     doc(db, "events", eventId, "media", mediaId),
-    (snap) => onData(snap.exists() ? (snap.data() as MediaDoc) : null),
+    (snap) => {
+      const item = snap.exists() ? (snap.data() as MediaDoc) : null;
+      // Every snapshot refreshes the warm cache below, so a slide the wall loops back around to is
+      // seeded from the newest version of the document rather than the one the prefetch first read.
+      if (item) mediaDocCache.set(mediaDocKey(eventId, mediaId), item);
+      onData(item);
+    },
     onError
   );
+}
+
+/* ------------------------------------------------------------------ the media-document warm cache
+ *
+ * A kiosk slide needs two independent things before it can paint: the photograph's bytes, and the
+ * *document* that says which variant exists and where the faces are. `lib/kioskPrefetch.ts` warmed the
+ * first and not the second, so a prefetched slide still opened on a shimmer while `listenMedia`'s
+ * first snapshot travelled — a spinner caused by the one thing that was supposed to remove spinners.
+ *
+ * One `getDoc` per upcoming slide, cached by (event, media). `HeroSlot` seeds its initial state from
+ * this synchronously, so a warmed slide's first render already has a variant and a face box; the
+ * listener then takes over and keeps the entry current. */
+
+const mediaDocCache = new Map<string, MediaDoc>();
+const mediaDocInflight = new Map<string, Promise<MediaDoc | null>>();
+
+function mediaDocKey(eventId: string, mediaId: string): string {
+  return `${eventId}:${mediaId}`;
+}
+
+/** The synchronous read. Null when this document has not been fetched or listened to yet. */
+export function cachedMediaDoc(eventId: string, mediaId: string | null | undefined): MediaDoc | null {
+  if (!mediaId) return null;
+  return mediaDocCache.get(mediaDocKey(eventId, mediaId)) ?? null;
+}
+
+/** Fetch and cache one media document. Resolves to it (or null if it is unreadable — a rules denial on
+ * a photo that just lost eligibility is an ordinary outcome here, not an error worth surfacing). */
+export async function prefetchMediaDoc(
+  eventId: string,
+  mediaId: string
+): Promise<MediaDoc | null> {
+  const key = mediaDocKey(eventId, mediaId);
+  const warm = mediaDocCache.get(key);
+  if (warm) return warm;
+  const pending = mediaDocInflight.get(key);
+  if (pending) return pending;
+
+  const task = (async () => {
+    try {
+      const snap = await getDoc(doc(db, "events", eventId, "media", mediaId));
+      if (!snap.exists()) return null;
+      const item = snap.data() as MediaDoc;
+      mediaDocCache.set(key, item);
+      return item;
+    } catch {
+      return null;
+    } finally {
+      mediaDocInflight.delete(key);
+    }
+  })();
+  mediaDocInflight.set(key, task);
+  return task;
 }
 
 /** The kiosk's truthful photo count (spec 12 §6's live status glyph). A real Firestore
@@ -420,9 +480,50 @@ export function listenReel(
 ): Unsubscribe {
   return onSnapshot(
     doc(db, "events", eventId, "reels", reelId),
-    (snap) => onData(snap.exists() ? (snap.data() as ReelDoc) : null),
+    (snap) => {
+      const reel = snap.exists() ? (snap.data() as ReelDoc) : null;
+      // Keep the warm copy current, so a premiere the wall loops back to opens on the newest status
+      // (`rendering` → `published`) rather than the one the prefetch happened to read.
+      if (reel) reelDocCache.set(`${eventId}:${reelId}`, reel);
+      onData(reel);
+    },
     onError
   );
+}
+
+/** The reel equivalent of `cachedMediaDoc`. A premiere's `videoUri` lives on this document, so the
+ * kiosk cannot even begin fetching video until it arrives — which is why `lib/kioskPrefetch.ts` warms
+ * it a slide early and `ReelSlot` seeds its state from here. */
+const reelDocCache = new Map<string, ReelDoc>();
+const reelDocInflight = new Map<string, Promise<ReelDoc | null>>();
+
+export function cachedReelDoc(eventId: string, reelId: string | null | undefined): ReelDoc | null {
+  if (!reelId) return null;
+  return reelDocCache.get(`${eventId}:${reelId}`) ?? null;
+}
+
+export async function prefetchReelDoc(eventId: string, reelId: string): Promise<ReelDoc | null> {
+  const key = `${eventId}:${reelId}`;
+  const warm = reelDocCache.get(key);
+  if (warm) return warm;
+  const pending = reelDocInflight.get(key);
+  if (pending) return pending;
+
+  const task = (async () => {
+    try {
+      const snap = await getDoc(doc(db, "events", eventId, "reels", reelId));
+      if (!snap.exists()) return null;
+      const reel = snap.data() as ReelDoc;
+      reelDocCache.set(key, reel);
+      return reel;
+    } catch {
+      return null;
+    } finally {
+      reelDocInflight.delete(key);
+    }
+  })();
+  reelDocInflight.set(key, task);
+  return task;
 }
 
 /** The event's recap film, for the guests it is actually about (`RecapCard`).

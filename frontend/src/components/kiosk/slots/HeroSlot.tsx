@@ -3,7 +3,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { Camera } from "lucide-react";
 import type { HeroSlot as HeroSlotType, MediaDoc } from "@/lib/types";
-import { listenMedia, listenUploaderCredit } from "@/lib/firestore";
+import { cachedMediaDoc, listenMedia, listenUploaderCredit } from "@/lib/firestore";
 import { MediaImg } from "@/lib/MediaImg";
 
 function primaryFaceOrigin(media: MediaDoc | null): string {
@@ -17,7 +17,11 @@ function primaryFaceOrigin(media: MediaDoc | null): string {
 }
 
 export function HeroSlot({ eventId, slot }: { eventId: string; slot: HeroSlotType }) {
-  const [media, setMedia] = useState<MediaDoc | null>(null);
+  // Seeded synchronously from the document `lib/kioskPrefetch.ts` warmed a slide early. A photograph
+  // needs two independent things before it can paint — its bytes *and* the document that says which
+  // variant exists and where the faces are — and warming only the first still opened on a shimmer
+  // while `listenMedia`'s first snapshot travelled. The listener below then takes over.
+  const [media, setMedia] = useState<MediaDoc | null>(() => cachedMediaDoc(eventId, slot.mediaId));
   const [creditName, setCreditName] = useState<string | null>(null);
   // Gates the credit chip on the photograph having actually painted, not on the (much faster)
   // Firestore snapshot — a chip floating over a shimmer reads as a bug. The backstop timer covers a

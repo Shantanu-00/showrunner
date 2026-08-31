@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Play, Tv, Sparkles, Volume2, AlertTriangle } from "lucide-react";
 import type { EventPublicInfo } from "@/lib/types";
+import { unlockAudio } from "@/lib/audioUnlock";
 import { GlowButton } from "@/components/atoms/GlowButton";
 import { StatusBadge } from "@/components/atoms/StatusBadge";
 
@@ -19,15 +20,13 @@ export function KioskSetup({
   async function handleStart() {
     setStarting(true);
     setFullscreenWarning(null);
-    try {
-      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      const source = ctx.createBufferSource();
-      source.buffer = ctx.createBuffer(1, 1, 22050);
-      source.connect(ctx.destination);
-      source.start(0);
-    } catch {
-      // non-fatal
-    }
+    // **First, and before any other await.** This is the only human gesture a television ever gives
+    // us, and audible playback is the permission that needs it most — a reel premiere mounts minutes
+    // later with no activation of its own. `unlockAudio` plays a real (silent) media element here,
+    // inside the click, which is what lets `ReelSlot`'s `<video>` start unmuted at all. Awaiting
+    // fullscreen first would spend the activation on the wrong thing (`lib/audioUnlock.ts`).
+    await unlockAudio();
+
     let warning: string | null = null;
     try {
       if (document.documentElement.requestFullscreen) {

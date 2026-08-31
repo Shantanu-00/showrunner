@@ -283,11 +283,34 @@ export async function saveMediaToDisk(apiPath: string, filename: string): Promis
 }
 
 /** Warm the browser's own HTTP cache without allocating a blob — used for the public path, where the
- * later `<img src>` is the identical URL and therefore a cache hit. */
-export function warmHttpCache(url: string): void {
-  if (typeof window === "undefined") return;
-  const img = new Image();
-  img.decoding = "async";
-  img.src = url;
-  void img.decode?.().catch(() => {});
+ * later `<img src>` is the identical URL and therefore a cache hit.
+ *
+ * Resolves when the image is **decoded**, not merely requested, and de-duplicates concurrent warms of
+ * the same URL. Both properties exist for `lib/kioskPrefetch.ts`: the wall gates its first paint and
+ * each advance on "these bytes are ready", and a promise that settled at request time would report
+ * ready while the browser was still downloading — which is the shimmer this was meant to remove.
+ * Resolves `false` rather than rejecting on a broken image, so a caller can treat it as "stop waiting"
+ * instead of having to catch. */
+const httpWarmed = new Map<string, Promise<boolean>>();
+
+export function warmHttpCache(url: string): Promise<boolean> {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  const existing = httpWarmed.get(url);
+  if (existing) return existing;
+
+  const task = new Promise<boolean>((resolve) => {
+    const img = new Image();
+    img.decoding = "async";
+    // `decode()` is the accurate signal but is not everywhere, and it rejects on some browsers for an
+    // image that loads perfectly well — so `onload` is the floor and `decode()` only ever upgrades it.
+    img.onload = () => {
+      const decoded = img.decode?.();
+      if (decoded) void decoded.then(() => resolve(true)).catch(() => resolve(true));
+      else resolve(true);
+    };
+    img.onerror = () => resolve(false);
+    img.src = url;
+  });
+  httpWarmed.set(url, task);
+  return task;
 }
