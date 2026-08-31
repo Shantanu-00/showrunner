@@ -1,6 +1,11 @@
 # Showrunner — System Architecture (review document)
 
-> **The submission artifact**: [`assets/architecture.pdf`](assets/architecture.pdf) — 7 pages, page 1 the
+> **Start here — one page, one glance**: [`assets/architecture-simple.pdf`](assets/architecture-simple.pdf)
+> ([PNG](assets/architecture-simple.png)). The high-level workflow only: six labelled stages, one sentence per
+> box, every agent named with its framework, its model and where it runs. Nothing on it that is not on the
+> main path. This is the file to hand anyone who wants to understand the system by looking at it.
+>
+> **The deep version**: [`assets/architecture.pdf`](assets/architecture.pdf) — 7 pages, page 1 the
 > one-glance overview (also [`architecture-overview.png`](assets/architecture-overview.png)), pages 2–7 the
 > low-level design: deployment topology & identity · the data plane · the control loop, state & memory ·
 > the reel pipeline · trust & governance · failure, scale & cost. Rebuild it with

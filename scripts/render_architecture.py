@@ -4,7 +4,14 @@
 
 Outputs, all under `docs/assets/`:
 
-  architecture.pdf              7 pages — p1 the one-glance overview, p2-7 the LLD.
+  architecture-simple.pdf       ONE page — the high-level workflow, and the file to
+                                hand a judge who wants to understand the system by
+                                looking at it: six labelled stages, one sentence per
+                                box, every agent named with its framework, its model
+                                and where it runs, and nothing on it that is not on
+                                the main path.
+  architecture-simple.png       the same page at 200 dpi.
+  architecture.pdf              7 pages — p1 the dense overview, p2-7 the LLD.
                                 This is the file that goes in the Devpost
                                 "architecture diagram" upload field (it accepts
                                 pdf/ppt/pptx/png/jpg up to 35 MB).
@@ -42,9 +49,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "docs" / "assets"
 
+SIMPLE_HTML = ASSETS / "architecture-simple.html"
 OVERVIEW_HTML = ASSETS / "architecture-overview.html"
 LLD_HTML = ASSETS / "architecture-lld.html"
 
+OUT_SIMPLE_PDF = ASSETS / "architecture-simple.pdf"
+OUT_SIMPLE_PNG = ASSETS / "architecture-simple.png"
 OUT_PDF = ASSETS / "architecture.pdf"
 OUT_PNG = ASSETS / "architecture-overview.png"
 OUT_JPG = ASSETS / "architecture-diagram.jpg"
@@ -82,7 +92,7 @@ def _file_url(p: Path) -> str:
 
 
 def main() -> None:
-    for src in (OVERVIEW_HTML, LLD_HTML, ASSETS / "arch.css"):
+    for src in (SIMPLE_HTML, OVERVIEW_HTML, LLD_HTML, ASSETS / "arch.css"):
         if not src.exists():
             raise SystemExit(f"missing source: {src}")
 
@@ -95,7 +105,7 @@ def main() -> None:
     try:
         # 1. Layout and print each source. A throwaway profile keeps a stale disk
         #    cache from serving an older arch.css.
-        for src, out in ((OVERVIEW_HTML, tmp_overview), (LLD_HTML, tmp_lld)):
+        for src, out in ((SIMPLE_HTML, OUT_SIMPLE_PDF), (OVERVIEW_HTML, tmp_overview), (LLD_HTML, tmp_lld)):
             _run([
                 chrome,
                 "--headless",
@@ -118,11 +128,12 @@ def main() -> None:
         ])
         print(f"  wrote {OUT_PDF.relative_to(ROOT)}")
 
-        # 3. Rasterize page 1 of the *merged* PDF, so the README image and the
-        #    upload's first page cannot drift apart.
-        for device, dpi, out, extra in (
-            ("png16m", "200", OUT_PNG, []),
-            ("jpeg", "150", OUT_JPG, ["-dJPEGQ=94"]),
+        # 3. Rasterize page 1 of each PDF, so the images in the README and the
+        #    images inside the uploads cannot drift apart.
+        for device, dpi, src, out, extra in (
+            ("png16m", "200", OUT_SIMPLE_PDF, OUT_SIMPLE_PNG, []),
+            ("png16m", "200", OUT_PDF, OUT_PNG, []),
+            ("jpeg", "150", OUT_PDF, OUT_JPG, ["-dJPEGQ=94"]),
         ):
             _run([
                 gs, "-dNOPAUSE", "-dBATCH", "-dQUIET",
@@ -131,7 +142,7 @@ def main() -> None:
                 "-dTextAlphaBits=4", "-dGraphicsAlphaBits=4",
                 *extra,
                 f"-sOutputFile={out.resolve()}",
-                str(OUT_PDF.resolve()),
+                str(src.resolve()),
             ])
             print(f"  wrote {out.relative_to(ROOT)}")
 
@@ -140,7 +151,9 @@ def main() -> None:
         tmp_lld.unlink(missing_ok=True)
         shutil.rmtree(ASSETS / "_chrome.tmp", ignore_errors=True)
 
-    print("\nDone. Devpost architecture upload: docs/assets/architecture.pdf")
+    print("\nDone.")
+    print("  one glance, for the architecture-diagram field: docs/assets/architecture-simple.pdf")
+    print("  the deep version, when depth is what is wanted: docs/assets/architecture.pdf")
 
 
 if __name__ == "__main__":

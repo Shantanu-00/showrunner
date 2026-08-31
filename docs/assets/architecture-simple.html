@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Showrunner — how it works (one page)</title>
+<link rel="stylesheet" href="arch.css" />
+<style>
+  /* ── This page is deliberately sparse. ──────────────────────────────────────
+     The dense overview lives in architecture-overview.html; this one exists
+     because a judge should be able to read the whole system in one look. Rules
+     it holds itself to: six labelled stages, at most one sentence per box, every
+     agent named with its framework, its model and where it runs, and no box that
+     is not on the main path. Bigger type, more air, fewer things. */
+
+  .page { padding: 34px 34px 24px; }
+
+  .masthead { border-bottom-width: 2.5px; padding-bottom: 12px; }
+  .masthead h1 { font-size: 34px; letter-spacing: -0.02em; }
+  .masthead .kicker { font-size: 11px; letter-spacing: 0.18em; }
+  .masthead .thesis { font-size: 15.5px; line-height: 1.45; max-width: 1120px; margin-top: 8px; }
+  .masthead .thesis .step { font: inherit; border: none; background: none; padding: 0; color: var(--ink); font-weight: 700; }
+
+  .stack { text-align: right; font-size: 11.5px; line-height: 1.55; color: var(--ink-2); }
+  .stack b { display: block; color: var(--ink); font-size: 13px; font-weight: 700; }
+  .stack .mono { font-family: var(--mono); font-size: 10.5px; font-variant-ligatures: none; }
+
+  /* group captions — the six stages of the workflow */
+  .cap {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink);
+    white-space: nowrap;
+    background: var(--paper);
+    padding: 2px 8px 2px 0;
+    border-radius: 2px;
+  }
+  .cap .n {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: #fff;
+    background: var(--ink);
+    border-radius: 3px;
+    padding: 1px 6px 1px;
+    letter-spacing: 0.02em;
+  }
+  .cap em { font-style: normal; font-weight: 500; letter-spacing: 0.03em; text-transform: none; color: var(--ink-3); font-size: 11.5px; }
+
+  /* boxes: one sentence, big enough to read across a room */
+  .node { padding: 10px 13px 12px; border-top-width: 3px; border-radius: 4px; }
+  .node .hd { font-size: 15px; line-height: 1.2; gap: 7px; }
+  .node .gl { font-size: 14px; }
+  .node .svc { font-size: 9.8px; margin-top: 5px; letter-spacing: 0.045em; line-height: 1.4; }
+  .node .bd { font-size: 12.2px; line-height: 1.45; margin-top: 7px; }
+  .node.agent .hd { font-size: 15.5px; }
+
+  .chev {
+    position: absolute;
+    font-size: 19px;
+    line-height: 1;
+    font-weight: 700;
+    color: var(--ctl);
+    transform: translate(-50%, -50%);
+  }
+  .elabel { font-size: 11px; font-weight: 600; padding: 1px 6px; white-space: pre-line; text-align: center; line-height: 1.35; }
+  .elabel.em { font-size: 11.5px; }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="masthead">
+    <div>
+      <p class="kicker">Showrunner · autonomous event media director · one-page architecture</p>
+      <h1>How it works</h1>
+      <p class="thesis"><span class="step">①</span> a guest uploads &nbsp;→&nbsp; <span class="step">②</span> the pipeline prepares the file &nbsp;→&nbsp; <span class="step">③</span> three agents judge it &nbsp;→&nbsp; <span class="step">④</span> Firestore records it &nbsp;→&nbsp; <span class="step">⑤</span> every screen updates live &nbsp;→&nbsp; <span class="step">⑥</span> two director agents act — and task the crowd again.</p>
+    </div>
+    <div class="stack">
+      <b>Google ADK v2 &middot; GenAI SDK</b>
+      Gemini Enterprise Agent Platform<br/>
+      <span class="mono">8 Cloud Run services &middot; 1 Cloud Run Job<br/>region us-central1</span>
+    </div>
+  </div>
+
+  <div class="canvas" id="canvas"><div class="cvinner" id="cvinner">
+    <svg class="edges" id="edges" viewBox="0 0 1532 820">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4a5058"/></marker>
+        <marker id="ah-heavy" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#14161a"/></marker>
+        <marker id="ah-exp" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1b6fe0"/></marker>
+        <marker id="ah-ctl" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b4530a"/></marker>
+      </defs>
+    </svg>
+  </div></div>
+
+  <div class="pagefoot">
+    <div><b>Judgment by agents, enforcement by policy.</b> The five fleet members judge and plan; a single deterministic function — never a model — decides what the public can see.</div>
+    <div class="mono">detail: docs/assets/architecture.pdf &middot; docs/architecture.md</div>
+  </div>
+
+</div>
+
+<script>
+/* ────────────────────────────────────────────────────────────────────────────
+   The page is declared as six ROWS. Nothing here hard-codes a box height: the
+   rows are measured after the browser has laid the text out, then flowed down
+   the page, and the captions, the connector buses and the two long rails are
+   derived from the measured geometry. Hand-computed heights are what clip a
+   sentence when one word changes; this cannot.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+const CW = 1532;                    /* canvas width  */
+const PAD = 24;                     /* content band is PAD .. CW-PAD */
+const BAND = CW - PAD * 2;          /* 1484 */
+const TOP = 44;                     /* room above row 1 for the live-push spine */
+
+const col = (n, i, gap = 22) => { const w = (BAND - (n - 1) * gap) / n; return [PAD + i * (w + gap), w]; };
+const C3 = i => col(3, i), C5 = i => col(5, i);
+
+const NODES = {
+  /* ── the surfaces ───────────────────────────────────────────────────────── */
+  guest: { cls:'exp', tint:1, at:C3(0), gl:'●', title:'Guest app',
+    svc:'Next.js PWA · Firebase Hosting',
+    body:'Scan a QR, upload, and get the photographs of <i>yourself</i> back.' },
+  wall: { cls:'exp', tint:1, at:C3(1), gl:'●', title:'Live wall',
+    svc:'Next.js PWA · Firebase Hosting',
+    body:'The screen in the venue. Plays the program the system directed.' },
+  host: { cls:'exp', tint:1, at:C3(2), gl:'●', title:'Host console',
+    svc:'Next.js PWA · Firebase Hosting',
+    body:'Go live, paste the timeline, approve albums, wrap the event.' },
+
+  /* ── upload & ingest ────────────────────────────────────────────────────── */
+  api: { cls:'dat', at:C5(0), gl:'●', title:'api', svc:'Cloud Run',
+    body:'Hands back a signed upload URL, and never sees the file.' },
+  raw: { cls:'dat', tint:1, store:1, at:C5(1), gl:'▣', title:'Storage — raw', svc:'Cloud Storage',
+    body:'The bytes land here, straight from the phone.' },
+  ea: { cls:'dat', at:C5(2), gl:'▣', title:'Eventarc', svc:'Eventarc + Pub/Sub',
+    body:'Fires on every new object. Retries, then dead-letters.' },
+  intake: { cls:'dat', at:C5(3), gl:'●', title:'intake', svc:'Cloud Run',
+    body:'Thumbnails, EXIF, de-duplication, GPS stripped out.' },
+  tasks: { cls:'dat', tint:1, at:C5(4), gl:'▣', title:'Cloud Tasks', svc:'6 queues',
+    body:'<b>The throttle</b> — 8 dispatches a second onto the models.' },
+
+  /* ── the perception fleet ───────────────────────────────────────────────── */
+  curator: { cls:'mdl', tint:1, at:C3(0), gl:'◆', title:'Curator',
+    svc:'perception agent · ADK · gemini-3.5-flash-lite · Cloud Run',
+    body:'<b>What is this a photograph of, and is it any good?</b> Stage, moment, caption, quality.' },
+  guardian: { cls:'mdl', tint:1, at:C3(1), gl:'◆', title:'Guardian',
+    svc:'perception agent · ADK · Cloud Vision + gemini-3.5-flash-lite · Cloud Run',
+    body:'<b>Is it safe, and is it dignified?</b> A refusal always takes the cautious answer.' },
+  face: { cls:'dat', tint:1, at:C3(2), gl:'▲', title:'Face Indexer',
+    svc:'ML worker, no LLM · InsightFace ArcFace ONNX · Cloud Run',
+    body:'<b>Who is in it?</b> A 512-d face match, run as vector search in Firestore.' },
+
+  /* ── system of record ───────────────────────────────────────────────────── */
+  fs: { cls:'dat', tint:1, store:1, at:[PAD, BAND], gl:'▣',
+    title:'Firestore — the system of record, and the live push channel',
+    svc:'Firestore + native 512-d vector search',
+    body:'Every verdict, album, bounty, score and playlist. <b>One deterministic function — never a language model — decides what the public can see</b>, and it is the only thing allowed to write that.' },
+
+  /* ── the directors ──────────────────────────────────────────────────────── */
+  sched: { cls:'ctl', tint:1, at:[PAD, 250], gl:'▣', title:'Cloud Scheduler', svc:'every 2 minutes',
+    body:'Wakes the fleet on a timer. <b>Nobody presses anything.</b>' },
+  story: { cls:'ctl', tint:1, at:[296, 400], gl:'◆', title:'Story Director',
+    svc:'planning agent · ADK · gemini-3.7-flash · Cloud Run',
+    body:'<b>Who is missing from the story?</b> Finds the gap, then <b>tasks a guest to fill it</b> — or commissions a film.' },
+  reel: { cls:'ctl', tint:1, at:[718, 400], gl:'◆', title:'Reel Director',
+    svc:'planning agent · ADK · gemini-3.7-flash · Cloud Run Job',
+    body:'Cuts a beat-synced film from the evidence. <b>Lyria 3</b> soundtrack, <b>Veo 3.1</b> opener.' },
+  pub: { cls:'ctl', tint:1, at:[1140, 368], gl:'●', title:'publisher', svc:'Cloud Run',
+    body:'Ranks the photographs and writes the wall’s playlist.' },
+
+  /* ── governance ─────────────────────────────────────────────────────────── */
+  gov: { cls:'gov', tint:1, at:[PAD, BAND], gl:'●',
+    body:'<b>Model Armor</b> screens every director prompt &nbsp;·&nbsp; <b>Firestore rules</b> are deny-by-default and read only signed claims &nbsp;·&nbsp; a face template lives in a collection <b>no client can read at all</b> &nbsp;·&nbsp; <b>12 least-privilege service accounts</b>, so neither agent that reads a photograph can open the original &nbsp;·&nbsp; <b>Memory Bank (GEAP)</b> holds soft context only, and gates nothing' },
+};
+
+const ROWS = [
+  { cap:['⑤', 'The surfaces'],         ids:['guest', 'wall', 'host'] },
+  { cap:['①②', 'Upload & ingest'],     ids:['api', 'raw', 'ea', 'intake', 'tasks'], gap: 78 },
+  { cap:['③', 'The perception fleet'], ids:['curator', 'guardian', 'face'],         gap: 56 },
+  { cap:['④', 'System of record'],     ids:['fs'],                                  gap: 56 },
+  { cap:['⑥', 'The directors'],        ids:['sched', 'story', 'reel', 'pub'],       gap: 64 },
+  { cap:['',  'Governance'],           ids:['gov'],                                 gap: 46 },
+];
+
+/* ── build ───────────────────────────────────────────────────────────────── */
+const canvas = document.getElementById('cvinner');
+const svg = document.getElementById('edges');
+const SVGNS = 'http://www.w3.org/2000/svg';
+
+for (const [id, n] of Object.entries(NODES)) {
+  const el = document.createElement('div');
+  el.className = ['node', n.cls, n.tint ? 'tint' : '', n.store ? 'store' : ''].filter(Boolean).join(' ');
+  el.style.cssText = `left:${n.at[0]}px;width:${n.at[1]}px;top:0px`;
+  el.innerHTML =
+    (n.title ? `<div class="hd"><span class="gl">${n.gl}</span><span>${n.title}</span></div>` : '') +
+    (n.svc ? `<div class="svc">${n.svc}</div>` : '') +
+    (n.body ? `<div class="bd"${n.title ? '' : ' style="margin-top:2px"'}>${n.body}</div>` : '');
+  canvas.appendChild(el);
+  n.el = el; n.x = n.at[0]; n.w = n.at[1];
+}
+
+/* ── flow the rows, measuring as we go ───────────────────────────────────── */
+let y = TOP;
+for (const row of ROWS) {
+  if (row.gap) y += row.gap;
+  const h = Math.max(...row.ids.map(id => NODES[id].el.offsetHeight));
+  for (const id of row.ids) {
+    const n = NODES[id];
+    n.y = y; n.h = h;
+    n.el.style.top = `${y}px`;
+    n.el.style.height = `${h}px`;
+  }
+  row.top = y; row.bottom = y + h;
+  y = row.bottom;
+}
+const CH = y + 8;
+canvas.style.height = `${CH}px`;
+/* The shared stylesheet pins .edges to a fixed height for the other diagrams.
+   This page's canvas height is measured, so the SVG box has to be resized to
+   match the viewBox — otherwise every connector is drawn at a different
+   vertical scale than the boxes it is meant to join. */
+svg.setAttribute('viewBox', `0 0 ${CW} ${CH}`);
+svg.style.width = `${CW}px`;
+svg.style.height = `${CH}px`;
+
+/* captions sit just above their row; buses sit in the middle of the gutter */
+for (const row of ROWS) {
+  const el = document.createElement('div');
+  el.className = 'cap';
+  el.style.cssText = `left:${PAD}px;top:${row.top - 21}px`;
+  el.innerHTML = (row.cap[0] ? `<span class="n">${row.cap[0]}</span>` : '') + `<span>${row.cap[1]}</span>`;
+  canvas.appendChild(el);
+}
+const gutter = (a, b) => (ROWS[a].bottom + ROWS[b].top) / 2;
+
+/* ── geometry helpers ───────────────────────────────────────────────────── */
+function anchor(spec) {
+  if (Array.isArray(spec)) return { x: spec[0], y: spec[1], dir: [0, spec[2] || 0] };
+  const m = /^([A-Za-z0-9_]+):([tblr])([\d.]*)$/.exec(spec);
+  const n = NODES[m[1]], side = m[2], f = m[3] === '' ? 0.5 : parseFloat(m[3]);
+  if (side === 't') return { x: n.x + n.w * f, y: n.y,           dir: [0, -1] };
+  if (side === 'b') return { x: n.x + n.w * f, y: n.y + n.h,     dir: [0,  1] };
+  if (side === 'l') return { x: n.x,           y: n.y + n.h * f, dir: [-1, 0] };
+  return                   { x: n.x + n.w,     y: n.y + n.h * f, dir: [ 1, 0] };
+}
+
+const STYLE = {
+  thin:  { stroke:'#4a5058', w:1.6, dash:'',    mk:'ah' },
+  heavy: { stroke:'#14161a', w:3.0, dash:'',    mk:'ah-heavy' },
+  exp:   { stroke:'#1b6fe0', w:1.8, dash:'6 4', mk:'ah-exp' },
+  ctl:   { stroke:'#b4530a', w:2.4, dash:'',    mk:'ah-ctl' },
+};
+
+function route(p, q, via) {
+  const pts = [[p.x, p.y]];
+  if (via) { for (const v of via) pts.push(v); pts.push([q.x, q.y]); return pts; }
+  const gap = 11;
+  if (p.dir[0] !== 0) {
+    if (Math.abs(p.y - q.y) < 1.5) { pts.push([q.x, q.y]); return pts; }
+    const mx = p.x + p.dir[0] * gap;
+    pts.push([mx, p.y], [mx, q.y], [q.x, q.y]);
+  } else {
+    if (Math.abs(p.x - q.x) < 1.5) { pts.push([q.x, q.y]); return pts; }
+    const my = p.y + p.dir[1] * gap;
+    pts.push([p.x, my], [q.x, my], [q.x, q.y]);
+  }
+  return pts;
+}
+
+function pathOf(pts, r = 9) {
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+    const v1 = [x1 - x0, y1 - y0], v2 = [x2 - x1, y2 - y1];
+    const l1 = Math.hypot(...v1) || 1, l2 = Math.hypot(...v2) || 1;
+    const rr = Math.min(r, l1 / 2, l2 / 2);
+    d += ` L ${x1 - v1[0] / l1 * rr} ${y1 - v1[1] / l1 * rr}`;
+    d += ` Q ${x1} ${y1} ${x1 + v2[0] / l2 * rr} ${y1 + v2[1] / l2 * rr}`;
+  }
+  const e = pts[pts.length - 1];
+  return d + ` L ${e[0]} ${e[1]}`;
+}
+
+function stroke(d, st, o = {}) {
+  const p = document.createElementNS(SVGNS, 'path');
+  p.setAttribute('d', d);
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', st.stroke);
+  p.setAttribute('stroke-width', st.w);
+  p.setAttribute('stroke-linecap', 'round');
+  if (st.dash) p.setAttribute('stroke-dasharray', st.dash);
+  if (o.end !== false) p.setAttribute('marker-end', `url(#${st.mk})`);
+  if (o.start) p.setAttribute('marker-start', `url(#${st.mk})`);
+  svg.appendChild(p);
+}
+
+function label(x, y, text, cls, rot) {
+  const el = document.createElement('div');
+  el.className = 'elabel ' + (cls || '');
+  el.style.cssText = `left:${x}px;top:${y}px;transform:translate(-50%,-50%)${rot ? ` rotate(${rot}deg)` : ''}`;
+  el.textContent = text;
+  canvas.appendChild(el);
+}
+
+function edge(e) {
+  const p = anchor(e.a), q = anchor(e.b);
+  const pts = route(p, q, e.via);
+  const st = STYLE[e.style] || STYLE.thin;
+  stroke(pathOf(pts), st, { start: !!e.both, end: e.arrow !== 0 });
+  if (!e.lbl) return;
+  let seg = e.seg;
+  if (seg === undefined) {
+    let best = -1;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const l = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+      if (l > best) { best = l; seg = i; }
+    }
+  }
+  seg = Math.min(seg, pts.length - 2);
+  label((pts[seg][0] + pts[seg + 1][0]) / 2 + (e.dx || 0),
+        (pts[seg][1] + pts[seg + 1][1]) / 2 + (e.dy || 0), e.lbl, e.clsl, e.rot);
+}
+
+function bus(from, to, y, style, lbl, lx) {
+  const st = STYLE[style] || STYLE.thin;
+  const src = from.map(anchor), dst = to.map(anchor);
+  const xs = [...src, ...dst].map(a => a.x);
+  stroke(`M ${Math.min(...xs)} ${y} L ${Math.max(...xs)} ${y}`, st, { end: false });
+  for (const a of src) stroke(`M ${a.x} ${a.y} L ${a.x} ${y}`, st, { end: false });
+  for (const a of dst) stroke(`M ${a.x} ${y} L ${a.x} ${a.y}`, st);
+  if (lbl) label(lx, y, lbl, 'em');
+}
+
+/* ── the connectors ─────────────────────────────────────────────────────── */
+const SPINE = 26;                              /* the live-push spine, above row 1 */
+const gutter01 = gutter(0, 1);
+
+edge({ a:'guest:b0.35', b:'api:t0.6', lbl:'① signed upload URL', style:'exp', both:1 });
+edge({ a:'guest:b0.92', b:'raw:t0.5',
+       lbl:'② the bytes go straight to the bucket —\nno server ever touches the file',
+       style:'heavy', clsl:'em' });
+edge({ a:'raw:r',    b:'ea:l',      style:'thin' });
+edge({ a:'ea:r',     b:'intake:l', style:'thin' });
+edge({ a:'intake:r', b:'tasks:l',  style:'thin' });
+/* Adjacency inside the directors row is shown with a chevron in the gap rather
+   than a 22px arrow, which at this scale reads as a connector to nowhere. */
+for (const [l, r] of [['sched', 'story'], ['story', 'reel']]) {
+  const el = document.createElement('div');
+  el.className = 'chev';
+  el.style.cssText = `left:${(NODES[l].x + NODES[l].w + NODES[r].x) / 2}px;top:${NODES[l].y + NODES[l].h / 2}px`;
+  el.textContent = '▸';
+  canvas.appendChild(el);
+}
+
+/* fan-out, verdicts, and everything the directors write */
+bus(['tasks:b0.5'], ['curator:t0.5', 'guardian:t0.5', 'face:t0.5'],
+    gutter(1, 2), 'thin', '③ rate-limited fan-out', 1090);
+bus(['curator:b0.5', 'guardian:b0.5', 'face:b0.5'], ['fs:t0.5'],
+    gutter(2, 3), 'thin', '④ three verdicts, one transactional write', 1090);
+bus(['story:t0.5', 'reel:t0.5', 'pub:t0.5'], ['fs:b0.5'],
+    gutter(3, 4), 'ctl', 'bounties · points · reels · the wall’s playlist', 1090);
+
+/* The loop that is the whole point: the system tasks the humans back. It leaves
+   the Story Director's top edge alongside the write-to-Firestore bus — the
+   director does both — and runs up the left margin, which is the only corridor
+   on the page that crosses no box. */
+const railX = 10;
+const railTop = ROWS[0].bottom + 16;
+const railBot = (ROWS[3].bottom + ROWS[4].top) / 2 + 16;
+const railFrom = NODES.story.x + NODES.story.w * 0.25;
+edge({ a:[railFrom, ROWS[4].top, -1], b:[PAD + 72, ROWS[0].bottom, 1],
+       via: [[railFrom, railBot], [railX, railBot], [railX, railTop], [PAD + 72, railTop]],
+       lbl:'⑥ the bounty lands on the right guest’s phone',
+       style:'ctl', clsl:'em', seg:2, rot:-90 });
+
+/* live push: up the right gutter, then a spine over the surfaces */
+edge({ a:'fs:r', b:[264, SPINE], via: [[CW - 12, NODES.fs.y + NODES.fs.h / 2], [CW - 12, SPINE]],
+       arrow:0, style:'exp', seg:2,
+       lbl:'⑤ live snapshot listeners — nothing in this product polls', clsl:'em' });
+for (const id of ['guest', 'wall', 'host']) {
+  const n = NODES[id];
+  edge({ a:[n.x + n.w / 2, SPINE, 1], b:`${id}:t0.5`, style:'exp' });
+}
+
+/* ── fit the finished canvas into the page box ───────────────────────────── */
+(function fit() {
+  const box = document.getElementById('canvas');
+  const s = Math.min(box.clientWidth / CW, box.clientHeight / CH);
+  canvas.style.transform = `scale(${s})`;
+  canvas.style.left = ((box.clientWidth - CW * s) / 2) + 'px';
+})();
+</script>
+</body>
+</html>
