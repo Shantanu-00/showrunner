@@ -38,6 +38,8 @@ from shared.settings import (
     REEL_AESTHETIC_FLOOR,
     REEL_CANDIDATE_CAP,
     REEL_CANDIDATE_FETCH,
+    REEL_RECAP_AESTHETIC_FLOOR,
+    REEL_RECAP_MIN_CANDIDATES,
     VIP_WEIGHT_BY_TIER,
 )
 
@@ -223,11 +225,19 @@ def _persona_filter(
     person_id: str | None,
     stage_id: str | None,
     audience_ring: int,
+    floor: float = REEL_AESTHETIC_FLOOR,
 ) -> list[Candidate]:
-    """Spec 06 §2.2's lens applied to *eligibility*; the lens applied to *pacing* is the prompt's."""
+    """Spec 06 §2.2's lens applied to *eligibility*; the lens applied to *pacing* is the prompt's.
+
+    `floor` is a parameter rather than the constant so `choose` can try the recap's higher bar first
+    (see `REEL_RECAP_AESTHETIC_FLOOR`). `is_highlight` still bypasses it at any setting: the Curator
+    only sets that flag at `aestheticScore >= 0.75` *and* "shows a moment", so a highlight is already
+    above every floor this function is ever handed — the bypass exists for the honest edge case where
+    a stored score is missing but the judgement was recorded.
+    """
     out: list[Candidate] = []
     for c in candidates:
-        if c.aesthetic < REEL_AESTHETIC_FLOOR and not c.is_highlight:
+        if c.aesthetic < floor and not c.is_highlight:
             continue
         if audience_ring <= 1 and person_id:
             # Ring-1 items are only permitted when they belong to the subject of the reel.
@@ -294,6 +304,25 @@ def choose(
         stage_id=stage_id,
         audience_ring=audience_ring,
     )
+
+    # The recap's raised floor (spec 13 §8's film is the one permanent artifact — see
+    # `REEL_RECAP_AESTHETIC_FLOOR`). Tried *after* the ordinary filter rather than instead of it, so
+    # the comparison is against a known-good baseline: if the stricter pass leaves enough material for
+    # a full-length film, use it; otherwise keep what the ordinary floor found. A thin event therefore
+    # gets a softer recap and never an absent one, and the decision is one `len()` rather than a
+    # separate code path that could diverge from the pass above it.
+    if persona is ReelPersona.EVENT_RECAP and len(filtered) >= REEL_RECAP_MIN_CANDIDATES:
+        stricter = _persona_filter(
+            candidates,
+            persona=persona,
+            person_id=person_id,
+            stage_id=stage_id,
+            audience_ring=audience_ring,
+            floor=REEL_RECAP_AESTHETIC_FLOOR,
+        )
+        if len(stricter) >= REEL_RECAP_MIN_CANDIDATES:
+            filtered = stricter
+
     if not filtered:
         filtered = [
             c

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,6 +45,9 @@ from shared.settings import (
     DRIFT_VOTE_FRACTION,
     GROUP_SHOT_MIN_FRACTION,
     NEAR_STAGE_WINDOW_MINUTES,
+    PERSON_COVERAGE_FRACTION,
+    PERSON_COVERAGE_MIN_BASELINE,
+    PERSON_COVERAGE_MIN_PEOPLE,
     STAGE_GAP_GRACE_MINUTES,
     UPLOAD_VELOCITY_WINDOW_MINUTES,
     VIP_WEIGHT_BY_TIER,
@@ -120,7 +124,7 @@ class StageView:
 class Gap:
     """One thing the event is missing. `severity` orders within a tier, never across tiers."""
 
-    kind: str  # 'moment' | 'vip'
+    kind: str  # 'moment' | 'vip' | 'vip_thin' | 'group'
     stage_id: str
     stage_label: str
     label: str
@@ -534,14 +538,66 @@ def _gaps(ledger: Ledger, shards: dict[str, coverage.StageCoverage], now: dt.dat
     if group is not None:
         gaps.append(group)
 
+    gaps.extend(_person_gaps(ledger, shards))
+
+    gaps.sort(key=lambda g: g.sort_key, reverse=True)
+    return gaps
+
+
+def _person_gaps(
+    ledger: Ledger, shards: dict[str, coverage.StageCoverage]
+) -> list[Gap]:
+    """Named people who are under-photographed, by two independent measures.
+
+    **Leg 1 — absent (unchanged).** Zero appearances in the *active* stage. The strongest and most
+    actionable signal there is: whatever else is true, they are not in the photographs of the thing
+    happening right now, and that is fixable in the next five minutes.
+
+    **Leg 2 — thin (new).** Present in this stage, but their appearance count *across the whole
+    event* sits below `ceil(median × PERSON_COVERAGE_FRACTION)`. This is the person who is always
+    holding the camera. Leg 1 could never see them: one frame of them at breakfast satisfies it
+    permanently, and they still finish the trip with a tenth of everyone else's photographs. Two
+    deliberate choices, both in `shared/settings.py` with their reasoning:
+
+    - The baseline is the **median**, not the mean, so the one person everybody photographs cannot
+      drag the bar up until the entire rest of the group reads as neglected.
+    - It is measured **event-wide**, not per stage. A single stage is far too small a sample to call
+      anybody under-represented — a five-photo dinner would flag three people every tick — whereas
+      "over four days, you have eleven and the group's typical is twenty-eight" is a real finding.
+
+    Exactly one gap per person, absent taking precedence, so a person can never occupy two of the
+    eight prompt slots. The *anchor* is always the active stage even for leg 2, because a bounty has
+    to be answerable now: the evidence is historical, the ask never is.
+
+    Silent by construction on small or young events — fewer than `PERSON_COVERAGE_MIN_PEOPLE` named
+    people, or a median under `PERSON_COVERAGE_MIN_BASELINE`, leaves leg 2 switched off and leg 1
+    exactly as it always behaved. Nothing here reads or writes visibility, points or tier.
+    """
     active = next((s for s in ledger.stages if s.stage_id == ledger.active_stage_id), None)
-    if active is not None:
-        appearances = (shards.get(active.stage_id) or coverage.StageCoverage(active.stage_id)).people
-        for person in ledger.people:
-            count = appearances.get(person.person_id, 0)
-            if count >= 1:
-                continue
-            gaps.append(
+    if active is None or not ledger.people:
+        return []
+
+    in_stage = (shards.get(active.stage_id) or coverage.StageCoverage(active.stage_id)).people
+    totals: dict[str, int] = {}
+    for shard in shards.values():
+        for person_id, count in shard.people.items():
+            totals[person_id] = totals.get(person_id, 0) + count
+
+    baseline = 0.0
+    threshold = 0
+    if len(ledger.people) >= PERSON_COVERAGE_MIN_PEOPLE:
+        baseline = float(
+            statistics.median([totals.get(p.person_id, 0) for p in ledger.people])
+        )
+        if baseline >= PERSON_COVERAGE_MIN_BASELINE:
+            threshold = math.ceil(baseline * PERSON_COVERAGE_FRACTION)
+
+    out: list[Gap] = []
+    for person in ledger.people:
+        here = in_stage.get(person.person_id, 0)
+        total = totals.get(person.person_id, 0)
+        if here == 0:
+            out.append(
                 Gap(
                     kind="vip",
                     stage_id=active.stage_id,
@@ -549,15 +605,35 @@ def _gaps(ledger: Ledger, shards: dict[str, coverage.StageCoverage], now: dt.dat
                     label=f"{person.display_name} has no photograph in this stage",
                     severity=1.0,
                     vip_weight=person.weight,
-                    photo_count=count,
+                    photo_count=here,
                     person_id=person.person_id,
                     person_name=person.display_name,
                     tier=person.tier,
                 )
             )
-
-    gaps.sort(key=lambda g: g.sort_key, reverse=True)
-    return gaps
+        elif threshold and total < threshold:
+            # Ranked below an outright absence (which is a flat 1.0) and scaled by how far short they
+            # are, so the most-neglected person in a group of six is the one the model is offered.
+            shortfall = 1.0 - (total / threshold)
+            out.append(
+                Gap(
+                    kind="vip_thin",
+                    stage_id=active.stage_id,
+                    stage_label=active.label,
+                    label=(
+                        f"{person.display_name} is barely in this event's photographs — "
+                        f"{total} across all {len(shards)} stage(s) so far, against a group median "
+                        f"of {baseline:.0f}; they are probably the one taking them"
+                    ),
+                    severity=round(0.4 + 0.6 * max(0.0, min(1.0, shortfall)), 3),
+                    vip_weight=person.weight,
+                    photo_count=total,
+                    person_id=person.person_id,
+                    person_name=person.display_name,
+                    tier=person.tier,
+                )
+            )
+    return out
 
 
 def _group_gap(

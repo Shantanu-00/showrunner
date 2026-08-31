@@ -223,6 +223,35 @@ GROUP_SHOT_MIN_FRACTION = 0.75
 #: one person ignoring their phone never costs the event the photo.
 BOUNTY_ASSIGN_TIMEOUT_MINUTES = 6
 
+# --- relative person coverage ------------------------------------------------------------------
+# The director's original person gap was binary: zero photographs of a named person in the active
+# stage. That misses the case the whole feature exists for — the person who is *always holding the
+# camera* and therefore ends the trip with four photos of themselves while everyone else has forty.
+# One frame of them at breakfast cleared the gap and the director never asked again.
+#
+# So there are now two legs, and the second is relative. None of these three is pinned by any spec
+# (no spec describes this mechanism at all); flagged in HANDOFF §9 like the spec-13 set above.
+#
+#: A named person is under-represented when their event-wide appearance count is below
+#: `ceil(baseline × this)`. **0.6, deliberately not 0.5.** Half the group's typical count is a
+#: shortfall so severe that by the time it trips, the trip is over — and photo counts per person are
+#: genuinely uneven for innocent reasons (who sat where, who was on the aisle), so the threshold has
+#: to sit above the noise without waiting for the pathological case. At 0.6 someone with 11 photos
+#: against a group typical of 20 is flagged; at 0.5 they are not, and they should be.
+PERSON_COVERAGE_FRACTION = 0.6
+#: The baseline is the **median** across the event's named people, not the mean: one person everyone
+#: photographs constantly (the birthday guest, the bride) drags a mean up until the whole rest of
+#: the group reads as under-covered, which would turn one real gap into six false ones. A median is
+#: unmoved by that person and answers the question actually being asked — "what does a typical
+#: member of this group have?"
+#: Below this many photographs the median carries no information (with a typical of 2, being at 1 is
+#: noise, not neglect), so the relative leg stays silent and only the zero-photograph leg applies.
+PERSON_COVERAGE_MIN_BASELINE = 4
+#: And below this many named people there is no distribution to be under. Two people cannot have a
+#: meaningful median between them, and comparing a pair to each other would flag whoever took the
+#: photos of the other one — every time, on every event, forever.
+PERSON_COVERAGE_MIN_PEOPLE = 3
+
 # --- kiosk program rails (spec 04 §4) ---------------------------------------------------------
 KIOSK_PROGRAM_SECONDS = 300  # "~5 min program, recomputed on triggers"
 KIOSK_HERO_HOLD_SEC = 6  # spec 04 §4's slot sketch, verbatim
@@ -291,6 +320,23 @@ REEL_CANDIDATE_FETCH = 150
 #: `directors/story/validate.py` uses to decide a bounty submission is worth points, and for the same
 #: reason: below it a photograph is evidence that something happened, not something to look at.
 REEL_AESTHETIC_FLOOR = 0.35
+#: The `event_recap` persona's own, higher floor — and the reasoning is about what the artifact *is*,
+#: not about tuning. Every other reel is ephemeral: a stage recap premieres on the wall for thirty
+#: seconds and is superseded by a better cut an hour later. The event recap is the **one permanent
+#: file** the system hands anybody — it is downloaded, saved, sent to a group chat and watched years
+#: later — so "good enough to prove something happened" (0.35) is the wrong bar for it. 0.55 is
+#: comfortably above the noise floor without reaching the Curator's own 0.75 highlight bar, which
+#: would restrict a five-day trip to its dozen best frames and lose the arc that makes it a recap.
+#:
+#: **Applied only when the event can afford it.** `select.choose` tries this floor first and falls
+#: back to `REEL_AESTHETIC_FLOOR` when it would not leave enough candidates for a full-length film —
+#: a thin event gets a softer recap, never no recap. Not spec-pinned; flagged in HANDOFF §9.
+REEL_RECAP_AESTHETIC_FLOOR = 0.55
+#: How many surviving candidates make the raised floor affordable. `REEL_MIN_SHOTS` is the finished
+#: reel's floor and the near-duplicate linter drops some of whatever the model picks, so the same
+#: headroom logic as `REEL_SHOT_REQUEST_MIN` applies one layer earlier: ask for enough that a normal
+#: amount of attrition still clears the minimum.
+REEL_RECAP_MIN_CANDIDATES = REEL_MIN_SHOTS + 6
 #: Output canvas (spec 06 §3 step 5 verbatim: 1080×1920 H.264).
 REEL_WIDTH = 1080
 REEL_HEIGHT = 1920
