@@ -39,6 +39,16 @@ RECENT_LIMIT = 20
 #: short enough that the playlist document stays small.
 PREMIERE_MEMORY = 20
 
+#: Added to a reel's own `durationSec` to get how long it keeps the wall. Covers `ReelSlot`'s title
+#: card, the crossfade in and the end card — a premiere that vanished on the last frame would still be
+#: a premiere the room never saw the end of.
+PREMIERE_GRACE_SEC = 8
+
+#: What a premiere holds the wall for when its document carries no `durationSec` (a pre-`durationSec`
+#: reel, or one whose render never reported). Longer than any reel this pipeline cuts, deliberately:
+#: over-holding costs one stale slide, under-holding costs the whole feature.
+PREMIERE_FALLBACK_HOLD_SEC = 60.0
+
 #: Statuses the publisher maintains a playlist for. `wrapping` is included because the finale is the
 #: most important thing the wall ever shows (spec 08 §2); `paused` is not, so the wall keeps its last
 #: program instead of going blank when a host hits pause.
@@ -257,19 +267,75 @@ def takeover_bounty(event_id: str, *, now: dt.datetime | None = None) -> str | N
     return program.pick_takeover(rows, now or dt.datetime.now(dt.timezone.utc))
 
 
-def premiere_reel(event_id: str, already_premiered: Iterable[str]) -> str | None:
-    """The newest published reel this event has not already premiered on the wall."""
+def premiere_reel(
+    event_id: str,
+    already_premiered: Iterable[str],
+    *,
+    holding_id: str | None = None,
+    holding_since: Any = None,
+    now: dt.datetime | None = None,
+) -> str | None:
+    """The reel that should be leading the wall: a new premiere, **or the one still playing**.
+
+    `already_premiered` used to end the story — a reel entered the history on the write that first put
+    it on screen, so the *next* rebuild dropped it. Rebuilds are driven by the director's nudge and a
+    5-minute fallback, so in practice the next one landed within seconds: measured on `judge_demo`, a
+    20.4-second film led revision 157 and was gone from revision 158 **3.4 seconds later**. A premiere
+    that could not survive its own runtime was not a feature, and every reel this project had rendered
+    was pulled off the wall mid-play.
+
+    So the history answers "has this had its turn?" and the hold answers "is its turn over?".
+
+    The hold is measured from `premiereStartedAt` — **when the wall started showing it** — and not from
+    the reel's own `publishedAt`. They are usually seconds apart and occasionally hours: a reel that
+    published while the publisher held no lease, or one whose premiere memory was cleared by an
+    operator, is premiered long after it was made, and anchoring on `publishedAt` would compute its turn
+    as already over and drop it on the very next rebuild. That was the second half of this bug and it
+    hid behind the first.
+
+    While the hold stands this keeps returning the same id, which keeps the reel at slot 0 with an
+    unchanged `leadKey` — so the film plays through rather than restarting — and keeps the fingerprint
+    identical, so those rebuilds become `checkedAt` touches instead of revision bumps.
+
+    Still re-read from the live query every rebuild, which is what keeps spec 06 §7 honest: a reel that
+    loses `visibility == public` mid-play falls out of `reel_query` and off the wall on the next
+    rebuild, hold or no hold.
+    """
     seen = set(already_premiered)
-    best: tuple[dt.datetime, str] | None = None
+    moment = now or dt.datetime.now(dt.timezone.utc)
+
+    fresh: tuple[dt.datetime, str] | None = None
+    held_duration: float | None = None
     for snap in reel_query(event_id).stream():
+        doc = snap.to_dict() or {}
+        if snap.id == holding_id:
+            try:
+                held_duration = float(doc.get("durationSec") or 0.0)
+            except (TypeError, ValueError):
+                held_duration = 0.0
         if snap.id in seen:
             continue
-        doc = snap.to_dict() or {}
-        at = _as_datetime(doc.get("publishedAt")) or _as_datetime(doc.get("createdAt"))
-        stamp = at or dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-        if best is None or stamp > best[0]:
-            best = (stamp, snap.id)
-    return best[1] if best else None
+        stamp = (
+            _as_datetime(doc.get("publishedAt"))
+            or _as_datetime(doc.get("createdAt"))
+            or dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+        )
+        if fresh is None or stamp > fresh[0]:
+            fresh = (stamp, snap.id)
+
+    # A brand-new premiere outranks one already playing: it is the more newsworthy thing, and "newest
+    # wins" is the rule this function always had.
+    if fresh is not None:
+        return fresh[1]
+
+    # `held_duration is None` means the held reel is no longer in the public query — retracted, or
+    # superseded. Falling through drops it, which is exactly what spec 06 §7 requires.
+    started = _as_datetime(holding_since)
+    if holding_id and held_duration is not None and started is not None:
+        hold = (held_duration or PREMIERE_FALLBACK_HOLD_SEC) + PREMIERE_GRACE_SEC
+        if (moment - started).total_seconds() < hold:
+            return holding_id
+    return None
 
 
 # ---------------------------------------------------------------- the write
@@ -295,7 +361,15 @@ def _publish(
     current = snap.to_dict() or {}
     revision = int(current.get("revision") or 0)
 
-    if snap.exists and current.get("fingerprint") == built.fingerprint and not premiered:
+    history = [r for r in (current.get("premieredReelIds") or []) if isinstance(r, str)]
+    # **New** to the history, not merely present in this build. During a premiere's hold (`premiere_reel`)
+    # the same reel is passed on every rebuild, and treating that as a reason to write would bump the
+    # revision every nudge for the whole length of the film — the exact churn the fingerprint check
+    # below exists to avoid. The term is here so the *first* premiere write cannot be skipped by a
+    # fingerprint that happened to match; a hold is not a first.
+    is_new_premiere = bool(premiered) and premiered not in history
+
+    if snap.exists and current.get("fingerprint") == built.fingerprint and not is_new_premiere:
         # Nothing the viewer could see has changed. Skipping the write is not just thrift: even though
         # B1 made the client's slot-0 reset conditional on `leadKey`, a snapshot still costs the client
         # a fresh render pass, so a revision bump for identical content is still churn worth avoiding
@@ -303,9 +377,17 @@ def _publish(
         transaction.set(ref, {"checkedAt": fs.SERVER_TIMESTAMP}, merge=True)
         return Written(False, revision, built.fingerprint)
 
-    history = [r for r in (current.get("premieredReelIds") or []) if isinstance(r, str)]
-    if premiered and premiered not in history:
+    if is_new_premiere and premiered is not None:
         history.append(premiered)
+
+    # The hold's anchor (`premiere_reel`). Written only when a premiere *starts*, so a rebuild during
+    # the hold cannot keep pushing the clock forward and pin a film on the wall forever. Cleared when
+    # nothing is premiering, so a stale anchor can never resurrect a reel whose turn ended.
+    premiere_state: dict[str, Any] = {}
+    if is_new_premiere:
+        premiere_state = {"premiereReelId": premiered, "premiereStartedAt": fs.SERVER_TIMESTAMP}
+    elif not premiered:
+        premiere_state = {"premiereReelId": None, "premiereStartedAt": None}
 
     transaction.set(
         ref,
@@ -327,6 +409,7 @@ def _publish(
             "slotCount": len(built.slots),
             "publishedBy": holder,
             "premieredReelIds": history[-PREMIERE_MEMORY:],
+            **premiere_state,
         },
         merge=True,
     )

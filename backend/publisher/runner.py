@@ -82,7 +82,15 @@ def recompute(
         )
     else:
         current = store.playlist(event_id)
-        premiere = store.premiere_reel(event_id, current.get("premieredReelIds") or [])
+        # The two extra fields are the premiere *hold* (`store.premiere_reel`): a film has to survive
+        # the rebuilds that land during its own runtime, and the anchor for that is when the wall
+        # started showing it, which only the playlist knows.
+        premiere = store.premiere_reel(
+            event_id,
+            current.get("premieredReelIds") or [],
+            holding_id=current.get("premiereReelId"),
+            holding_since=current.get("premiereStartedAt"),
+        )
         built = program.build(
             store.candidates(event_id),
             now=dt.datetime.now(dt.timezone.utc),
